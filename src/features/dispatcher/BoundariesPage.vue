@@ -2,6 +2,8 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { onBeforeRouteLeave, useRoute } from "vue-router";
 import { Button } from "@/shared/ui/button";
+import { Textarea } from "@/shared/ui/textarea";
+import { Label } from "@/shared/ui/label";
 import { Badge } from "@/shared/ui/badge";
 import { adminApi, errorMessage } from "@/shared/api";
 import { hasYandexMapsApiKey, loadYandexMaps } from "@/shared/maps/yandex";
@@ -27,6 +29,8 @@ const route = useRoute(),
   selected = ref(""),
   loading = ref(true),
   error = ref(""),
+  mapError = ref(""),
+  coordinates = ref(""),
   pending = ref(false),
   saved = ref(false),
   dirty = ref(false),
@@ -38,7 +42,8 @@ let map: any,
   y: any,
   disposed = false;
 const polygons = new Map<string, any>(),
-  originals = new Map<string, Point[][]>();
+  originals = new Map<string, Point[][]>(),
+  savedBoundaries = new Map<string, Point[][] | null>();
 const colors = [
   "#17634b",
   "#b76b28",
@@ -85,6 +90,7 @@ function select(id: string) {
     if (savedCoords) previous.geometry.setCoordinates(snapshot(savedCoords));
   }
   selected.value = id;
+  coordinates.value = JSON.stringify(originals.get(id) ?? [], null, 2);
   dirty.value = false;
   saved.value = false;
   const polygon = polygons.get(id);
@@ -105,6 +111,7 @@ function reset() {
     )
   )
     return;
+  coordinates.value = JSON.stringify(draft(district), null, 2);
   polygons.get(district.id)?.geometry.setCoordinates(draft(district));
   dirty.value = true;
   saved.value = false;
@@ -112,6 +119,7 @@ function reset() {
 function discard() {
   const coords = originals.get(selected.value);
   if (coords) {
+    coordinates.value = JSON.stringify(coords, null, 2);
     polygons.get(selected.value)?.geometry.setCoordinates(snapshot(coords));
     dirty.value = false;
     saved.value = false;
@@ -120,34 +128,75 @@ function discard() {
 async function save() {
   const district = current.value,
     polygon = polygons.get(selected.value);
-  if (!district || !polygon) return;
+  if (!district || pending.value) return;
   pending.value = true;
   error.value = "";
   saved.value = false;
   try {
-    const boundary = polygon.geometry.getCoordinates() as Point[][];
+    const boundary = parseCoordinates();
+    const latest = (
+      await adminApi.get<District[]>("/admin/districts")
+    ).data.find((d) => d.id === district.id);
     if (
-      !boundary.length ||
-      boundary.some(
-        (r) =>
-          r.length < 3 ||
-          r.some((p) => !Number.isFinite(p[0]) || !Number.isFinite(p[1])),
-      )
+      !latest ||
+      JSON.stringify(latest.boundary ?? null) !==
+        JSON.stringify(savedBoundaries.get(district.id) ?? null)
     )
-      throw new Error("Нужно минимум 3 корректные точки в каждом контуре");
+      throw new Error(
+        "Граница изменена в другой сессии. Перезагрузите страницу, чтобы не затереть чужие правки.",
+      );
     const { data } = await adminApi.patch<District>(
       `/admin/districts/${district.id}/boundary`,
       { boundary },
     );
     districts.value = districts.value.map((d) => (d.id === data.id ? data : d));
     originals.set(district.id, snapshot(data.boundary ?? boundary));
-    polygon.options.set("strokeStyle", "solid");
+    savedBoundaries.set(district.id, snapshot(data.boundary ?? boundary));
+    coordinates.value = JSON.stringify(data.boundary ?? boundary, null, 2);
+    polygon?.geometry.setCoordinates(snapshot(data.boundary ?? boundary));
+    polygon?.options.set("strokeStyle", "solid");
     dirty.value = false;
     saved.value = true;
   } catch (e) {
     error.value = errorMessage(e);
   } finally {
     pending.value = false;
+  }
+}
+function parseCoordinates(): Point[][] {
+  const value: unknown = JSON.parse(coordinates.value);
+  if (
+    !Array.isArray(value) ||
+    !value.length ||
+    value.some(
+      (r) =>
+        !Array.isArray(r) ||
+        r.length < 3 ||
+        r.some(
+          (p) =>
+            !Array.isArray(p) ||
+            p.length !== 2 ||
+            typeof p[0] !== "number" ||
+            typeof p[1] !== "number" ||
+            !Number.isFinite(p[0]) ||
+            !Number.isFinite(p[1]) ||
+            Math.abs(p[0]) > 90 ||
+            Math.abs(p[1]) > 180,
+        ),
+    )
+  )
+    throw new Error(
+      "Укажите массив контуров с минимум 3 точками [широта, долгота].",
+    );
+  return value as Point[][];
+}
+function previewCoordinates() {
+  try {
+    const value = parseCoordinates();
+    polygons.get(selected.value)?.geometry.setCoordinates(value);
+    error.value = "";
+  } catch (e) {
+    error.value = errorMessage(e);
   }
 }
 function unload(e: BeforeUnloadEvent) {
@@ -158,15 +207,27 @@ function unload(e: BeforeUnloadEvent) {
 }
 onBeforeRouteLeave(
   () =>
-    !(dirty.value || pending.value) ||
-    window.confirm("Есть несохранённые изменения. Покинуть редактор?"),
+    !pending.value &&
+    (!dirty.value ||
+      window.confirm("Есть несохранённые изменения. Покинуть редактор?")),
 );
 onMounted(async () => {
   window.addEventListener("beforeunload", unload);
   try {
     districts.value = (await adminApi.get<District[]>("/admin/districts")).data;
-    if (!hasYandexMapsApiKey())
-      throw new Error("Карта недоступна: не задан ключ Yandex Maps API");
+    districts.value.forEach((d) => {
+      originals.set(
+        d.id,
+        snapshot(d.boundary?.[0]?.length ? d.boundary : draft(d)),
+      );
+      savedBoundaries.set(d.id, d.boundary ? snapshot(d.boundary) : null);
+    });
+    select(String(route.query.district || districts.value[0]?.id || ""));
+    if (!hasYandexMapsApiKey()) {
+      mapError.value =
+        "Карта недоступна: не задан ключ Yandex Maps API. Координаты доступны ниже.";
+      return;
+    }
     y = await loadYandexMaps();
     if (disposed || !mapElement.value) return;
     map = new y.Map(mapElement.value, {
@@ -189,6 +250,11 @@ onMounted(async () => {
       );
       polygon.geometry.events.add("change", () => {
         if (selected.value === d.id) {
+          coordinates.value = JSON.stringify(
+            polygon.geometry.getCoordinates(),
+            null,
+            2,
+          );
           dirty.value = true;
           saved.value = false;
         }
@@ -198,7 +264,8 @@ onMounted(async () => {
     });
     select(String(route.query.district || districts.value[0]?.id || ""));
   } catch (e) {
-    error.value = errorMessage(e);
+    if (districts.value.length) mapError.value = errorMessage(e);
+    else error.value = errorMessage(e);
   } finally {
     loading.value = false;
   }
@@ -220,7 +287,7 @@ onUnmounted(() => {
       </p>
     </header>
     <p v-if="loading" role="status" class="text-sm text-muted-foreground">
-      Загрузка карты…
+      Загрузка районов…
     </p>
     <p
       v-if="error"
@@ -228,6 +295,13 @@ onUnmounted(() => {
       class="rounded-lg border border-destructive/30 p-4 text-sm text-destructive"
     >
       {{ error }}
+    </p>
+    <p
+      v-if="mapError"
+      role="status"
+      class="rounded-lg bg-muted p-4 text-sm text-muted-foreground"
+    >
+      {{ mapError }}
     </p>
     <div class="grid gap-4 lg:grid-cols-[260px_1fr]">
       <aside class="space-y-3">
@@ -278,7 +352,7 @@ onUnmounted(() => {
           <div class="flex flex-wrap gap-2">
             <Button
               variant="outline"
-              :disabled="!current || pending || (!!error && !map)"
+              :disabled="!current || pending"
               @click="reset"
               >Черновик по центру</Button
             ><Button
@@ -288,10 +362,45 @@ onUnmounted(() => {
               >Отменить правки</Button
             >
           </div>
-          <Button :disabled="!current || pending || !map" @click="save">{{
+          <Button :disabled="!current || pending" @click="save">{{
             pending ? "Сохраняем…" : "Сохранить границу"
           }}</Button>
         </div>
+        <details
+          v-if="current"
+          :open="!!mapError"
+          class="rounded-xl border bg-card p-4"
+        >
+          <summary class="cursor-pointer text-sm font-medium">
+            Редактировать координаты вручную
+          </summary>
+          <div class="mt-4 space-y-3">
+            <Label for="boundary-coordinates"
+              >Контуры: массив точек [широта, долгота]</Label
+            >
+            <p class="text-xs text-muted-foreground">
+              Все контуры сохраняются. Проверьте координаты перед отправкой. Эта
+              форма и карта редактируют одну границу.
+            </p>
+            <Textarea
+              id="boundary-coordinates"
+              v-model="coordinates"
+              rows="10"
+              class="font-mono text-xs"
+              :disabled="pending"
+              @input="
+                dirty = true;
+                saved = false;
+              "
+            /><Button
+              v-if="!mapError"
+              variant="outline"
+              :disabled="pending"
+              @click="previewCoordinates"
+              >Показать на карте</Button
+            >
+          </div>
+        </details>
         <p v-if="saved" role="status" class="text-sm text-primary">
           Граница сохранена на сервере.
         </p>
