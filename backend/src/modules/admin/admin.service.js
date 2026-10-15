@@ -335,11 +335,7 @@ async function adjustBalance(driverId, { amount, type, note }, actorId) {
   // evaluated from the database directly in sockets/index.js). Crossing
   // zero either grants or revokes "receives new order broadcasts" without
   // requiring the driver to reconnect.
-  await syncDriverDistrictRoom(driverId, {
-    previousDistrictId: driver.districtId,
-    districtId: driver.districtId,
-    eligible: driver.isOnline && result.balance.amount.greaterThan(0)
-  });
+  await syncDriverDistrictRoom(driverId);
   // A driver crossing zero balance drops out of (or back into) their
   // district's "free drivers" count.
   await districtsService.broadcastDistrictStats();

@@ -5,6 +5,7 @@ const logger = require('../../config/logger');
 const ApiError = require('../../utils/ApiError');
 const districtsService = require('../districts/districts.service');
 const { syncDriverDistrictRoom } = require('../../sockets/roomSync');
+const { assertFreshGps } = require('./gps-eligibility');
 
 async function getProfile(driverId) {
   const driver = await prisma.driver.findUnique({
@@ -91,21 +92,15 @@ async function updateLocation(driver, data) {
     logger.warn({ err }, 'Failed to broadcast driver:location');
   }
 
-  if (districtChanged) {
-    const balance = await prisma.balance.findUnique({ where: { userId: driver.userId } });
-    const hasPositiveBalance = Boolean(balance) && Number(balance.amount) > 0;
-    await syncDriverDistrictRoom(driver.id, {
-      previousDistrictId: driver.districtId,
-      districtId: newDistrictId,
-      eligible: driver.isOnline && hasPositiveBalance
-    });
-    await districtsService.broadcastDistrictStats();
-  }
+  // Refresh the expiry even when the driver stays inside the same region.
+  await syncDriverDistrictRoom(driver.id);
+  if (districtChanged) await districtsService.broadcastDistrictStats();
 
   return updatedDriver;
 }
 
 async function setStatus(driver, data) {
+  if (data.isOnline === true) assertFreshGps(driver);
   const updated = await prisma.driver.update({
     where: { id: driver.id },
     data: {
@@ -132,13 +127,7 @@ async function setStatus(driver, data) {
   // isOnline only ever affected admin's display and the "free drivers"
   // count, not actual order delivery.
   if (data.isOnline !== undefined) {
-    const balance = await prisma.balance.findUnique({ where: { userId: driver.userId } });
-    const hasPositiveBalance = Boolean(balance) && Number(balance.amount) > 0;
-    await syncDriverDistrictRoom(driver.id, {
-      previousDistrictId: updated.districtId,
-      districtId: updated.districtId,
-      eligible: updated.isOnline && hasPositiveBalance
-    });
+    await syncDriverDistrictRoom(driver.id);
   }
 
   // Online/available toggling changes the "free drivers" count on whichever
@@ -212,12 +201,9 @@ async function setDistrict(driver, districtId) {
   const district = await prisma.district.findUnique({ where: { id: districtId } });
   if (!district) throw ApiError.badRequest('Район не найден');
 
-  const previousDistrictId = driver.districtId;
   const updated = await prisma.driver.update({ where: { id: driver.id }, data: { districtId }, include: { district: true } });
 
-  const balance = await prisma.balance.findUnique({ where: { userId: driver.userId } });
-  const hasPositiveBalance = Boolean(balance) && Number(balance.amount) > 0;
-  await syncDriverDistrictRoom(driver.id, { previousDistrictId, districtId, eligible: driver.isOnline && hasPositiveBalance });
+  await syncDriverDistrictRoom(driver.id);
   await districtsService.broadcastDistrictStats();
 
   return updated;

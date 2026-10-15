@@ -82,6 +82,10 @@ beforeEach(async () => {
   await prisma.balance.updateMany({ data: { amount: 500 } });
   await prisma.driver.updateMany({ data: { isAvailable: true, isOnline: false } });
   await prisma.driver.updateMany({ where: { user: { phone: '+10000000102' } }, data: { districtId: otherRegionId } });
+  for (const [token, lng] of [[driverToken, 58.32], [otherToken, 58.42]] as const) {
+    assert.equal((await request('/driver/location', token, { lat: 37.96, lng })).status, 200);
+    assert.equal((await request('/driver/status', token, { isOnline: true })).status, 200);
+  }
 });
 after(async () => {
   clients.forEach(client => client.disconnect());
@@ -94,6 +98,82 @@ after(async () => {
 test('private driver data requires authentication and dispatcher data requires an admin role', async () => {
   assert.equal((await request('/driver/profile')).status, 401);
   assert.equal((await request('/admin/drivers', driverToken)).status, 403);
+});
+
+test('missing or stale GPS blocks online status, order browsing and claims without charging', async () => {
+  const created = await order();
+  for (const lastLocationAt of [null, new Date(Date.now() - 61000)]) {
+    await prisma.driver.updateMany({ where: { user: { phone: '+10000000101' } }, data: { lastLocationAt, isOnline: true } });
+    assert.equal((await request('/driver/status', driverToken, { isOnline: true })).status, 403);
+    assert.equal((await request('/orders/available', driverToken)).status, 403);
+    assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 403);
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
+    const regions = await request('/districts', driverToken);
+    assert.ok(regions.data.every((region: { activeOrders: number }) => region.activeOrders === 0));
+  }
+});
+
+test('fresh GPS still requires an explicit online choice before browsing or claiming', async () => {
+  assert.equal((await request('/driver/status', driverToken, { isOnline: false })).status, 200);
+  assert.equal((await request('/driver/location', driverToken, { lat: 37.96, lng: 58.32 })).status, 200);
+  const created = await order();
+  assert.equal((await request('/orders/available', driverToken)).status, 403);
+  assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 403);
+  assert.equal((await request('/driver/status', driverToken, { isOnline: true })).status, 200);
+  assert.equal((await request('/orders/available', driverToken)).data[0].id, created.id);
+});
+
+test('GPS expiry forces offline without interrupting a claimed trip and fresh GPS does not auto-online', async () => {
+  const created = await order();
+  assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 200);
+  const client = await socket(driverToken);
+  try {
+    await prisma.driver.updateMany({ where: { user: { phone: '+10000000101' } }, data: { lastLocationAt: new Date(Date.now() - 59500) } });
+    const expired = new Promise<Record<string, unknown>>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('GPS expiry did not emit offline')), 2500);
+      client.on('driver:status', event => { if (event.reason === 'GPS_REQUIRED') { clearTimeout(timeout); resolve(event); } });
+    });
+    assert.equal((await request('/driver/status', driverToken, { isOnline: true })).status, 200);
+    const event = await expired;
+    assert.equal(event.isOnline, false);
+    assert.equal(event.isAvailable, false);
+    assert.equal((await request('/driver/profile', driverToken)).data.isOnline, false);
+    assert.equal((await request('/orders/current', driverToken)).data.id, created.id);
+    for (const action of ['waiting', 'start', 'complete']) {
+      assert.equal((await request(`/orders/${action}`, driverToken, { orderId: created.id })).status, 200);
+    }
+    assert.equal((await request('/driver/location', driverToken, { lat: 37.96, lng: 58.32 })).status, 200);
+    assert.equal((await request('/driver/profile', driverToken)).data.isOnline, false);
+  } finally { client.disconnect(); }
+});
+
+test('stale sockets receive no offers or live queues after balance, region changes or reconnect', async () => {
+  let client = await socket(driverToken);
+  assert.equal((await request('/driver/status', driverToken, { isOnline: true })).status, 200);
+  const received: unknown[] = [];
+  const watch = () => {
+    client.on('order:new', event => received.push(event));
+    client.on('districts:stats', event => received.push(event));
+  };
+  watch();
+  try {
+    // Seed a stale timestamp while a previously eligible socket is still joined.
+    await prisma.driver.updateMany({ where: { user: { phone: '+10000000101' } }, data: { lastLocationAt: new Date(Date.now() - 61000) } });
+    await order();
+    const profile = await request('/driver/profile', driverToken);
+    assert.equal(profile.data.isOnline, false);
+    assert.equal((await request(`/admin/drivers/${profile.data.id}/balance`, adminToken, { amount: 1, type: 'TOPUP' })).status, 200);
+    assert.equal((await request('/driver/district', driverToken, { districtId: regionId })).status, 200);
+    await order();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.deepEqual(received, []);
+    client.disconnect();
+    client = await socket(driverToken);
+    watch();
+    await order();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.deepEqual(received, []);
+  } finally { client.disconnect(); }
 });
 
 test('dispatcher cannot create an order without a valid customer phone', async () => {

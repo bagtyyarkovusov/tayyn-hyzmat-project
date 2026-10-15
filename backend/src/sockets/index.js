@@ -1,3 +1,4 @@
+const { syncDriverDistrictRoom } = require('./roomSync');
 const { Server } = require('socket.io');
 const env = require('../config/env');
 const logger = require('../config/logger');
@@ -44,29 +45,7 @@ async function handleDriverConnection(socket) {
 
   socket.join(rooms.driver(driverId));
   socket.join(rooms.drivers());
-  socket.join(rooms.districtsOverview()); // the 9-card live counts grid
-
-  // A driver only joins their district room - and so only receives
-  // "Новый заказ" broadcasts and counts toward the districts grid - while
-  // they have a district, a positive balance, AND are toggled online (see
-  // driver/components/OnlineToggle.vue). isOnline used to also get flipped
-  // automatically by raw socket connect/disconnect here, which fought with
-  // the driver's own toggle (a brief reconnect could silently overwrite an
-  // explicit "offline" back to "online", or vice versa) - it is now written
-  // ONLY by driver.service.js#setStatus, i.e. only when the driver actually
-  // presses the toggle. See admin.service.js#adjustBalance and
-  // driver.service.js#setStatus/updateLocation/setDistrict for how this
-  // room membership is kept in sync if any of the three conditions change
-  // while the driver is already connected.
-  const hasBalance = Boolean(driver.user.balance) && driver.user.balance.amount.greaterThan(0);
-  const eligibleForDistrictRoom = driver.isOnline && driver.districtId && hasBalance;
-  if (eligibleForDistrictRoom) {
-    socket.join(rooms.district(driver.districtId));
-  }
-  logger.debug(
-    { driverId, districtId: driver.districtId, isOnline: driver.isOnline, hasBalance, joinedDistrictRoom: Boolean(eligibleForDistrictRoom) },
-    'Driver socket connected'
-  );
+  await syncDriverDistrictRoom(driverId);
 
   // Symmetric with the admin side's socket.on('admin:message', ...) below -
   // Чат Админ ↔ водитель works the same way from either end.

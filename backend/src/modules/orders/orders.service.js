@@ -7,6 +7,8 @@ const logger = require('../../config/logger');
 const districtsService = require('../districts/districts.service');
 const { haversineDistanceKm } = require('../../utils/geo');
 const { recordOrderCharge } = require('./order-charge');
+const { assertOrderEligibility } = require('../driver/gps-eligibility');
+const { refreshOrderRecipients } = require('../../sockets/roomSync');
 
 const D = (value) => new Prisma.Decimal(value ?? 0);
 
@@ -97,6 +99,7 @@ const AVAILABLE_ORDER_SELECT = {
 // this returns, so viewing another district's queue never grants the
 // ability to act on it.
 async function listAvailable(driver, districtId) {
+  assertOrderEligibility(driver);
   if (!(await hasPositiveBalance(driver.userId))) {
     return [];
   }
@@ -123,11 +126,15 @@ async function getCurrent(driver) {
 }
 
 async function accept(orderId, driver, etaMinutes) {
+  assertOrderEligibility(driver);
   if (!(await hasPositiveBalance(driver.userId))) {
     throw ApiError.forbidden('Пополните баланс, чтобы принимать заказы');
   }
 
   const order = await prisma.$transaction(async (tx) => {
+    const currentDriver = await tx.driver.findUnique({ where: { id: driver.id } });
+    if (!currentDriver) throw ApiError.notFound('Профиль водителя не найден');
+    assertOrderEligibility(currentDriver);
     // A driver can only have one order in progress at a time - this used to
     // be implicitly true because the only way to accept was the "Новый
     // заказ" popup (order.js#applyNewOrder never shows it while an order is
@@ -366,6 +373,13 @@ async function createOrder(data) {
   const { clientPhone, ...orderWithoutPhone } = order;
   void clientPhone;
 
+  try {
+    await refreshOrderRecipients();
+  } catch (err) {
+    logger.warn({ err }, 'Order saved but socket eligibility check failed');
+    await districtsService.broadcastDistrictStats();
+    return order;
+  }
   safeEmit((io) => {
     if (order.districtId) io.to(rooms.district(order.districtId)).emit('order:new', orderWithoutPhone);
     io.to(rooms.admins()).emit('order:new', order);

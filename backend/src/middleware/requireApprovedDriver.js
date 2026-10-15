@@ -1,6 +1,8 @@
 const prisma = require('../lib/prisma');
 const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
+const { hasFreshGps } = require('../modules/driver/gps-eligibility');
+const { syncDriverDistrictRoom } = require('../sockets/roomSync');
 
 // An access token stays valid for its full lifetime even if an admin blocks
 // the driver a second later - so every driver-only route re-checks the
@@ -36,6 +38,10 @@ const requireApprovedDriver = asyncHandler(async (req, res, next) => {
     );
   }
 
+  if (driver.isOnline && !hasFreshGps(driver)) {
+    await syncDriverDistrictRoom(driver.id);
+    driver.isOnline = false;
+  }
   req.driver = driver;
   next();
 });
