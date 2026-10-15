@@ -98,14 +98,14 @@ test('private driver data requires authentication and dispatcher data requires a
 
 test('dispatcher cannot create an order without a valid customer phone', async () => {
   for (const clientPhone of [undefined, '', '   ', 'call-me', '+', '12']) {
-    const response = await request('/admin/orders', adminToken, { districtId: regionId, ...(clientPhone === undefined ? {} : { clientPhone }) });
+    const response = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, ...(clientPhone === undefined ? {} : { clientPhone }) });
     assert.equal(response.status, 400, `invalid phone ${String(clientPhone)} must be rejected`);
   }
 });
 
 test('dispatcher must select a region even when map coordinates are supplied', async () => {
   for (const coordinates of [{}, { pickupLat: 37.96, pickupLng: 58.32 }]) {
-    const response = await request('/admin/orders', adminToken, { clientPhone: '+99361234567', ...coordinates });
+    const response = await request('/admin/orders', adminToken, { clientPhone: '+99361234567', priceEstimated: 10, ...coordinates });
     assert.equal(response.status, 400);
   }
 });
