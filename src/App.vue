@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { useDocumentVisibility } from "@vueuse/core";
 import { useRoute, useRouter } from "vue-router";
 import {
   LayoutDashboard,
@@ -34,6 +35,7 @@ import {
 } from "@/shared/ui/dropdown-menu";
 import { driverState } from "@/features/driver/useDriver";
 const route = useRoute();
+const visibility = useDocumentVisibility();
 const chat = computed(
   () => route.path === "/driverChat" || route.path.startsWith("/adminChat"),
 );
@@ -149,6 +151,11 @@ async function logout() {
                 online: driver
                   ? driverState.profile?.isOnline
                   : session.state.connected,
+                'connection-pulse':
+                  visibility === 'visible' &&
+                  session.state.connected &&
+                  (!driver ||
+                    (driverState.profile?.isOnline && driverState.gpsReady)),
               }"
             />{{
               driver
@@ -301,6 +308,8 @@ async function logout() {
   gap: 0.4rem;
 }
 .connection i {
+  position: relative;
+  flex-shrink: 0;
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -312,6 +321,31 @@ async function logout() {
 .connection .online,
 .driver-workspace .connection .online {
   background: var(--primary);
+}
+.connection-pulse::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border: 1px solid var(--primary);
+  border-radius: inherit;
+  pointer-events: none;
+  animation: connection-ripple 2.8s ease-out infinite;
+}
+@keyframes connection-ripple {
+  0% {
+    opacity: 0.65;
+    transform: scale(1);
+  }
+  60%,
+  100% {
+    opacity: 0;
+    transform: scale(1.9);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .connection-pulse::after {
+    display: none;
+  }
 }
 .admin-content {
   max-width: 1600px;

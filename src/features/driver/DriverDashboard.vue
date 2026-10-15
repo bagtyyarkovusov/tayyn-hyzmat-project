@@ -114,7 +114,7 @@ watch(
           /></Button>
           <Button
             variant="outline"
-            class="relative size-12 shrink-0 rounded-full border-2 shadow-none [&_svg]:size-6 motion-safe:transition-[background-color,border-color,color,transform] motion-safe:duration-200 active:scale-95"
+            class="relative size-12 shrink-0 overflow-visible rounded-full border-2 shadow-none [&_svg]:size-6 motion-safe:transition-[background-color,border-color,color,transform] motion-safe:duration-200 active:scale-95"
             :class="
               state.profile?.isOnline
                 ? 'border-emerald-300 bg-emerald-300 text-emerald-950 hover:bg-emerald-200 dark:border-emerald-400 dark:bg-emerald-400 dark:hover:bg-emerald-300'
@@ -140,13 +140,13 @@ watch(
                 session.state.connected &&
                 visibility === 'visible'
               "
-              class="online-beacon pointer-events-none absolute inset-0 rounded-full border-2 border-current"
+              class="online-beacon pointer-events-none absolute -inset-1 rounded-full border border-current"
               aria-hidden="true"
             />
             <span
               v-if="availabilityPulse"
               :key="String(state.profile?.isOnline)"
-              class="availability-pulse pointer-events-none absolute inset-0 rounded-full border-2 border-current"
+              class="availability-pulse pointer-events-none absolute -inset-1 rounded-full border border-current"
               aria-hidden="true"
               @animationend="availabilityPulse = false"
             />
@@ -332,19 +332,14 @@ watch(
   animation: online-beacon 2.8s ease-out infinite;
 }
 @keyframes online-beacon {
-  0%,
-  65%,
+  0% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  60%,
   100% {
     opacity: 0;
-    transform: scale(1);
-  }
-  10% {
-    opacity: 0.5;
-    transform: scale(1);
-  }
-  55% {
-    opacity: 0;
-    transform: scale(1.3);
+    transform: scale(1.22);
   }
 }
 .availability-pulse {
@@ -357,7 +352,7 @@ watch(
   }
   to {
     opacity: 0;
-    transform: scale(1.4);
+    transform: scale(1.25);
   }
 }
 @media (prefers-reduced-motion: reduce) {
