@@ -16,10 +16,10 @@
     "prisma:studio": "prisma studio",
     "seed": "node prisma/seed.js",
     "build": "tsc -p tsconfig.json",
-    "typecheck": "npm run build && tsc -p tsconfig.tests.json --noEmit",
+    "typecheck": "pnpm build && tsc -p tsconfig.tests.json --noEmit",
     "test:unit": "tsx --test tests/geo.test.ts",
     "test:integration": "node ../scripts/test-backend.mjs",
-    "test": "npm run test:unit && npm run test:integration"
+    "test": "pnpm test:unit && pnpm test:integration"
   },
   "prisma": {
     "seed": "node prisma/seed.js"

@@ -1,0 +1,8 @@
+packages:
+  - backend
+  - legacy
+onlyBuiltDependencies:
+  - "@prisma/client"
+  - "@prisma/engines"
+  - prisma
+  - esbuild

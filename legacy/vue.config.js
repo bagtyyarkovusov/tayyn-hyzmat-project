@@ -1,4 +1,6 @@
 module.exports = {
+  publicPath: '/legacy/',
+  outputDir: '../dist/legacy',
   transpileDependencies: ['vuetify'],
 
   // @vue/cli-plugin-pwa's default generated service worker only takes over

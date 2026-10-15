@@ -110,3 +110,10 @@ android/app/src/main/assets/public
 *.keystore
 .railway
 .local/
+
+# Modern frontend/tooling output
+playwright-report/
+test-results/
+.vite/
+.pnpm-store/
+*.tsbuildinfo
