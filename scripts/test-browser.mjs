@@ -108,7 +108,8 @@ try {
     TAYYN_TEST_API: `http://127.0.0.1:${apiPort}`,
     VITE_API_URL: "/api",
     VITE_SOCKET_URL: `http://127.0.0.1:${webPort}`,
-    VITE_YANDEX_MAPS_API_KEY: "",
+    // Browser specs replace only the external map SDK, never internal APIs.
+    VITE_YANDEX_MAPS_API_KEY: serving ? "" : "synthetic-browser-test-key",
     VUE_APP_YANDEX_MAPS_API_KEY: "",
     DISPOSABLE_BROWSER_TEST: "true",
     TEST_BASE_URL: `http://127.0.0.1:${webPort}`,
