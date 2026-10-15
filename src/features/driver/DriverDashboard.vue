@@ -21,16 +21,8 @@ import { money } from "./model";
 import IncomingOrder from "./components/IncomingOrder.vue";
 import ActiveTrip from "./components/ActiveTrip.vue";
 import AvailableOrders from "./components/AvailableOrders.vue";
-const {
-  state,
-  refresh,
-  setOnline,
-  setDistrict,
-  enableGps,
-  dismissIncoming,
-  countdown,
-  session,
-} = useDriver();
+const { state, refresh, setOnline, setDistrict, enableGps, session } =
+  useDriver();
 const selected = ref<string | null>(null),
   manualRegion = ref("");
 const selectedDistrict = computed(() =>

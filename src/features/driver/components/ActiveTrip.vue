@@ -105,7 +105,11 @@ async function cancel() {
         :disabled="state.busy"
         @click="transition('complete')"
         >Завершить поездку</Button
-      ><Button variant="ghost" :disabled="state.busy" @click="cancelOpen = true"
+      ><Button
+        v-if="state.active.status !== 'STARTED'"
+        variant="ghost"
+        :disabled="state.busy"
+        @click="cancelOpen = true"
         >Отменить заказ</Button
       >
     </div>
@@ -114,8 +118,8 @@ async function cancel() {
         ><DialogHeader
           ><DialogTitle>Отменить текущий заказ?</DialogTitle
           ><DialogDescription
-            >Заказ будет закрыт. Возврат тестового списания определяется текущим
-            этапом поездки.</DialogDescription
+            >Заказ будет закрыт. Тестовое списание за принятие заказа вернётся
+            на баланс.</DialogDescription
           ></DialogHeader
         ><label for="cancel-reason" class="field-label">Причина отмены</label
         ><Textarea
