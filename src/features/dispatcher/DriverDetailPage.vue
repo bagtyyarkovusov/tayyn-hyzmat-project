@@ -112,7 +112,6 @@ function adjust(withdraw: boolean) {
       v-if="driver"
       ><header class="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p class="eyebrow">Карточка водителя</p>
           <h1 class="page-heading">{{ driver.user.fullName }}</h1>
           <a
             :href="`tel:${driver.user.phone}`"

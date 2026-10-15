@@ -91,7 +91,6 @@ function focus(d: Driver) {
 <template>
   <div class="space-y-5">
     <header>
-      <p class="eyebrow">В реальном времени</p>
       <h1 class="page-heading">Мониторинг</h1>
       <p class="mt-2 text-muted-foreground">
         {{ data.filter((d) => d.isOnline).length }} водителей на линии. Показаны

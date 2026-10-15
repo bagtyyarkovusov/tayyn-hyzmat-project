@@ -45,7 +45,6 @@ const visible = computed(() =>
 <template>
   <div class="space-y-6">
     <header>
-      <p class="eyebrow">Команда</p>
       <h1 class="page-heading">
         Водители <span class="text-muted-foreground">{{ data.total }}</span>
       </h1>

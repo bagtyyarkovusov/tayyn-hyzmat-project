@@ -16,7 +16,6 @@ const { data, loading, error, load } = useResource(
   <div class="space-y-6">
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <p class="eyebrow">Территория работы</p>
         <h1 class="page-heading">Районы</h1>
         <p class="mt-2 text-muted-foreground">
           Спрос и доступность водителей по городу.

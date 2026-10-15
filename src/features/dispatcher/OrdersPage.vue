@@ -80,7 +80,6 @@ async function confirmCancel() {
   <div class="space-y-6">
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <p class="eyebrow">Управление поездками</p>
         <h1 class="page-heading">
           Заказы <span class="text-muted-foreground">{{ data.total }}</span>
         </h1>

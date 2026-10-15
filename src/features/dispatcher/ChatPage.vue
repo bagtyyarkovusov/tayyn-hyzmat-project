@@ -119,7 +119,6 @@ async function send(all = false) {
   <div class="space-y-6">
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <p class="eyebrow">Связь с командой</p>
         <h1 class="page-heading">Сообщения</h1>
       </div>
       <Button

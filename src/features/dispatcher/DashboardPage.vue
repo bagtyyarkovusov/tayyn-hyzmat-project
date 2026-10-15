@@ -4,24 +4,53 @@ import { ArrowUpRight, Plus, Radio } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
 import { adminApi } from "@/shared/api";
 import { useResource } from "./useResource";
-import type { District, Driver, Order, Page } from "./domain";
+import {
+  money,
+  type District,
+  type Driver,
+  type Order,
+  type Page,
+} from "./domain";
 import PageState from "./components/PageState.vue";
 const { data, loading, error, load } = useResource(
   async () => {
-    const [regions, drivers, orders] = await Promise.all([
+    const [regions, drivers, orders, completed, pending] = await Promise.all([
       adminApi.get<District[]>("/districts"),
       adminApi.get<Page<Driver>>("/admin/drivers", { params: { limit: 100 } }),
       adminApi.get<Page<Order>>("/admin/orders", {
         params: { status: "active", limit: 1 },
+      }),
+      adminApi.get<Page<Order>>("/admin/orders", {
+        params: { status: "completed", limit: 100 },
+      }),
+      adminApi.get<Page<Driver>>("/admin/drivers", {
+        params: { status: "PENDING", limit: 1 },
       }),
     ]);
     return {
       regions: regions.data,
       drivers: drivers.data.items,
       orders: orders.data.total,
+      totalDrivers: drivers.data.total,
+      pending: pending.data.total,
+      completed: completed.data.total,
+      revenue: completed.data.items.reduce(
+        (sum, o) => sum + Number(o.priceFinal ?? o.priceEstimated ?? 0),
+        0,
+      ),
+      revenueCount: completed.data.items.length,
     };
   },
-  { regions: [] as District[], drivers: [] as Driver[], orders: 0 },
+  {
+    regions: [] as District[],
+    drivers: [] as Driver[],
+    orders: 0,
+    totalDrivers: 0,
+    pending: 0,
+    completed: 0,
+    revenue: 0,
+    revenueCount: 0,
+  },
   [
     "districts:stats",
     "driver:status",
@@ -35,7 +64,6 @@ const { data, loading, error, load } = useResource(
   <div class="space-y-7">
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <p class="eyebrow">Диспетчерская</p>
         <h1 class="page-heading">Рабочая смена</h1>
         <p class="mt-2 text-muted-foreground">
           Заказы, водители и районы в одном месте.
@@ -67,19 +95,52 @@ const { data, loading, error, load } = useResource(
             {{ data.drivers.filter((d) => d.isOnline).length }}
           </p>
           <p class="mt-5 text-sm text-muted-foreground">
-            из {{ data.drivers.length }} загруженных
+            из {{ data.totalDrivers }} водителей<span
+              v-if="data.totalDrivers > 100"
+            >
+              · показаны последние 100</span
+            >
           </p>
         </div>
         <div class="rounded-xl border bg-card p-5">
           <p class="text-sm text-muted-foreground">Ожидают проверки</p>
           <p class="mt-3 text-4xl font-semibold tabular-nums">
-            {{ data.drivers.filter((d) => d.status === "PENDING").length }}
+            {{ data.pending }}
           </p>
           <RouterLink
             to="/adminDrivers?status=PENDING"
             class="mt-5 inline-block text-sm text-primary"
             >Проверить заявки →</RouterLink
           >
+        </div>
+      </section>
+      <section
+        class="flex flex-wrap justify-between gap-5 rounded-xl border bg-card p-5"
+        aria-label="История завершённых поездок"
+      >
+        <div>
+          <p class="text-xs text-muted-foreground">Завершённых поездок</p>
+          <p class="mt-2 text-xl font-semibold tabular-nums">
+            {{ data.completed }}
+          </p>
+        </div>
+        <div>
+          <p class="text-xs text-muted-foreground">
+            Сумма последних {{ data.revenueCount }} поездок
+          </p>
+          <p class="mt-2 text-xl font-semibold tabular-nums">
+            {{ money(data.revenue) }}
+          </p>
+        </div>
+        <div>
+          <p class="text-xs text-muted-foreground">
+            Средняя стоимость последних {{ data.revenueCount }} поездок
+          </p>
+          <p class="mt-2 text-xl font-semibold tabular-nums">
+            {{
+              money(data.revenueCount ? data.revenue / data.revenueCount : 0)
+            }}
+          </p>
         </div>
       </section>
       <section>

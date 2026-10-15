@@ -279,7 +279,6 @@ onUnmounted(() => {
 <template>
   <div class="space-y-5">
     <header>
-      <p class="eyebrow">Территория работы</p>
       <h1 class="page-heading">Границы районов</h1>
       <p class="mt-2 max-w-2xl text-sm text-muted-foreground">
         Выберите район и перемещайте вершины на карте. Изменения отправляются на
