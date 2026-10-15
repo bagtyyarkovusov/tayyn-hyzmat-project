@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { useDocumentVisibility } from "@vueuse/core";
+import { useDocumentVisibility, useOnline } from "@vueuse/core";
 import {
   MapPin,
   LocateFixed,
@@ -27,6 +27,13 @@ import AvailableOrders from "./components/AvailableOrders.vue";
 const { state, setOnline, enableGps, session, dismissIncoming } = useDriver();
 const selected = ref<string | null>(null);
 const visibility = useDocumentVisibility();
+const networkOnline = useOnline();
+const connectionReady = computed(
+  () => networkOnline.value && session.state.connected,
+);
+const liveOnline = computed(
+  () => !!state.profile?.isOnline && state.gpsReady && connectionReady.value,
+);
 const availabilityPulse = ref(false);
 watch(
   () => state.profile?.isOnline,
@@ -123,6 +130,15 @@ watch(
             :aria-label="
               state.profile?.isOnline ? 'Уйти с линии' : 'Выйти на линию'
             "
+            :aria-description="
+              !state.profile?.isOnline
+                ? 'Не на линии.'
+                : !connectionReady
+                  ? 'Нет связи с диспетчером. Переподключаемся.'
+                  : !state.gpsReady
+                    ? 'Нет актуального GPS.'
+                    : 'На линии. Связь с диспетчером установлена.'
+            "
             :aria-pressed="!!state.profile?.isOnline"
             :aria-busy="state.busy"
             :disabled="
@@ -134,19 +150,14 @@ watch(
             @click="setOnline"
           >
             <span
-              v-if="
-                state.profile?.isOnline &&
-                state.gpsReady &&
-                session.state.connected &&
-                visibility === 'visible'
-              "
-              class="online-beacon pointer-events-none absolute -inset-1 rounded-full border border-current"
+              v-if="liveOnline && visibility === 'visible'"
+              class="online-beacon pointer-events-none absolute -inset-1 rounded-full border-2 border-primary"
               aria-hidden="true"
             />
             <span
               v-if="availabilityPulse"
               :key="String(state.profile?.isOnline)"
-              class="availability-pulse pointer-events-none absolute -inset-1 rounded-full border border-current"
+              class="availability-pulse pointer-events-none absolute -inset-1 rounded-full border-2 border-primary"
               aria-hidden="true"
               @animationend="availabilityPulse = false"
             />
@@ -216,7 +227,7 @@ watch(
       GPS · точность {{ Math.round(state.position.accuracy) }} м
     </p>
     <p
-      v-if="!session.state.connected"
+      v-if="!connectionReady"
       role="status"
       class="shrink-0 text-xs text-destructive"
     >

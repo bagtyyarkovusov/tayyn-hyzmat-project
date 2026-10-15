@@ -857,6 +857,21 @@ test("regional queues and counts recover through updates, reconnect and reload",
     await expect(
       driver.getByRole("button", { name: "Уйти с линии", exact: true }),
     ).toBeVisible();
+    const power = driver.getByRole("button", {
+      name: "Уйти с линии",
+      exact: true,
+      includeHidden: true,
+    });
+    await driver.mouse.move(0, 0);
+    await expect(power).toHaveAttribute(
+      "aria-description",
+      "На линии. Связь с диспетчером установлена.",
+    );
+    await expect(power.locator(".online-beacon")).toHaveCSS(
+      "animation-iteration-count",
+      "infinite",
+    );
+    expect(await power.evaluate((el) => el.matches(":hover"))).toBe(false);
     const token = await dispatcher.evaluate(() =>
       localStorage.getItem("openride.admin.accessToken"),
     );
@@ -912,8 +927,18 @@ test("regional queues and counts recover through updates, reconnect and reload",
     ).not.toBeVisible();
     await expect(queue.getByLabel("Буду через")).toHaveValue("20");
     await b.setOffline(true);
+    await expect(power).toHaveAttribute(
+      "aria-description",
+      "Нет связи с диспетчером. Переподключаемся.",
+    );
+    await expect(power.locator(".online-beacon")).toHaveCount(0);
     const third = await create("Live pickup while disconnected");
     await b.setOffline(false);
+    await expect(power).toHaveAttribute(
+      "aria-description",
+      "На линии. Связь с диспетчером установлена.",
+    );
+    await expect(power.locator(".online-beacon")).toHaveCount(1);
     await expect(
       queue.getByText("Live pickup while disconnected", { exact: true }),
     ).toBeVisible();

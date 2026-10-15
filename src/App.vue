@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { useDocumentVisibility } from "@vueuse/core";
+import { useDocumentVisibility, useOnline } from "@vueuse/core";
 import { useRoute, useRouter } from "vue-router";
 import {
   LayoutDashboard,
@@ -36,6 +36,7 @@ import {
 import { driverState } from "@/features/driver/useDriver";
 const route = useRoute();
 const visibility = useDocumentVisibility();
+const networkOnline = useOnline();
 const chat = computed(
   () => route.path === "/driverChat" || route.path.startsWith("/adminChat"),
 );
@@ -153,6 +154,7 @@ async function logout() {
                   : session.state.connected,
                 'connection-pulse':
                   visibility === 'visible' &&
+                  networkOnline &&
                   session.state.connected &&
                   (!driver ||
                     (driverState.profile?.isOnline && driverState.gpsReady)),
