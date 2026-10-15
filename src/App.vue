@@ -22,6 +22,7 @@ import {
   setTheme,
   type ThemePreference,
 } from "@/shared/theme";
+import { driverState } from "@/features/driver/useDriver";
 const route = useRoute();
 const router = useRouter();
 const auth = computed(() =>
@@ -59,7 +60,16 @@ async function logout() {
 </script>
 <template>
   <RouterView v-if="auth" />
-  <div v-else :class="['workspace', { 'driver-workspace': driver }]">
+  <div
+    v-else
+    :class="[
+      'workspace',
+      {
+        'driver-workspace': driver,
+        'driver-home-workspace': route.path === '/driverDashboard',
+      },
+    ]"
+  >
     <aside v-if="!driver" class="sidebar">
       <RouterLink to="/adminDashboard" class="brand"
         ><span class="brand-symbol">т</span
@@ -102,8 +112,20 @@ async function logout() {
             class="font-semibold"
             >{{ driver ? "Тайын Хызмат" : "Диспетчерская" }}</span
           ><span class="connection"
-            ><i :class="{ online: session.state.connected }" />{{
-              session.state.connected ? "На связи" : "Подключение…"
+            ><i
+              :class="{
+                online: driver
+                  ? driverState.profile?.isOnline
+                  : session.state.connected,
+              }"
+            />{{
+              driver
+                ? driverState.profile?.isOnline
+                  ? "На линии"
+                  : "Не на линии"
+                : session.state.connected
+                  ? "На связи"
+                  : "Подключение…"
             }}</span
           >
         </div>
@@ -239,7 +261,11 @@ async function logout() {
   border-radius: 50%;
   background: var(--muted-foreground);
 }
-.connection .online {
+.driver-workspace .connection i {
+  background: var(--destructive);
+}
+.connection .online,
+.driver-workspace .connection .online {
   background: var(--primary);
 }
 .theme-select {
@@ -349,6 +375,48 @@ async function logout() {
   }
   .driver-content {
     padding: 1.25rem 1rem 7rem;
+  }
+}
+/* Keep the regional overview between the app header and bottom navigation. */
+.driver-home-workspace {
+  height: 100dvh;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+.driver-home-workspace > div {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.driver-home-workspace .workspace-header {
+  width: 100%;
+  flex-shrink: 0;
+}
+.driver-home-workspace .driver-content {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  margin: 0 auto;
+  padding: 0.5rem 0.75rem;
+}
+.driver-home-workspace .driver-nav {
+  position: static;
+  transform: none;
+  flex-shrink: 0;
+  margin: 0 auto;
+}
+@media (orientation: landscape) and (max-height: 500px) {
+  .driver-home-workspace .workspace-header {
+    height: 48px;
+  }
+  .driver-home-workspace .driver-nav {
+    padding-top: 0.25rem;
+    padding-bottom: max(0.25rem, env(safe-area-inset-bottom));
+  }
+  .driver-home-workspace .driver-nav a {
+    padding-block: 0.15rem;
+    gap: 0;
   }
 }
 </style>

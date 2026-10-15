@@ -8,6 +8,7 @@ export interface District {
   centerLng?: Money;
   activeOrders: number;
   freeDrivers: number;
+  onlineDrivers?: number;
 }
 export interface Order {
   id: string;

@@ -3,11 +3,12 @@ import { computed, ref, watch } from "vue";
 import {
   MapPin,
   RefreshCw,
-  ChevronRight,
   LocateFixed,
   Power,
   Bell,
   LoaderCircle,
+  ChevronRight,
+  CircleAlert,
 } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
 import {
@@ -23,233 +24,295 @@ import { money } from "./model";
 import IncomingOrder from "./components/IncomingOrder.vue";
 import ActiveTrip from "./components/ActiveTrip.vue";
 import AvailableOrders from "./components/AvailableOrders.vue";
-const { state, refresh, setOnline, setDistrict, enableGps, session } =
+const { state, refresh, setOnline, enableGps, session, dismissIncoming } =
   useDriver();
-const selected = ref<string | null>(null),
-  manualRegion = ref("");
+const selected = ref<string | null>(null);
+const tripOpen = ref(false),
+  messageOpen = ref(false);
 const selectedDistrict = computed(() =>
   state.districts.find((d) => d.id === selected.value),
 );
 const ownRegion = computed(
   () =>
     state.districts.find((d) => d.id === state.profile?.districtId)?.name ||
-    "Не определён",
+    "Район не определён",
+);
+const message = computed(
+  () =>
+    state.error ||
+    state.gpsError ||
+    state.notice ||
+    (state.balance && Number(state.balance.amount) <= 0
+      ? "Для выхода на линию пополните баланс у диспетчера."
+      : ""),
+);
+const incomingOpen = computed(
+  () => !!state.incoming && !state.active && !selected.value,
 );
 watch(
   () => state.active?.id,
-  (orderId) => {
-    if (orderId) selected.value = null;
+  (id) => {
+    if (id) {
+      selected.value = null;
+    }
+    tripOpen.value = !!id;
   },
 );
 </script>
 <template>
-  <div class="mx-auto max-w-xl space-y-4">
-    <header class="flex items-center justify-between gap-3">
-      <h1 class="text-lg font-semibold">На линии</h1>
-      <div class="flex items-center gap-2">
+  <div class="driver-home mx-auto flex h-full max-w-xl flex-col gap-2">
+    <h1 class="sr-only">Заказы по районам</h1>
+    <div class="driver-controls flex shrink-0 flex-col gap-2">
+      <header class="flex shrink-0 items-center gap-2">
         <span
-          class="text-sm font-semibold tabular-nums"
+          class="mr-auto text-sm font-semibold tabular-nums"
           aria-label="Тестовый баланс"
+          >{{ state.balance ? money(state.balance.amount) : "…" }}</span
         >
-          {{ state.balance ? money(state.balance.amount) : "…" }}
-        </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Обновить данные"
-          :disabled="state.loading"
-          @click="refresh"
-        >
-          <RefreshCw
-            class="size-4"
-            :class="{ 'animate-spin': state.loading }"
-          />
-        </Button>
-      </div>
-    </header>
-    <p
-      v-if="state.error"
-      role="alert"
-      class="rounded-lg border border-destructive/30 p-3 text-sm text-destructive"
-    >
-      {{ state.error }}
-    </p>
-    <p
-      v-if="state.notice"
-      role="status"
-      class="rounded-lg bg-primary/10 p-3 text-primary"
-    >
-      {{ state.notice }}
-    </p>
-    <section
-      aria-label="Выход на линию"
-      class="flex flex-col items-center gap-3 py-2"
-    >
-      <Button
-        variant="outline"
-        class="size-24 rounded-full border-4 shadow-none [&_svg]:size-9 motion-safe:transition-[background-color,border-color,color,transform] motion-safe:duration-200 active:scale-95"
-        :class="
-          state.profile?.isOnline
-            ? 'border-primary/25 bg-primary text-primary-foreground hover:bg-primary/90'
-            : 'border-border bg-card text-muted-foreground hover:bg-muted'
-        "
-        :aria-label="
-          state.profile?.isOnline ? 'Уйти с линии' : 'Выйти на линию'
-        "
-        :aria-pressed="!!state.profile?.isOnline"
-        :aria-busy="state.busy"
-        :disabled="
-          state.busy ||
-          !state.profile ||
-          (!state.profile.isOnline && Number(state.balance?.amount ?? 0) <= 0)
-        "
-        @click="setOnline"
-      >
-        <LoaderCircle
-          v-if="state.busy"
-          class="motion-safe:animate-spin"
-          aria-hidden="true"
-        />
-        <Power v-else :stroke-width="2.5" aria-hidden="true" />
-      </Button>
-      <span class="sr-only" role="status">{{
-        state.profile?.isOnline ? "Вы принимаете заказы" : "Вы не на линии"
-      }}</span>
-      <p v-if="!session.state.connected" role="status" class="muted text-xs">
-        Переподключаемся к диспетчеру…
-      </p>
-      <p
-        v-if="state.balance && Number(state.balance.amount) <= 0"
-        class="text-sm text-destructive"
-      >
-        Для выхода на линию пополните баланс у диспетчера.
-      </p>
-    </section>
-    <ActiveTrip />
-    <IncomingOrder />
-    <section class="space-y-2">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <div class="flex min-w-0 items-center gap-2 text-sm font-medium">
-          <MapPin class="size-4 shrink-0 text-primary" aria-hidden="true" />
-          <span class="break-words">{{ ownRegion }}</span>
-        </div>
-        <div class="flex items-center gap-1">
+        <div class="flex items-center justify-end gap-1">
           <Button
             variant="ghost"
-            size="sm"
-            class="min-h-11"
+            size="icon"
+            class="size-11"
             :disabled="state.gpsPending"
             aria-label="Включить GPS"
             @click="enableGps"
           >
-            <LocateFixed class="size-4" aria-hidden="true" />
-            {{ state.gpsPending ? "Ищем…" : "GPS" }}
+            <LocateFixed
+              class="size-5"
+              :class="{
+                'text-primary': state.position,
+                'motion-safe:animate-pulse': state.gpsPending,
+              }"
+            />
           </Button>
           <Button
             variant="ghost"
-            size="sm"
-            class="min-h-11"
+            size="icon"
+            class="size-11"
             aria-label="Включить уведомления и звук"
             @click="enableOrderAlerts"
+            ><Bell class="size-5"
+          /></Button>
+          <Button
+            variant="outline"
+            class="size-12 shrink-0 rounded-full border-2 shadow-none [&_svg]:size-6 motion-safe:transition-[background-color,border-color,color,transform] motion-safe:duration-200 active:scale-95"
+            :class="
+              state.profile?.isOnline
+                ? 'border-emerald-300 bg-emerald-300 text-emerald-950 hover:bg-emerald-200 dark:border-emerald-400 dark:bg-emerald-400 dark:hover:bg-emerald-300'
+                : 'border-red-200 bg-red-100 text-red-700 hover:bg-red-200 dark:border-red-800 dark:bg-red-950 dark:text-red-300 dark:hover:bg-red-900'
+            "
+            :aria-label="
+              state.profile?.isOnline ? 'Уйти с линии' : 'Выйти на линию'
+            "
+            :aria-pressed="!!state.profile?.isOnline"
+            :aria-busy="state.busy"
+            :disabled="
+              state.busy ||
+              !state.profile ||
+              (!state.profile.isOnline &&
+                Number(state.balance?.amount ?? 0) <= 0)
+            "
+            @click="setOnline"
           >
-            <Bell class="size-4" aria-hidden="true" />Звук
+            <LoaderCircle
+              v-if="state.busy"
+              class="motion-safe:animate-spin"
+              aria-hidden="true"
+            />
+            <Power v-else :stroke-width="2.5" aria-hidden="true" />
           </Button>
         </div>
-      </div>
-      <p v-if="state.position" class="muted text-xs" role="status">
-        GPS · точность {{ Math.round(state.position.accuracy) }} м
-      </p>
-      <p v-if="state.gpsError" role="status" class="text-sm text-destructive">
-        {{ state.gpsError }}
-      </p>
-      <details class="border-t pt-2">
-        <summary class="cursor-pointer text-sm font-medium">
-          Выбрать район
-        </summary>
-        <p class="muted my-3 text-sm">
-          Следующая успешная GPS-отправка снова определит район автоматически.
-        </p>
-        <form
-          class="flex flex-wrap gap-2"
-          @submit.prevent="setDistrict(manualRegion)"
+      </header>
+      <span class="sr-only" role="status">{{
+        state.profile?.isOnline ? "Вы принимаете заказы" : "Вы не на линии"
+      }}</span>
+      <div class="flex shrink-0 items-center justify-between gap-2">
+        <div
+          class="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-sm"
+          aria-label="Местоположение GPS"
         >
-          <label for="manual-region" class="sr-only">Район вручную</label
-          ><select
-            id="manual-region"
-            v-model="manualRegion"
-            class="native-select min-h-11 min-w-0 flex-1"
-            required
+          <MapPin class="size-4 shrink-0 text-primary" />
+          <span class="min-w-0 truncate"
+            >{{ state.position ? ownRegion : "Ожидаем GPS"
+            }}<span
+              v-if="state.position"
+              class="ml-2 text-xs text-muted-foreground"
+              >{{ state.position.lat.toFixed(4) }},
+              {{ state.position.lng.toFixed(4) }}</span
+            ></span
           >
-            <option value="" disabled>Выберите район</option>
-            <option v-for="d in state.districts" :key="d.id" :value="d.id">
-              {{ d.name }}
-            </option></select
-          ><Button type="submit" :disabled="state.busy || !manualRegion"
-            >Сохранить</Button
-          >
-        </form>
-      </details>
-    </section>
-    <section>
-      <h2 class="mb-2 text-base font-semibold">Заказы по районам</h2>
-      <p
-        v-if="!state.profile?.isOnline"
-        class="muted rounded-lg border p-3 text-center text-sm"
-      >
-        Включите кнопку, чтобы принимать заказы.
-      </p>
-      <p
-        v-else-if="state.loading && !state.districts.length"
-        role="status"
-        class="muted py-6"
-      >
-        Загружаем районы…
-      </p>
-      <p v-else-if="!state.districts.length" class="muted py-6">
-        Районы ещё не настроены. Свяжитесь с диспетчером.
-      </p>
-      <div v-else class="divide-y rounded-xl border bg-card">
-        <button
-          v-for="d in state.districts"
-          :key="d.id"
-          class="flex min-h-14 w-full items-center gap-3 px-3 py-2 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          @click="selected = d.id"
+        </div>
+        <Button
+          v-if="state.active"
+          variant="secondary"
+          class="min-h-11 shrink-0"
+          @click="tripOpen = true"
+          >Поездка<ChevronRight
+        /></Button>
+        <Button
+          v-if="message"
+          variant="ghost"
+          size="icon"
+          class="size-11 shrink-0 text-destructive"
+          aria-label="Показать сообщение"
+          @click="messageOpen = true"
+          ><CircleAlert /><span
+            class="sr-only"
+            :role="state.error ? 'alert' : 'status'"
+            >{{ message }}</span
+          ></Button
         >
-          <div class="min-w-0 flex-1">
-            <p class="break-words font-medium">
-              {{ d.name
-              }}<span
-                v-if="d.id === state.profile?.districtId"
-                class="ml-2 text-xs text-primary"
-                >Мой район</span
-              >
-            </p>
-            <p class="muted mt-1 text-xs">
-              {{ d.freeDrivers }} свободных водителей
-            </p>
-          </div>
-          <span class="tabular-nums text-sm">{{ d.activeOrders }} заказов</span
-          ><ChevronRight class="size-4 shrink-0 text-muted-foreground" />
-        </button>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="size-11 shrink-0"
+          aria-label="Обновить данные"
+          :disabled="state.loading"
+          @click="refresh"
+          ><RefreshCw :class="{ 'motion-safe:animate-spin': state.loading }"
+        /></Button>
       </div>
-    </section>
-    <Dialog
-      :open="!!selected"
-      @update:open="
-        (value) => {
-          if (!value) selected = null;
-        }
-      "
+    </div>
+    <p v-if="state.position" class="sr-only" role="status">
+      GPS · точность {{ Math.round(state.position.accuracy) }} м
+    </p>
+    <p v-if="!session.state.connected" role="status" class="sr-only">
+      Переподключаемся к диспетчеру…
+    </p>
+    <p
+      v-if="state.loading && !state.districts.length"
+      role="status"
+      class="muted text-sm"
+    >
+      Загружаем районы…
+    </p>
+    <p v-else-if="!state.districts.length" class="muted text-sm">
+      Районы ещё не настроены. Свяжитесь с диспетчером.
+    </p>
+    <div
+      v-else
+      role="group"
+      aria-label="Регионы"
+      class="region-grid grid min-h-0 flex-1 grid-cols-3 gap-2"
+      :style="{
+        '--region-rows': Math.ceil(state.districts.length / 3),
+        '--region-wide-rows': Math.ceil(state.districts.length / 5),
+      }"
+    >
+      <button
+        v-for="d in state.districts"
+        :key="d.id"
+        class="flex min-h-0 min-w-0 flex-col items-center justify-center gap-2 rounded-xl border p-2 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        :class="[
+          d.activeOrders > 0
+            ? 'border-emerald-300 bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-900'
+            : 'bg-card hover:bg-secondary/50',
+          d.id === state.profile?.districtId ? 'ring-1 ring-primary' : '',
+        ]"
+        @click="selected = d.id"
+      >
+        <span
+          class="region-name break-words text-[13px] font-medium leading-tight"
+          >{{ d.name
+          }}<span v-if="d.id === state.profile?.districtId" class="sr-only">
+            · Мой район</span
+          ></span
+        >
+        <strong
+          class="region-score text-2xl font-semibold leading-none tabular-nums"
+          :aria-label="`Машин на линии: ${d.onlineDrivers ?? d.freeDrivers}. Заказов: ${d.activeOrders}`"
+          >{{ d.onlineDrivers ?? d.freeDrivers }}:{{ d.activeOrders }}</strong
+        >
+      </button>
+    </div>
+    <Dialog :open="!!selected" @update:open="!$event && (selected = null)"
       ><DialogContent class="max-h-[85dvh] overflow-y-auto"
         ><DialogHeader
           ><DialogTitle>Заказы района</DialogTitle
           ><DialogDescription
             >Выберите заказ и время прибытия.</DialogDescription
           ></DialogHeader
-        ><AvailableOrders
-          v-if="selectedDistrict"
+        >
+        <AvailableOrders
+          v-if="selectedDistrict && state.profile?.isOnline"
           :district-id="selectedDistrict.id"
-          :district-name="selectedDistrict.name" /></DialogContent
-    ></Dialog>
+          :district-name="selectedDistrict.name"
+        />
+        <p v-else class="muted text-sm">
+          Включите кнопку на главном экране, чтобы принимать заказы.
+        </p>
+      </DialogContent></Dialog
+    >
+    <Dialog :open="incomingOpen" @update:open="!$event && dismissIncoming()"
+      ><DialogContent class="max-h-[85dvh] overflow-y-auto"
+        ><DialogHeader class="sr-only"
+          ><DialogTitle>Предложение заказа</DialogTitle
+          ><DialogDescription
+            >Примите заказ или скройте предложение.</DialogDescription
+          ></DialogHeader
+        ><IncomingOrder />
+        <p v-if="state.error" role="alert" class="text-sm text-destructive">
+          {{ state.error }}
+        </p></DialogContent
+      ></Dialog
+    >
+    <Dialog v-model:open="tripOpen"
+      ><DialogContent class="max-h-[85dvh] overflow-y-auto"
+        ><DialogHeader class="sr-only"
+          ><DialogTitle>Управление поездкой</DialogTitle
+          ><DialogDescription
+            >Свяжитесь с клиентом и отмечайте этапы поездки.</DialogDescription
+          ></DialogHeader
+        ><ActiveTrip />
+        <p v-if="state.error" role="alert" class="text-sm text-destructive">
+          {{ state.error }}
+        </p></DialogContent
+      ></Dialog
+    >
+    <Dialog v-model:open="messageOpen"
+      ><DialogContent
+        ><DialogHeader
+          ><DialogTitle>Сообщение</DialogTitle
+          ><DialogDescription>{{ message }}</DialogDescription></DialogHeader
+        ></DialogContent
+      ></Dialog
+    >
   </div>
 </template>
+<style scoped>
+.region-grid {
+  max-height: 24rem;
+  grid-template-rows: repeat(var(--region-rows), minmax(0, 1fr));
+}
+@media (max-height: 650px) {
+  .driver-home {
+    gap: 0.375rem;
+  }
+  .region-name {
+    font-size: 12px;
+  }
+}
+@media (orientation: landscape) and (max-height: 500px) {
+  .driver-controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: center;
+  }
+  .region-grid > button {
+    padding: 4px;
+    gap: 2px;
+  }
+  .region-name {
+    font-size: 11px;
+    line-height: 1.1;
+  }
+  .region-score {
+    font-size: 18px;
+  }
+  .region-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-rows: repeat(var(--region-wide-rows), minmax(0, 1fr));
+  }
+}
+</style>

@@ -1,4 +1,4 @@
-import { onMounted, onUnmounted, reactive, watch } from "vue";
+import { onMounted, onUnmounted, reactive, readonly, watch } from "vue";
 import { driverApi, errorMessage } from "@/shared/api";
 import { driverSession } from "@/features/auth/session";
 import { closeOrderAlerts, notifyOrder } from "./alerts";
@@ -18,6 +18,7 @@ const state = reactive({
   gpsPending: false,
   position: null as { lat: number; lng: number; accuracy: number } | null,
 });
+export const driverState = readonly(state);
 let users = 0;
 let refreshVersion = 0;
 let sessionGeneration = 0;
@@ -141,8 +142,7 @@ async function setDistrict(districtId: string) {
 function enableGps() {
   state.gpsError = "";
   if (!navigator.geolocation) {
-    state.gpsError =
-      "Браузер не поддерживает геолокацию. Выберите район вручную.";
+    state.gpsError = "Браузер не поддерживает геолокацию.";
     return;
   }
   if (gpsWatch !== undefined) return;
@@ -189,8 +189,8 @@ function enableGps() {
       state.gpsPending = false;
       state.gpsError =
         error.code === error.PERMISSION_DENIED
-          ? "Нет доступа к GPS. Разрешите геолокацию в браузере или выберите район вручную."
-          : "GPS временно недоступен. Ожидаем координаты; район можно выбрать вручную.";
+          ? "Нет доступа к GPS. Разрешите геолокацию в браузере."
+          : "GPS временно недоступен. Ожидаем координаты.";
       // Permission denial ends the browser watch. Transient unavailable/timeout
       // errors keep watching so the next position fix can recover automatically.
       if (error.code === error.PERMISSION_DENIED) {

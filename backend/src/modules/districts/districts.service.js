@@ -16,7 +16,7 @@ async function listDistrictsWithStats() {
     orderBy: { name: 'asc' }
   });
 
-  const [orderCounts, candidateFreeDrivers] = await Promise.all([
+  const [orderCounts, candidateFreeDrivers, onlineCounts] = await Promise.all([
     prisma.order.groupBy({
       by: ['districtId'],
       where: { districtId: { not: null }, status: { notIn: ACTIVE_ORDER_STATUSES_EXCLUDED } },
@@ -28,11 +28,17 @@ async function listDistrictsWithStats() {
     prisma.driver.findMany({
       where: { districtId: { not: null }, status: 'APPROVED', isOnline: true, isAvailable: true },
       select: { districtId: true, user: { select: { balance: { select: { amount: true } } } } }
+    }),
+    prisma.driver.groupBy({
+      by: ['districtId'],
+      where: { districtId: { not: null }, status: 'APPROVED', isOnline: true },
+      _count: { _all: true }
     })
   ]);
 
   const orderCountByDistrict = new Map(orderCounts.map((row) => [row.districtId, row._count._all]));
 
+  const onlineCountByDistrict = new Map(onlineCounts.map(row => [row.districtId, row._count._all]));
   const freeDriverCountByDistrict = new Map();
   for (const driver of candidateFreeDrivers) {
     const hasPositiveBalance = driver.user.balance && Number(driver.user.balance.amount) > 0;
@@ -52,7 +58,8 @@ async function listDistrictsWithStats() {
     centerLat: Number(district.centerLat),
     centerLng: Number(district.centerLng),
     activeOrders: orderCountByDistrict.get(district.id) || 0,
-    freeDrivers: freeDriverCountByDistrict.get(district.id) || 0
+    freeDrivers: freeDriverCountByDistrict.get(district.id) || 0,
+    onlineDrivers: onlineCountByDistrict.get(district.id) || 0
   }));
 }
 

@@ -161,6 +161,24 @@ try {
           ],
         },
       });
+    if (!serving) {
+      await prisma.district.createMany({
+        data: [
+          "Гуртлы",
+          "Анау, Гами",
+          "Аркадаг, Ялкым",
+          "Ачабил, Бекреве",
+          "Микрорайон",
+          "Мир",
+          "Хитровка, Бедев",
+          "Чоганлы, Гарадамак",
+        ].map((name) => ({
+          name: `ТЕСТ · ${name}`,
+          centerLat: 0,
+          centerLng: 0,
+        })),
+      });
+    }
     env.TEST_REGION_ID = region.id;
     for (const [phone, name] of [
       ["+10000000101", "Тестовый водитель"],

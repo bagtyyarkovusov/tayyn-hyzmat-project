@@ -14,6 +14,8 @@ Use fresh synthetic data, synthetic balances, no real payments, and TMT only. Te
 
 Dispatchers can create approved driver accounts with a name, phone, password and region. New accounts start offline with a zero synthetic TMT balance; top-ups use the existing driver balance controls. First-device binding and later device approval continue to apply. Phone inputs start with +993 and remain editable.
 
+The driver home shows every region in a fixed viewport grid. Each card shows only its name and a cars:orders score. Cars counts approved online drivers, including those on a trip; orders counts active orders until completion or cancellation. Trip controls, incoming offers and order lists open in dialogs so the regional overview does not grow. The home location row is read-only and uses browser GPS coordinates; manual region selection is removed from this screen. Production GPS eligibility enforcement and an explicitly marked development simulator remain separate implementation work.
+
 ## Unresolved questions
 
 - Which offer strategy and driver eligibility rules should be used, and what should happen when pickup or fresh driver GPS is unavailable?

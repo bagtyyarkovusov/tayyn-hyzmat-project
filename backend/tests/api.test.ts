@@ -154,6 +154,17 @@ test('a claimed order progresses to completion and charges the quoted TMT price 
   assert.equal(balance.data.currency, 'TMT');
 });
 
+test('regional operating car count includes an online driver during a trip', async () => {
+  await request('/driver/status', driverToken, { isOnline: true, isAvailable: true });
+  const created = await order();
+  assert.equal((await request('/orders/accept', driverToken, {orderId: created.id})).status, 200);
+  const regions = await request('/districts', driverToken);
+  const region = regions.data.find((row: {id: string}) => row.id === regionId);
+  assert.equal(region.onlineDrivers, 1);
+  assert.equal(region.freeDrivers, 0);
+  assert.equal(region.activeOrders, 1);
+});
+
 test('only online drivers in the selected region receive an order offer without the customer phone', async () => {
   const own = await socket(driverToken);
   const other = await socket(otherToken);

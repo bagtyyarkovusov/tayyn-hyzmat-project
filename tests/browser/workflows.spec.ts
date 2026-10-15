@@ -436,7 +436,10 @@ test("dispatcher enters region, phone and price and the region modal closes afte
       .getByRole("button", { name: "Скрыть предложение", exact: true })
       .click();
     await driver.getByRole("button", { name: /ТЕСТ.*Центральный/ }).click();
-    const regionOrders = driver.getByRole("dialog");
+    const regionOrders = driver.getByRole("dialog", {
+      name: "Заказы района",
+      exact: true,
+    });
     await regionOrders
       .getByRole("button", { name: "Принять заказ", exact: true })
       .click();
@@ -444,6 +447,22 @@ test("dispatcher enters region, phone and price and the region modal closes afte
     await expect(
       driver.getByRole("link", { name: "+10000000888", exact: true }),
     ).toBeVisible();
+    await driver
+      .getByRole("dialog", { name: "Управление поездкой", exact: true })
+      .getByRole("button", { name: "Close", exact: true })
+      .click();
+    await driver.setViewportSize({ width: 320, height: 568 });
+    expect(
+      await driver.evaluate(
+        () => document.documentElement.scrollHeight <= innerHeight,
+      ),
+    ).toBe(true);
+    await expect(
+      driver
+        .getByRole("group", { name: "Регионы", exact: true })
+        .getByRole("button"),
+    ).toHaveCount(9);
+    await driver.getByRole("button", { name: "Поездка", exact: true }).click();
     for (const name of ["Я на месте", "Начать поездку", "Завершить поездку"])
       await driver.getByRole("button", { name, exact: true }).click();
     await driver.goto("/driverProfile");
@@ -493,4 +512,47 @@ test("dispatcher adds an approved driver and opens their zero TMT balance", asyn
   await expect(
     page.getByText("100 TMT", { exact: true }).first(),
   ).toBeVisible();
+});
+
+test("all nine driver regions fit on the home screen without page scrolling", async ({
+  page,
+}) => {
+  await login(page, "driver");
+  await page.context().grantPermissions(["geolocation"]);
+  await page
+    .context()
+    .setGeolocation({ latitude: 37.96, longitude: 58.32, accuracy: 10 });
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+  const regions = page.getByRole("group", { name: "Регионы", exact: true });
+  await expect(regions.getByRole("button")).toHaveCount(9);
+  for (const viewport of [
+    { width: 320, height: 568 },
+    { width: 390, height: 844 },
+    { width: 568, height: 320 },
+    { width: 844, height: 390 },
+  ]) {
+    await page.setViewportSize(viewport);
+    for (const card of await regions.getByRole("button").all()) {
+      await expect(card).toBeInViewport({ ratio: 1 });
+      expect(
+        await card.evaluate(
+          (e) =>
+            e.scrollHeight <= e.clientHeight && e.scrollWidth <= e.clientWidth,
+        ),
+      ).toBe(true);
+    }
+    expect(
+      await page.evaluate(
+        () =>
+          document.documentElement.scrollHeight <= innerHeight &&
+          document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    const grid = await regions.boundingBox();
+    const nav = await page
+      .getByRole("navigation", { name: "Разделы водителя" })
+      .boundingBox();
+    expect(grid!.y + grid!.height).toBeLessThanOrEqual(nav!.y);
+  }
 });
