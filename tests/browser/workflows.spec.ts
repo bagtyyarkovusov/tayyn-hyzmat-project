@@ -894,6 +894,10 @@ test("regional queues and counts recover through updates, reconnect and reload",
     for (const name of ["Я на месте", "Начать поездку", "Завершить поездку"])
       await driver.getByRole("button", { name, exact: true }).click();
     await expect(driver.getByLabel("Тестовый баланс")).toHaveText("488 TMT");
+    await startGps(driver);
+    await driver
+      .getByRole("button", { name: "Выйти на линию", exact: true })
+      .click();
     await test.step("an older HTTP snapshot cannot replace newer live counts", async () => {
       let release = () => {};
       try {
