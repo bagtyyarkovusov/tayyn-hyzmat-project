@@ -62,7 +62,7 @@ test("theme preference survives a refreshed deep link and mobile navigation stay
     )
     .toBe(true);
 });
-test("dispatcher order reaches an online driver, progresses to completion and debits exactly 10 TMT", async ({
+test("a driver must explicitly accept after five minutes, then completes a quoted trip for exactly 10 TMT", async ({
   browser,
 }) => {
   const dispatchContext = await browser.newContext();
@@ -80,6 +80,12 @@ test("dispatcher order reaches an online driver, progresses to completion and de
     await expect(
       driver.getByText("Вы принимаете заказы", { exact: true }),
     ).toBeVisible();
+    await driver.clock.install();
+    let claimRequests = 0;
+    driver.on("request", (request) => {
+      if (new URL(request.url()).pathname.endsWith("/orders/accept"))
+        claimRequests++;
+    });
     await dispatcher.goto("/adminOrders");
     await dispatcher
       .getByRole("button", { name: "Создать заказ", exact: true })
@@ -104,6 +110,15 @@ test("dispatcher order reaches an online driver, progresses to completion and de
     await expect(
       driver.getByText("Тестовая улица 10", { exact: true }),
     ).toBeVisible();
+    await driver.clock.fastForward(301000);
+    expect(claimRequests).toBe(0);
+    await expect(
+      driver.getByRole("heading", { name: "Текущая поездка" }),
+    ).not.toBeVisible();
+    await expect(
+      driver.getByRole("link", { name: "+10000000999", exact: true }),
+    ).not.toBeVisible();
+    await expect(driver.getByText(/500\s*TMT/).first()).toBeVisible();
     await driver
       .getByRole("button", { name: "Принять заказ", exact: true })
       .click();

@@ -3,7 +3,7 @@ import { ref } from "vue";
 import { Button } from "@/shared/ui/button";
 import { useDriver } from "../useDriver";
 import { money } from "../model";
-const { state, countdown, accept, dismissIncoming } = useDriver();
+const { state, accept, dismissIncoming } = useDriver();
 const eta = ref(10);
 </script>
 <template>
@@ -25,10 +25,7 @@ const eta = ref(10);
       {{ state.incoming.dropoffAddress }}
     </p>
     <p class="muted text-sm">
-      Автоматическое принятие через {{ Math.floor(countdown / 60) }}:{{
-        String(countdown % 60).padStart(2, "0")
-      }}
-      с прибытием за 5 мин. Скрытие предложения отменит автоматическое принятие.
+      Заказ принимается только после нажатия «Принять заказ».
     </p>
     <p class="muted text-xs">
       При принятии указанная сумма списывается с тестового баланса. Телефон

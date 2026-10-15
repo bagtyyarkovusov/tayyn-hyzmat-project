@@ -5,7 +5,7 @@
         <div class="flex items-center justify-between">
           <h2 class="text-lg font-bold text-slate-900 dark:text-white">Новый заказ</h2>
           <span class="rounded-full bg-brand-500 bg-opacity-10 px-3 py-1 text-xs font-semibold tabular-nums text-brand-700 dark:text-brand-400">
-            {{ countdownLabel }}
+            Только вручную
           </span>
         </div>
 
@@ -89,8 +89,6 @@
 </template>
 
 <script>
-const AUTO_ACCEPT_SECONDS = 5 * 60
-
 // Straight-line (haversine) estimate from the pickup/dropoff coordinates
 // already in the order payload - the backend only knows the real driven
 // distance after the trip is completed (see backend orders.service.js
@@ -113,9 +111,7 @@ export default {
   data() {
     return {
       etaOptions: [5, 10, 15, 20],
-      selectedEta: 10,
-      now: Date.now(),
-      tickTimer: null
+      selectedEta: 10
     }
   },
   computed: {
@@ -134,24 +130,7 @@ export default {
       if (pickupLat == null || pickupLng == null || dropoffLat == null || dropoffLng == null) return null
       const km = haversineKm(Number(pickupLat), Number(pickupLng), Number(dropoffLat), Number(dropoffLng))
       return km.toFixed(1)
-    },
-    remainingSeconds() {
-      const elapsed = Math.floor((this.now - this.order.receivedAt) / 1000)
-      return Math.max(0, AUTO_ACCEPT_SECONDS - elapsed)
-    },
-    countdownLabel() {
-      const m = Math.floor(this.remainingSeconds / 60)
-      const s = this.remainingSeconds % 60
-      return `${m}:${String(s).padStart(2, '0')}`
     }
-  },
-  mounted() {
-    this.tickTimer = window.setInterval(() => {
-      this.now = Date.now()
-    }, 1000)
-  },
-  beforeDestroy() {
-    window.clearInterval(this.tickTimer)
   },
   methods: {
     accept() {

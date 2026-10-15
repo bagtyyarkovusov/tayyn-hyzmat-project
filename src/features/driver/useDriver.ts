@@ -1,4 +1,4 @@
-import { computed, onMounted, onUnmounted, reactive, watch } from "vue";
+import { onMounted, onUnmounted, reactive, watch } from "vue";
 import { driverApi, errorMessage } from "@/shared/api";
 import { driverSession } from "@/features/auth/session";
 import { closeOrderAlerts, notifyOrder } from "./alerts";
@@ -10,8 +10,6 @@ const state = reactive({
   districts: [] as District[],
   active: null as Order | null,
   incoming: null as Order | null,
-  deadline: 0,
-  now: Date.now(),
   loading: false,
   busy: false,
   error: "",
@@ -24,17 +22,12 @@ let users = 0;
 let refreshVersion = 0;
 let sessionGeneration = 0;
 let cleanups: Array<() => void> = [];
-let clock: ReturnType<typeof setInterval> | undefined;
-let autoAccept: ReturnType<typeof setTimeout> | undefined;
 let gpsWatch: number | undefined;
 let lastLocationSent = 0;
 let locationSending = false;
 function dismissIncoming() {
   closeOrderAlerts();
-  if (autoAccept) clearTimeout(autoAccept);
-  autoAccept = undefined;
   state.incoming = null;
-  state.deadline = 0;
 }
 
 // Session cleanup outlives route components, including navigation to login.
@@ -221,8 +214,6 @@ function start() {
     if (state.active || state.incoming) return;
     state.incoming = order;
     notifyOrder(order);
-    state.deadline = Date.now() + 300000;
-    autoAccept = setTimeout(() => void accept(order.id, 5), 300000);
   });
   on("order:taken", (payload) => {
     if (state.incoming?.id === (payload as { orderId: string }).orderId)
@@ -247,7 +238,6 @@ function start() {
   cleanups.push(() =>
     document.removeEventListener("visibilitychange", visibility),
   );
-  clock = setInterval(() => (state.now = Date.now()), 1000);
   void refresh();
 }
 export function useDriver() {
@@ -258,7 +248,6 @@ export function useDriver() {
     if (--users === 0) {
       cleanups.forEach((fn) => fn());
       cleanups = [];
-      if (clock) clearInterval(clock);
       // GPS belongs to the authenticated driver session, not the current screen.
       // Explicit logout above releases the watch.
     }
@@ -272,9 +261,6 @@ export function useDriver() {
     setDistrict,
     enableGps,
     dismissIncoming,
-    countdown: computed(() =>
-      Math.max(0, Math.ceil((state.deadline - state.now) / 1000)),
-    ),
     session: driverSession,
   };
 }

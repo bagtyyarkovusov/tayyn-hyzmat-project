@@ -4,8 +4,8 @@ const orderIdSchema = z.object({
   orderId: z.string().uuid('Некорректный идентификатор заказа')
 });
 
-// "Принять через: 5 / 10 / 15 / 20 минут" - and the auto-accept-after-5-min
-// timeout also sends 5, so 5 doubles as the sensible server-side default.
+// Explicit manual acceptance supports 5 / 10 / 15 / 20 minute arrival estimates.
+// Five minutes remains the default when the caller omits the estimate.
 const acceptSchema = z.object({
   orderId: z.string().uuid('Некорректный идентификатор заказа'),
   etaMinutes: z.union([z.literal(5), z.literal(10), z.literal(15), z.literal(20)]).default(5)

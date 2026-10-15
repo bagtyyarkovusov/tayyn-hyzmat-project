@@ -2,22 +2,6 @@ import apiClient from '@/services/apiClient'
 import { notifyNewOrder, closeCurrentNotification } from '@/services/localNotify'
 import { playNewOrderChime, stopNewOrderChime } from '@/services/notificationSound'
 
-// "Если водитель ничего не нажал - через 5 минут автоматически принять."
-const AUTO_ACCEPT_MS = 5 * 60 * 1000
-
-// Owned outside `state` on purpose: a setTimeout handle isn't serializable
-// reactive state, and it must survive the driver navigating between
-// Главная/Карта (component unmount/remount), which a component-local timer
-// would not.
-let autoAcceptTimer = null
-
-function clearAutoAcceptTimer() {
-  if (autoAcceptTimer) {
-    window.clearTimeout(autoAcceptTimer)
-    autoAcceptTimer = null
-  }
-}
-
 const state = () => ({
   incoming: null, // { ...order, receivedAt } - the "Новый заказ" popup
   active: null, // current ACCEPTED / WAITING / STARTED order
@@ -58,23 +42,17 @@ const actions = {
     commit('SET_ACTIVE', data)
   },
 
-  // Driven by the `order:new` socket event - starts the 5-minute auto-accept
-  // clock centrally so it survives screen navigation. Ignored while the
-  // driver already has an incoming or active order (no modal-stacking).
-  applyNewOrder({ commit, dispatch, state: s }, order) {
+  // Incoming offers remain unclaimed until the driver explicitly accepts.
+  // Ignore stacking while this driver has an incoming or active order.
+  applyNewOrder({ commit, state: s }, order) {
     if (s.active || s.incoming) return
     commit('SET_INCOMING', order)
     playNewOrderChime()
     notifyNewOrder(order)
-    clearAutoAcceptTimer()
-    autoAcceptTimer = window.setTimeout(() => {
-      dispatch('accept', { orderId: order.id, etaMinutes: 5 })
-    }, AUTO_ACCEPT_MS)
   },
 
   applyOrderTaken({ commit, state: s }, payload) {
     if (s.incoming && s.incoming.id === payload.orderId) {
-      clearAutoAcceptTimer()
       commit('CLEAR_INCOMING')
       stopNewOrderChime()
       closeCurrentNotification()
@@ -84,10 +62,8 @@ const actions = {
   // "Отказаться" in the new-order sheet. There is no reject/decline
   // endpoint on the backend (only accept) - the order keeps broadcasting to
   // every other driver in the district exactly as if this driver had just
-  // never seen it. This only hides the popup locally and cancels the local
-  // 5-minute auto-accept clock for THIS driver.
+  // never seen it. This only hides the popup locally.
   dismissIncoming({ commit }) {
-    clearAutoAcceptTimer()
     commit('CLEAR_INCOMING')
     stopNewOrderChime()
     closeCurrentNotification()
@@ -108,7 +84,6 @@ const actions = {
   },
 
   async accept({ commit }, { orderId, etaMinutes }) {
-    clearAutoAcceptTimer()
     // Stop ringing the moment the driver answers - before the request even
     // goes out, so the sound doesn't keep playing over a slow network.
     stopNewOrderChime()
