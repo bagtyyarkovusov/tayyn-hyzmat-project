@@ -53,16 +53,23 @@ const {
   load: loadThread,
 } = useResource(
   async () => {
-    if (!props.driverId) return null;
+    const driverId = props.driverId;
+    if (!driverId) return null;
     const [messages, driver] = await Promise.all([
-      adminApi.get<Page<Message>>(`/admin/drivers/${props.driverId}/messages`, {
+      adminApi.get<Page<Message>>(`/admin/drivers/${driverId}/messages`, {
         params: { limit: 100 },
       }),
-      adminApi.get<Driver>(`/admin/drivers/${props.driverId}`),
+      adminApi.get<Driver>(`/admin/drivers/${driverId}`),
     ]);
     try {
-      await adminApi.post(`/admin/drivers/${props.driverId}/messages/read`);
-      unread.value = unread.value.filter((id) => id !== props.driverId);
+      if (props.driverId !== driverId)
+        return {
+          messages: messages.data.items,
+          total: messages.data.total,
+          driver: driver.data,
+        };
+      await adminApi.post(`/admin/drivers/${driverId}/messages/read`);
+      unread.value = unread.value.filter((id) => id !== driverId);
     } catch {
       /* Keep unread state if marking read fails. */
     }

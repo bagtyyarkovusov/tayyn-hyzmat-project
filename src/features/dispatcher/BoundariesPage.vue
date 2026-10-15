@@ -344,6 +344,7 @@ onUnmounted(() => {
       <div class="min-w-0 space-y-3">
         <div
           ref="mapElement"
+          v-show="!mapError"
           class="h-[55dvh] min-h-80 overflow-hidden rounded-xl border bg-muted"
           aria-label="Редактор границ районов"
         />

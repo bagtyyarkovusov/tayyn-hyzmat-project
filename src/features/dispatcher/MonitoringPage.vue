@@ -104,6 +104,7 @@ function focus(d: Driver) {
     <div class="grid gap-4 lg:grid-cols-[1fr_280px]">
       <div
         ref="mapElement"
+        v-show="!mapError"
         class="h-[65dvh] min-h-80 rounded-xl border bg-muted"
         aria-label="Карта водителей"
       />
