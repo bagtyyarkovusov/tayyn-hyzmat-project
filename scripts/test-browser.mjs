@@ -193,11 +193,15 @@ try {
     );
     await new Promise(() => {});
   }
-  const result = spawn("pnpm", ["exec", "playwright", "test"], {
-    cwd: root,
-    env,
-    stdio: "inherit",
-  });
+  const result = spawn(
+    "pnpm",
+    ["exec", "playwright", "test", ...process.argv.slice(2)],
+    {
+      cwd: root,
+      env,
+      stdio: "inherit",
+    },
+  );
   const code = await new Promise((r) => result.once("exit", r));
   if (code !== 0) throw new Error(`Browser tests failed: ${code}`);
 } finally {
