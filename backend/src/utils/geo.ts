@@ -1,11 +1,16 @@
+export interface Point { lat: number; lng: number }
+type Numeric = number | string | { toString(): string };
+export interface DistrictCenter { centerLat: Numeric; centerLng: Numeric }
+export interface DistrictBoundary extends DistrictCenter { boundary?: unknown }
+
 const EARTH_RADIUS_KM = 6371;
 
-function toRad(deg) {
+function toRad(deg: number) {
   return (deg * Math.PI) / 180;
 }
 
 // Great-circle distance between two lat/lng points, in kilometers.
-function haversineDistanceKm(a, b) {
+export function haversineDistanceKm(a: Point, b: Point) {
   const dLat = toRad(b.lat - a.lat);
   const dLng = toRad(b.lng - a.lng);
   const lat1 = toRad(a.lat);
@@ -15,13 +20,9 @@ function haversineDistanceKm(a, b) {
   return 2 * EARTH_RADIUS_KM * Math.asin(Math.sqrt(h));
 }
 
-// Nearest-center lookup: dispatch zones here are defined by a center point,
-// not a surveyed polygon, so "which district is this point in" is answered
-// as "which zone center is closest" (a Voronoi-style tiling of the city).
-// `districts` items need { id, centerLat, centerLng } - Prisma Decimal
-// fields are accepted directly, they coerce fine through Number().
-function findNearestDistrict(districts, point) {
-  let nearest = null;
+// Used when no saved polygon matches. Accepts Prisma Decimal centers.
+export function findNearestDistrict<T extends DistrictCenter>(districts: readonly T[], point: Point) {
+  let nearest: T | null = null;
   let nearestDistance = Infinity;
 
   for (const district of districts) {
@@ -43,7 +44,7 @@ function findNearestDistrict(districts, point) {
 // the admin editor are simple polygons, no holes). Matches the
 // [lat, lng] point order used everywhere else in this file/Yandex's own
 // polygon geometry, NOT the [lng, lat] GeoJSON convention.
-function pointInPolygonRing(point, ring) {
+function pointInPolygonRing(point: Point, ring: number[][]) {
   let inside = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
     const [latI, lngI] = ring[i];
@@ -58,26 +59,18 @@ function pointInPolygonRing(point, ring) {
 // exactly one - the outer ring - but stored as an array so a hole could be
 // added later without a schema change); a point is "in" the district if
 // it's in the outer ring.
-function pointInDistrictBoundary(point, boundary) {
+function pointInDistrictBoundary(point: Point, boundary: unknown) {
   if (!Array.isArray(boundary) || boundary.length === 0) return false;
   return pointInPolygonRing(point, boundary[0]);
 }
 
-// Resolves which district a point belongs to, preferring a real drawn
-// boundary (see the admin "Границы районов" editor) over the older
-// nearest-center Voronoi guess - see districts.service.js#findNearestDistrictForPoint
-// for how the two are combined, and why nearest-center is kept as a
-// fallback rather than replaced outright (not every district has a drawn
-// boundary yet, and a point genuinely outside every polygon - e.g. well
-// outside the city - still needs *some* answer).
-function findDistrictByBoundary(districts, point) {
+// Overlapping polygons resolve to the nearest center.
+export function findDistrictByBoundary<T extends DistrictBoundary>(districts: readonly T[], point: Point): T | null {
   const matches = districts.filter((d) => pointInDistrictBoundary(point, d.boundary));
   if (matches.length === 0) return null;
   if (matches.length === 1) return matches[0];
   // Overlapping polygons shouldn't normally happen, but could transiently
   // during editing - break the tie the same way as everywhere else, by
   // nearest center.
-  return findNearestDistrict(matches, point).district;
+  return findNearestDistrict(matches, point)?.district ?? null;
 }
-
-module.exports = { haversineDistanceKm, findNearestDistrict, findDistrictByBoundary };

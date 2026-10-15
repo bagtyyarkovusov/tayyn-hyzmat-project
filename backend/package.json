@@ -3,18 +3,23 @@
   "version": "1.0.0",
   "private": true,
   "description": "OpenRide backend API - Express, PostgreSQL, Prisma, Socket.IO, JWT",
-  "main": "src/server.js",
+  "main": "dist/server.js",
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "dev": "nodemon src/server.js",
-    "start": "node src/server.js",
+    "dev": "nodemon --ext js,ts --exec tsx src/server.js",
+    "start": "node dist/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
-    "seed": "node prisma/seed.js"
+    "seed": "node prisma/seed.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "npm run build && tsc -p tsconfig.tests.json --noEmit",
+    "test:unit": "tsx --test tests/geo.test.ts",
+    "test:integration": "node ../scripts/test-backend.mjs",
+    "test": "npm run test:unit && npm run test:integration"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
@@ -35,8 +40,13 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^22.20.5",
     "nodemon": "^3.1.4",
     "pino-pretty": "^11.2.2",
-    "prisma": "^5.19.1"
+    "prisma": "^5.19.1",
+    "socket.io-client": "^4.8.4",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.3"
   }
 }

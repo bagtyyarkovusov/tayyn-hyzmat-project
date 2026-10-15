@@ -10,7 +10,12 @@
     "cap:sync": "npm run build:driver && npx cap sync android",
     "android:assembleDebug": "npm run cap:sync && cd android && ./gradlew assembleDebug",
     "android:assembleRelease": "npm run cap:sync && cd android && ./gradlew assembleRelease",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "build:backend": "npm --prefix backend run build",
+    "typecheck": "npm --prefix backend run typecheck",
+    "test": "npm --prefix backend test",
+    "test:unit": "npm --prefix backend run test:unit",
+    "test:integration": "npm --prefix backend run test:integration"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.1",
