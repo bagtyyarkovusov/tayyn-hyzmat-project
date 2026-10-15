@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ref, watch, onUnmounted } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import { ArrowLeft } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
@@ -15,7 +15,14 @@ import {
   DialogFooter,
 } from "@/shared/ui/dialog";
 import { adminApi, errorMessage } from "@/shared/api";
-import { money, date, statusLabel, type Driver, type History } from "./domain";
+import {
+  money,
+  date,
+  statusLabel,
+  transactionLabel,
+  type Driver,
+  type History,
+} from "./domain";
 import { useResource } from "./useResource";
 import PageState from "./components/PageState.vue";
 import OrderCard from "./components/OrderCard.vue";
@@ -30,6 +37,12 @@ const tab = ref("info"),
   amount = ref(""),
   note = ref(""),
   historyPage = ref(1);
+const gpsAddress = ref("");
+let geocodeVersion = 0;
+let geocodedPoint = "";
+onUnmounted(() => {
+  geocodeVersion++;
+});
 const vehicle = ref({ plateNumber: "", make: "", model: "", color: "" });
 const {
   data: driver,
@@ -53,6 +66,22 @@ const { data: history, load: loadHistory } = useResource(
   ["balance:updated", "order:completed"],
 );
 watch(driver, (d) => {
+  const key =
+    d?.lastLat != null && d?.lastLng != null ? `${d.lastLat},${d.lastLng}` : "";
+  if (key !== geocodedPoint) {
+    geocodedPoint = key;
+    const version = ++geocodeVersion;
+    gpsAddress.value = "";
+    if (d?.lastLat != null && d?.lastLng != null)
+      void adminApi
+        .get<{ address?: string }>("/geo/reverse", {
+          params: { lat: d.lastLat, lng: d.lastLng },
+        })
+        .then(({ data }) => {
+          if (version === geocodeVersion) gpsAddress.value = data.address || "";
+        })
+        .catch(() => {});
+  }
   if (d)
     vehicle.value = {
       plateNumber: d.currentVehicle?.plateNumber || "",
@@ -172,11 +201,16 @@ function adjust(withdraw: boolean) {
                 <dt class="text-muted-foreground">GPS</dt>
                 <dd class="mt-1">
                   {{
-                    driver.lastLat && driver.lastLng
-                      ? `${Number(driver.lastLat).toFixed(5)}, ${Number(driver.lastLng).toFixed(5)}`
+                    driver.lastLat != null && driver.lastLng != null
+                      ? gpsAddress ||
+                        `${Number(driver.lastLat).toFixed(5)}, ${Number(driver.lastLng).toFixed(5)}`
                       : "Нет координат"
                   }}
                 </dd>
+              </div>
+              <div>
+                <dt class="text-muted-foreground">Последняя геопозиция</dt>
+                <dd class="mt-1">{{ date(driver.lastLocationAt) }}</dd>
               </div>
             </dl>
             <p
@@ -353,7 +387,7 @@ function adjust(withdraw: boolean) {
           class="flex justify-between gap-4 rounded-lg border p-4 text-sm"
         >
           <div>
-            <p>{{ tx.type }}</p>
+            <p>{{ transactionLabel(tx.type) }}</p>
             <p class="mt-1 text-xs text-muted-foreground">
               {{ date(tx.createdAt) }} · {{ tx.note }}
             </p>

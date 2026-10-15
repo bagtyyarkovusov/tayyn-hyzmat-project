@@ -114,3 +114,14 @@ export const date = (value?: string): string =>
         timeStyle: "short",
       })
     : "Нет данных";
+
+const transactionLabels: Record<string, string> = {
+  TOPUP: "Пополнение",
+  WITHDRAWAL: "Списание",
+  ADJUSTMENT: "Корректировка",
+  BONUS: "Бонус",
+  ORDER_CHARGE: "Списание за заказ",
+  ORDER_REFUND: "Возврат за заказ",
+};
+export const transactionLabel = (type: string): string =>
+  transactionLabels[type] ?? type;

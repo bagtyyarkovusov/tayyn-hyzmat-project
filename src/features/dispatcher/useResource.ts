@@ -27,7 +27,7 @@ export function useResource<T>(
   const off: (() => void)[] = [];
   onMounted(() => {
     void load();
-    events.forEach((event) =>
+    [...new Set(["connect", ...events])].forEach((event) =>
       off.push(
         adminSession.on(event, () => {
           void load();
