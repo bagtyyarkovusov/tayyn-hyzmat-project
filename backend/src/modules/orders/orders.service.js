@@ -6,6 +6,7 @@ const rooms = require('../../sockets/rooms');
 const logger = require('../../config/logger');
 const districtsService = require('../districts/districts.service');
 const { haversineDistanceKm } = require('../../utils/geo');
+const { recordOrderCharge } = require('./order-charge');
 
 const D = (value) => new Prisma.Decimal(value ?? 0);
 
@@ -169,27 +170,7 @@ async function accept(orderId, driver, etaMinutes) {
     // Refunded in full by cancel()/adminCancel() if the order doesn't end
     // up completed (see there for why "was ever charged" == "has a
     // driverId" is the right refund condition).
-    const price = D(acceptedOrder.priceEstimated);
-    let balanceAfter = null;
-    if (price.greaterThan(0)) {
-      const balance = await tx.balance.upsert({
-        where: { userId: driver.userId },
-        update: {},
-        create: { userId: driver.userId, amount: 0 }
-      });
-      balanceAfter = D(balance.amount).sub(price);
-      await tx.balance.update({ where: { id: balance.id }, data: { amount: balanceAfter } });
-      await tx.transaction.create({
-        data: {
-          balanceId: balance.id,
-          orderId: acceptedOrder.id,
-          type: 'PAYMENT',
-          amount: price.negated(),
-          balanceAfter,
-          note: `Заказ #${acceptedOrder.id}: цена поездки списана при принятии`
-        }
-      });
-    }
+    const balanceAfter = await recordOrderCharge(tx, acceptedOrder, driver.userId, 'PAYMENT');
 
     return { order: acceptedOrder, balanceAfter };
   });
@@ -312,39 +293,6 @@ async function complete(orderId, driver) {
   return updatedOrder;
 }
 
-// Not in the literal spec, but required for CANCELLED to be a reachable
-// status at all - a no-show at pickup is the realistic case. Restricted to
-// Refunds what accept() charged for this order, if anything was charged at
-// all (priceEstimated > 0 - see accept()). Returns the new balance amount,
-// or null if there was nothing to refund, so callers can skip the
-// balance:updated emit instead of firing a no-op one. Shared by cancel()
-// and adminCancel() below - both need it: a driver cancelling their own
-// pickup and an admin pulling an order are the same "the ride didn't
-// happen, give the charge back" situation.
-async function refundOrderCharge(tx, order, userId) {
-  const price = D(order.priceEstimated);
-  if (!price.greaterThan(0)) return null;
-
-  const balance = await tx.balance.upsert({
-    where: { userId },
-    update: {},
-    create: { userId, amount: 0 }
-  });
-  const balanceAfter = D(balance.amount).add(price);
-  await tx.balance.update({ where: { id: balance.id }, data: { amount: balanceAfter } });
-  await tx.transaction.create({
-    data: {
-      balanceId: balance.id,
-      orderId: order.id,
-      type: 'REFUND',
-      amount: price,
-      balanceAfter,
-      note: `Заказ #${order.id}: возврат за отменённую поездку`
-    }
-  });
-  return balanceAfter;
-}
-
 // ACCEPTED/WAITING: once a trip has STARTED, cancelling would abandon a
 // passenger mid-ride, which needs different handling than this endpoint.
 //
@@ -352,7 +300,7 @@ async function refundOrderCharge(tx, order, userId) {
 // (see there) - cancelling it (whichever side is at fault: passenger
 // no-show, driver couldn't make it, etc.) means the ride never happened, so
 // that charge is refunded in full here. Shared with adminCancel() below via
-// refundOrderCharge.
+// recordOrderCharge.
 async function cancel(orderId, driver, reason) {
   const order = await prisma.order.findUnique({ where: { id: orderId } });
   assertOwnedByDriver(order, driver);
@@ -366,7 +314,7 @@ async function cancel(orderId, driver, reason) {
       data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: reason || null }
     });
     await tx.driver.update({ where: { id: driver.id }, data: { isAvailable: true } });
-    const balanceAfter = await refundOrderCharge(tx, order, driver.userId);
+    const balanceAfter = await recordOrderCharge(tx, order, driver.userId, 'REFUND');
     return { order: updated, balanceAfter };
   });
 
@@ -388,31 +336,18 @@ async function cancel(orderId, driver, reason) {
   return result.order;
 }
 
-// Manual/admin dispatch - see orders.validation.js#createOrderSchema for why
-// this exists instead of a client-facing create endpoint. The district
-// decides which drivers' sockets actually get "Новый заказ" (see the
-// broadcast below). An admin dispatching a real phone call usually knows
-// which district it belongs to better than a map click does, so an
-// explicit `districtId` wins when provided; only falls back to the
-// nearest-center lookup (same one driver GPS uses) when the admin left it
-// on auto.
+// Phone dispatch always uses the selected region for order offers. Optional
+// pickup coordinates refine the location without overriding that selection.
 async function createOrder(data) {
-  let districtId = null;
-  let district = null;
-  if (data.districtId) {
-    district = await prisma.district.findUnique({ where: { id: data.districtId } });
-    if (!district || !district.isActive) throw ApiError.badRequest('Указанный район не найден или неактивен');
-    districtId = district.id;
-  } else {
-    const nearest = await districtsService.findNearestDistrictForPoint(data.pickupLat, data.pickupLng);
-    districtId = nearest ? nearest.id : null;
-  }
+  const district = await prisma.district.findUnique({ where: { id: data.districtId } });
+  if (!district || !district.isActive) throw ApiError.badRequest('Указанный район не найден или неактивен');
+  const districtId = district.id;
 
   // pickupLat/pickupLng are non-nullable columns, but the dispatcher isn't
   // required to click a precise point on the map - picking a district is
   // enough (see orders.validation.js#createOrderSchema). When they didn't,
-  // the district's own centre stands in: "close enough" for phone dispatch,
-  // and the district is what actually decides who the order is broadcast to.
+  // the district centre is a storage fallback, not a precise customer pickup.
+  // The driver calls the customer after accepting to agree on pickup details.
   const pickupLat = data.pickupLat !== undefined ? data.pickupLat : district && Number(district.centerLat);
   const pickupLng = data.pickupLng !== undefined ? data.pickupLng : district && Number(district.centerLng);
   if (!Number.isFinite(pickupLat) || !Number.isFinite(pickupLng)) {
@@ -467,7 +402,7 @@ async function adminCancel(orderId, reason) {
       await tx.driver.update({ where: { id: order.driverId }, data: { isAvailable: true } });
       // Same refund as the driver's own cancel() - an admin pulling an
       // already-accepted order is the same "ride didn't happen" case.
-      balanceAfter = await refundOrderCharge(tx, order, order.driver.userId);
+      balanceAfter = await recordOrderCharge(tx, order, order.driver.userId, 'REFUND');
     }
     return { order: updated, balanceAfter };
   });

@@ -1,0 +1,14 @@
+packages:
+  - backend
+  - legacy
+onlyBuiltDependencies:
+  - "@prisma/client"
+  - "@prisma/engines"
+  - prisma
+  - esbuild
+patchedDependencies:
+  '@capacitor/android@6.2.1': patches/capacitor-android.patch
+packageExtensions:
+  'vue-template-compiler@2.6.14':
+    peerDependencies:
+      vue: '2.6.14'

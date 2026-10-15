@@ -1,19 +1,23 @@
 # Contributing
 
-Use Node.js 22 and Docker. Install both dependency sets with `npm ci` at the root and `npm ci --prefix backend`. Generate the database client with `npm --prefix backend run prisma:generate`.
-
-## Checks
+Use Node.js 22.12 or later, pnpm 10.33.2 and Docker. Enable the pinned manager with `corepack enable`, then run:
 
 ```sh
-npm run build:backend
-npm run typecheck
-npm run test:unit
-npm run test:integration
-NODE_OPTIONS=--openssl-legacy-provider npm run build
+pnpm install --frozen-lockfile
+pnpm --filter openride-backend prisma:generate
+pnpm typecheck
+pnpm format:check
+pnpm test:unit
+pnpm test:integration
+pnpm test:e2e
+pnpm build
+pnpm build:driver
 ```
 
-Integration tests require Docker and create their own PostgreSQL container. They never use the shell's database URL. See [testing](docs/testing.md).
+Database tests create fresh PostgreSQL containers with random names, loopback ports and secrets. They overwrite supplied database URLs and remove only their own container. Browser tests run real HTTP and Socket.IO against the compiled API. See [testing](docs/testing.md).
 
-For backend development, run `npm --prefix backend run dev`. For compiled startup, run `npm run build:backend` followed by `npm --prefix backend start`. The Vue development server uses `npm run serve`; configure its API connection through the existing environment example.
+Use `pnpm dev` for the frontend and `pnpm --filter openride-backend dev` for the API. The default frontend proxy expects an API on loopback port 4185; set `TAYYN_TEST_API` for another isolated endpoint. Never point fixtures or tests at Railway. `pnpm preview:isolated` creates a disposable synthetic environment and keeps it running until stopped, with URLs and synthetic credentials in ignored `.local/browser-context.json`.
 
-Create a focused branch and link the GitHub issue in its pull request. Explain behavior changes and verification. Follow [coding standards](docs/coding-standards.md); keep unrelated refactors in separate issues. `main` deploys the shared Railway development environment.
+The production build includes modern dispatcher/driver apps and a separate `/legacy/` compatibility app. `pnpm build:modern` excludes compatibility for quick iteration. Backend Docker remains independently buildable with its checked-in standalone pnpm lock; update both lockfiles when changing backend dependencies using `pnpm install` at root and `pnpm --dir backend install --lockfile-only --ignore-workspace`.
+
+Create a focused feature branch and link the GitHub issue in the PR. Explain behavior changes and verification. Follow [coding standards](docs/coding-standards.md). `main` deploys shared Railway, where another developer edits real regions. Do not merge or deploy modernization while that work is active. Preserve Docker startup and run container builds when changing tooling.

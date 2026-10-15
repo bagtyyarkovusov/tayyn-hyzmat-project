@@ -48,8 +48,8 @@ async function socket(token: string) {
   });
   return client;
 }
-async function order() {
-  const response = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, pickupAddress: 'Synthetic pickup', clientPhone: '+10000000999' });
+async function order(priceEstimated: number | null = 10) {
+  const response = await request('/admin/orders', adminToken, { districtId: regionId, ...(priceEstimated === null ? {} : { priceEstimated }), pickupAddress: 'Synthetic pickup', clientPhone: '+10000000999' });
   assert.equal(response.status, 201);
   return response.data;
 }
@@ -91,6 +91,39 @@ after(async () => {
 test('private driver data requires authentication and dispatcher data requires an admin role', async () => {
   assert.equal((await request('/driver/profile')).status, 401);
   assert.equal((await request('/admin/drivers', driverToken)).status, 403);
+});
+
+test('dispatcher cannot create an order without a valid customer phone', async () => {
+  for (const clientPhone of [undefined, '', '   ', 'call-me', '+', '12']) {
+    const response = await request('/admin/orders', adminToken, { districtId: regionId, ...(clientPhone === undefined ? {} : { clientPhone }) });
+    assert.equal(response.status, 400, `invalid phone ${String(clientPhone)} must be rejected`);
+  }
+});
+
+test('dispatcher must select a region even when map coordinates are supplied', async () => {
+  for (const coordinates of [{}, { pickupLat: 37.96, pickupLng: 58.32 }]) {
+    const response = await request('/admin/orders', adminToken, { clientPhone: '+99361234567', ...coordinates });
+    assert.equal(response.status, 400);
+  }
+});
+
+test('region and phone alone create an unpriced order that can be completed without a balance charge', async () => {
+  const created = await request('/admin/orders', adminToken, { districtId: regionId, clientPhone: '+99361234567' });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.districtId, regionId);
+  assert.equal(created.data.priceEstimated, null);
+  assert.equal(created.data.pickupAddress, null);
+  const available = await request('/orders/available', driverToken);
+  const offered = available.data.find((item: { id: string }) => item.id === created.data.id);
+  assert.ok(offered);
+  assert.equal('clientPhone' in offered, false);
+  const claimed = await request('/orders/accept', driverToken, { orderId: created.data.id });
+  assert.equal(claimed.status, 200);
+  assert.equal(claimed.data.clientPhone, '+99361234567');
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
+  for (const action of ['waiting', 'start', 'complete']) assert.equal((await request(`/orders/${action}`, driverToken, { orderId: created.data.id })).status, 200);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
+  assert.equal((await request('/driver/history', driverToken)).data.transactions.total, 0);
 });
 
 test('a claimed order progresses to completion and charges the quoted TMT price once', async () => {
@@ -162,6 +195,45 @@ test('cancelling a claimed order refunds the synthetic charge and rejects a seco
   const balance = await request('/driver/balance', driverToken);
   assert.equal(balance.data.amount, '500');
 });
+
+test('dispatcher cancellation refunds the quoted charge with matching ledger entries only once', async () => {
+  const created = await order();
+  assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 200);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '490');
+  const cancelled = await request(`/admin/orders/${created.id}/cancel`, adminToken, { reason: 'Synthetic cancellation' });
+  assert.equal(cancelled.status, 200);
+  assert.equal(cancelled.data.status, 'CANCELLED');
+  assert.equal((await request(`/admin/orders/${created.id}/cancel`, adminToken, {})).status, 409);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
+  const history = await request('/driver/history', driverToken);
+  assert.equal(history.status, 200);
+  assert.equal(history.data.transactions.total, 2);
+  const entries = history.data.transactions.items.map((entry: {
+    orderId: string; type: string; amount: string; balanceAfter: string; note: string;
+  }) => ({ orderId: entry.orderId, type: entry.type, amount: entry.amount, balanceAfter: entry.balanceAfter, note: entry.note }));
+  assert.deepEqual(entries.find((entry: { type: string }) => entry.type === 'PAYMENT'), {
+    orderId: created.id, type: 'PAYMENT', amount: '-10', balanceAfter: '490',
+    note: `Заказ #${created.id}: цена поездки списана при принятии`
+  });
+  assert.deepEqual(entries.find((entry: { type: string }) => entry.type === 'REFUND'), {
+    orderId: created.id, type: 'REFUND', amount: '10', balanceAfter: '500',
+    note: `Заказ #${created.id}: возврат за отменённую поездку`
+  });
+});
+
+for (const price of [null, 0, -10]) {
+  test(`accepting and cancelling an order priced ${price} leaves the balance and ledger unchanged`, async () => {
+    const created = await order(null);
+    // Zero/negative prices cannot be created through HTTP; characterize inherited data only.
+    if (price !== null) await prisma.order.update({ where: { id: created.id }, data: { priceEstimated: price } });
+    const body = { orderId: created.id };
+    assert.equal((await request('/orders/accept', driverToken, body)).status, 200);
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
+    assert.equal((await request('/orders/cancel', driverToken, body)).status, 200);
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
+    assert.equal((await request('/driver/history', driverToken)).data.transactions.total, 0);
+  });
+}
 
 test('a newly registered driver can log in only after dispatcher approval', async () => {
   const phone = '+10000000103';

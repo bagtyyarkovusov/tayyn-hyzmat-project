@@ -6,7 +6,7 @@ These are dispatch regions, not official administrative boundaries. Geometry is 
 
 ## New environments
 
-After applying schema migrations, `npm --prefix backend run seed` creates the administrator and these regions. To seed only the regions, use `npm --prefix backend run seed:regions`. In the pnpm modernization workspace, use the equivalent backend workspace script. Both are explicit bootstrap commands, not an automatic reset on application startup.
+After applying schema migrations, `pnpm --filter openride-backend seed` creates the administrator and these regions. To seed only the regions, use `pnpm --filter openride-backend seed:regions`. Both are explicit bootstrap commands, not an automatic reset on application startup.
 
 The region import runs in a transaction. It creates missing regions and fills null boundaries on existing named regions. It preserves existing IDs, configured values and non-null boundaries. Identity conflicts stop the transaction for manual inspection. Running the command again preserves subsequent editor changes.
 
