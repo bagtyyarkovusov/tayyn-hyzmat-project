@@ -416,6 +416,71 @@ test("driver and dispatcher exchange real messages across separate role sessions
     await expect
       .poll(() => history.evaluate((el) => el.scrollTop))
       .toBeLessThan(10);
+    const adminHistory = dispatcher.getByRole("region", { name: "Переписка" });
+    await adminHistory.evaluate((el) => {
+      el.scrollTop = 0;
+      el.dispatchEvent(new Event("scroll"));
+    });
+    await driver
+      .getByLabel("Сообщение диспетчеру")
+      .fill("Ответ без прокрутки истории диспетчера");
+    await driver.getByLabel("Сообщение диспетчеру").press("Enter");
+    await expect(
+      dispatcher.getByText("Ответ без прокрутки истории диспетчера", {
+        exact: true,
+      }),
+    ).toBeAttached();
+    await expect
+      .poll(() => adminHistory.evaluate((el) => el.scrollTop))
+      .toBeLessThan(10);
+    await adminHistory.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+      el.dispatchEvent(new Event("scroll"));
+    });
+    await driver
+      .getByLabel("Сообщение диспетчеру")
+      .fill("Ответ внизу истории диспетчера");
+    await driver.getByLabel("Сообщение диспетчеру").press("Enter");
+    await expect(
+      dispatcher.getByText("Ответ внизу истории диспетчера", { exact: true }),
+    ).toBeVisible();
+    await expect
+      .poll(() =>
+        adminHistory.evaluate(
+          (el) => el.scrollHeight - el.scrollTop - el.clientHeight,
+        ),
+      )
+      .toBeLessThan(10);
+    const adminInput = dispatcher.getByLabel("Сообщение водителю");
+    await adminInput.fill("Первая строка\nВторая строка\nТретья строка");
+    await expect
+      .poll(() =>
+        adminInput.evaluate((el) => {
+          const input = el.getBoundingClientRect();
+          const button = el
+            .closest("form")!
+            .querySelector("button")!
+            .getBoundingClientRect();
+          return Math.abs(
+            button.y + button.height / 2 - input.y - input.height / 2,
+          );
+        }),
+      )
+      .toBeLessThan(2);
+    await adminInput.press("Enter");
+    await expect(
+      driver.getByText("Первая строка\nВторая строка\nТретья строка", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(adminInput).toHaveValue("");
+    await expect
+      .poll(() =>
+        dispatcher.evaluate(
+          () => document.documentElement.scrollHeight <= innerHeight,
+        ),
+      )
+      .toBe(true);
     await driver.screenshot({ path: "test-results/driver-chat-mobile.png" });
     await dispatcher.screenshot({
       path: "test-results/dispatcher-chat-mobile.png",

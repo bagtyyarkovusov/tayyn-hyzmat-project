@@ -210,6 +210,7 @@ async function send(all = false) {
         </div>
         <div
           ref="history"
+          role="region"
           aria-label="Переписка"
           class="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-3"
           @scroll="track"
