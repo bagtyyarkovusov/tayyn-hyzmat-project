@@ -6,6 +6,7 @@ const rooms = require('../../sockets/rooms');
 const logger = require('../../config/logger');
 const districtsService = require('../districts/districts.service');
 const { haversineDistanceKm } = require('../../utils/geo');
+const { recordOrderCharge } = require('./order-charge');
 
 const D = (value) => new Prisma.Decimal(value ?? 0);
 
@@ -169,27 +170,7 @@ async function accept(orderId, driver, etaMinutes) {
     // Refunded in full by cancel()/adminCancel() if the order doesn't end
     // up completed (see there for why "was ever charged" == "has a
     // driverId" is the right refund condition).
-    const price = D(acceptedOrder.priceEstimated);
-    let balanceAfter = null;
-    if (price.greaterThan(0)) {
-      const balance = await tx.balance.upsert({
-        where: { userId: driver.userId },
-        update: {},
-        create: { userId: driver.userId, amount: 0 }
-      });
-      balanceAfter = D(balance.amount).sub(price);
-      await tx.balance.update({ where: { id: balance.id }, data: { amount: balanceAfter } });
-      await tx.transaction.create({
-        data: {
-          balanceId: balance.id,
-          orderId: acceptedOrder.id,
-          type: 'PAYMENT',
-          amount: price.negated(),
-          balanceAfter,
-          note: `Заказ #${acceptedOrder.id}: цена поездки списана при принятии`
-        }
-      });
-    }
+    const balanceAfter = await recordOrderCharge(tx, acceptedOrder, driver.userId, 'PAYMENT');
 
     return { order: acceptedOrder, balanceAfter };
   });
@@ -312,39 +293,6 @@ async function complete(orderId, driver) {
   return updatedOrder;
 }
 
-// Not in the literal spec, but required for CANCELLED to be a reachable
-// status at all - a no-show at pickup is the realistic case. Restricted to
-// Refunds what accept() charged for this order, if anything was charged at
-// all (priceEstimated > 0 - see accept()). Returns the new balance amount,
-// or null if there was nothing to refund, so callers can skip the
-// balance:updated emit instead of firing a no-op one. Shared by cancel()
-// and adminCancel() below - both need it: a driver cancelling their own
-// pickup and an admin pulling an order are the same "the ride didn't
-// happen, give the charge back" situation.
-async function refundOrderCharge(tx, order, userId) {
-  const price = D(order.priceEstimated);
-  if (!price.greaterThan(0)) return null;
-
-  const balance = await tx.balance.upsert({
-    where: { userId },
-    update: {},
-    create: { userId, amount: 0 }
-  });
-  const balanceAfter = D(balance.amount).add(price);
-  await tx.balance.update({ where: { id: balance.id }, data: { amount: balanceAfter } });
-  await tx.transaction.create({
-    data: {
-      balanceId: balance.id,
-      orderId: order.id,
-      type: 'REFUND',
-      amount: price,
-      balanceAfter,
-      note: `Заказ #${order.id}: возврат за отменённую поездку`
-    }
-  });
-  return balanceAfter;
-}
-
 // ACCEPTED/WAITING: once a trip has STARTED, cancelling would abandon a
 // passenger mid-ride, which needs different handling than this endpoint.
 //
@@ -352,7 +300,7 @@ async function refundOrderCharge(tx, order, userId) {
 // (see there) - cancelling it (whichever side is at fault: passenger
 // no-show, driver couldn't make it, etc.) means the ride never happened, so
 // that charge is refunded in full here. Shared with adminCancel() below via
-// refundOrderCharge.
+// recordOrderCharge.
 async function cancel(orderId, driver, reason) {
   const order = await prisma.order.findUnique({ where: { id: orderId } });
   assertOwnedByDriver(order, driver);
@@ -366,7 +314,7 @@ async function cancel(orderId, driver, reason) {
       data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: reason || null }
     });
     await tx.driver.update({ where: { id: driver.id }, data: { isAvailable: true } });
-    const balanceAfter = await refundOrderCharge(tx, order, driver.userId);
+    const balanceAfter = await recordOrderCharge(tx, order, driver.userId, 'REFUND');
     return { order: updated, balanceAfter };
   });
 
@@ -467,7 +415,7 @@ async function adminCancel(orderId, reason) {
       await tx.driver.update({ where: { id: order.driverId }, data: { isAvailable: true } });
       // Same refund as the driver's own cancel() - an admin pulling an
       // already-accepted order is the same "ride didn't happen" case.
-      balanceAfter = await refundOrderCharge(tx, order, order.driver.userId);
+      balanceAfter = await recordOrderCharge(tx, order, order.driver.userId, 'REFUND');
     }
     return { order: updated, balanceAfter };
   });

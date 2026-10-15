@@ -16,6 +16,8 @@ The claim endpoint currently accepts cross-region claims, tracked in [issue #1](
 
 Acceptance debits the full quoted order price from the driver's synthetic balance. Completion does not charge again; cancellation refunds it. The intended fare and driver-charge semantics need an explicit business decision before replacing this behavior.
 
+`backend/src/modules/orders/order-charge.ts` owns the existing quoted-price debit/refund arithmetic and ledger writes. Acceptance and both cancellation paths call it inside their existing Prisma transactions, then use its returned balance for notifications. Callers retain eligibility, status and duplicate-operation checks. The module does not add concurrency guarantees or define a new payment policy.
+
 Concurrency protection for competing claims on the same order uses a conditional update. Broader concurrent operations, including multiple orders for one driver and repeated cancellations, need separate review. Initial tests are a baseline, not proof of every financial invariant.
 
 Inherited Firebase, analytics and other frontend dependencies remain. A later cleanup should trace actual usage before removal. Background browser notification delivery is not guaranteed by an active Socket.IO connection.

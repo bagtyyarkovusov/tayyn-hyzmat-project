@@ -23,10 +23,13 @@ Fixtures insert initial accounts and regions directly. Behavior assertions use H
 - Order claim, waiting, start and completion, including invalid transitions.
 - One winner when two drivers claim the same order.
 - Quoted synthetic TMT charge, no second completion charge, cancellation refund and sequential duplicate rejection.
+- Dispatcher cancellation refund, exact PAYMENT/REFUND ledger signs and notes, and no ledger writes for missing or non-positive inherited quotes.
 - Region notification delivery, customer-phone redaction, and suppression for another region or an offline driver.
 - Polygon matching, overlaps, nearest-center fallback, empty configuration and a known distance example.
 
 These tests capture inherited behavior before further changes. Removing the polygon match made the unit suite fail. Removing the acceptance charge made the lifecycle and refund tests fail. Both deliberate regressions were restored. An invalid coordinate type was also used to verify compiler rejection.
+
+Before extracting the order-charge module, the dispatcher refund and missing/non-positive quote tests passed against the original implementation. Removing the dispatcher's refund call failed the new test with balance `490` instead of `500`; restoring it and extracting the module passed all tests. Zero and negative quote fixtures represent inherited database values because order creation rejects those prices over HTTP.
 
 Negative notification assertions observe a short bounded delivery window after a successful request. They cover live local sockets, not background delivery guarantees. No browser automation, phone GPS, real Yandex requests, push delivery, or load tests are included. Concurrent cancellation and multiple simultaneous orders for one driver need separate tests and review.
 
