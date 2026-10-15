@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { X } from "lucide-vue-next";
+import DriverMapInfo from "./components/DriverMapInfo.vue";
 import { RouterLink } from "vue-router";
 import { adminApi, errorMessage } from "@/shared/api";
 import { adminSession } from "@/features/auth/session";
@@ -15,7 +17,7 @@ const { data, loading, error, load } = useResource(
       })
     ).data.items,
   [],
-  ["driver:status"],
+  ["driver:status", "order:accepted", "order:completed", "order:cancelled"],
 );
 const mapElement = ref<HTMLElement>(),
   mapError = ref("");
@@ -23,40 +25,81 @@ let map: any,
   y: any,
   disposed = false;
 const markers = new Map<string, any>();
+const selected = ref("");
+const hovered = ref("");
+const now = ref(Date.now());
+const selectedDriver = computed(() =>
+  data.value.find((d) => d.id === selected.value),
+);
+const hoveredDriver = computed(() =>
+  data.value.find((d) => d.id === hovered.value),
+);
+let freshnessTimer: ReturnType<typeof setInterval> | undefined;
+function coordinates(d: Driver): [number, number] | undefined {
+  if (d.lastLat == null || d.lastLng == null) return;
+  const lat = Number(d.lastLat),
+    lng = Number(d.lastLng);
+  if (
+    !Number.isFinite(lat) ||
+    !Number.isFinite(lng) ||
+    Math.abs(lat) > 90 ||
+    Math.abs(lng) > 180
+  )
+    return;
+  return [lat, lng];
+}
+function markerPreset(d: Driver) {
+  const timestamp = Date.parse(d.lastLocationAt ?? "");
+  return d.isOnline &&
+    Number.isFinite(timestamp) &&
+    now.value - timestamp <= 60_000
+    ? "islands#greenCircleDotIcon"
+    : "islands#grayCircleDotIcon";
+}
 function render() {
   if (!map) return;
+  for (const [id, marker] of markers) {
+    if (!data.value.some((d) => d.id === id && coordinates(d))) {
+      map.geoObjects.remove(marker);
+      markers.delete(id);
+    }
+  }
   data.value.forEach((d) => {
-    if (d.lastLat == null || d.lastLng == null) return;
-    const coords = [Number(d.lastLat), Number(d.lastLng)];
+    const coords = coordinates(d);
+    if (!coords) return;
     let marker = markers.get(d.id);
     if (!marker) {
       marker = new y.Placemark(
         coords,
         {},
         {
-          preset: d.isOnline
-            ? "islands#greenCircleDotIcon"
-            : "islands#grayCircleDotIcon",
+          preset: markerPreset(d),
         },
       );
       marker.events.add("click", () => {
         selected.value = d.id;
+        hovered.value = "";
+      });
+      marker.events.add("mouseenter", () => {
+        hovered.value = d.id;
+      });
+      marker.events.add("mouseleave", () => {
+        hovered.value = "";
       });
       markers.set(d.id, marker);
       map.geoObjects.add(marker);
     } else {
       marker.geometry.setCoordinates(coords);
-      marker.options.set(
-        "preset",
-        d.isOnline ? "islands#greenCircleDotIcon" : "islands#grayCircleDotIcon",
-      );
+      marker.options.set("preset", markerPreset(d));
     }
   });
 }
-const selected = ref("");
-watch(data, render);
+watch([data, now], render);
 let off: (() => void) | undefined;
 onMounted(async () => {
+  freshnessTimer = setInterval(() => {
+    now.value = Date.now();
+  }, 15_000);
   off = adminSession.on("driver:location", () => {
     void load();
   });
@@ -79,13 +122,15 @@ onMounted(async () => {
 });
 onUnmounted(() => {
   disposed = true;
+  clearInterval(freshnessTimer);
   off?.();
   map?.destroy();
 });
 function focus(d: Driver) {
   selected.value = d.id;
-  if (d.lastLat != null && d.lastLng != null)
-    map?.setCenter([Number(d.lastLat), Number(d.lastLng)], 15);
+  hovered.value = "";
+  const coords = coordinates(d);
+  if (coords) map?.setCenter(coords, 15);
 }
 </script>
 <template>
@@ -102,12 +147,48 @@ function focus(d: Driver) {
       {{ mapError }}
     </p>
     <div class="grid gap-4 lg:grid-cols-[1fr_280px]">
-      <div
-        ref="mapElement"
-        v-show="!mapError"
-        class="h-[65dvh] min-h-80 rounded-xl border bg-muted"
-        aria-label="Карта водителей"
-      />
+      <div class="relative min-w-0">
+        <div
+          ref="mapElement"
+          v-show="!mapError"
+          class="h-[65dvh] min-h-96 rounded-xl border bg-muted"
+          aria-label="Карта водителей"
+        />
+        <section
+          v-if="hoveredDriver"
+          aria-label="Водитель на карте"
+          class="pointer-events-none absolute left-3 top-3 z-10 w-64 max-w-[calc(100%-1.5rem)] rounded-lg border bg-card p-4 shadow-md"
+        >
+          <DriverMapInfo :driver="hoveredDriver" :now="now" />
+        </section>
+        <section
+          v-if="selectedDriver && !hoveredDriver"
+          aria-label="Выбранный водитель"
+          :class="
+            mapError
+              ? 'relative'
+              : 'absolute left-3 top-3 z-10 w-72 max-w-[calc(100%-1.5rem)]'
+          "
+          class="rounded-lg border bg-card p-4 shadow-md"
+        >
+          <button
+            type="button"
+            aria-label="Закрыть сведения о водителе"
+            class="absolute right-2 top-2 rounded p-1 text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+            @click="selected = ''"
+          >
+            <X class="size-4" />
+          </button>
+          <div class="pr-5">
+            <DriverMapInfo :driver="selectedDriver" :now="now" />
+          </div>
+          <RouterLink
+            :to="`/adminDrivers/${selectedDriver.id}`"
+            class="mt-3 inline-block text-sm text-primary underline underline-offset-4"
+            >Карточка водителя</RouterLink
+          >
+        </section>
+      </div>
       <div class="max-h-[65dvh] space-y-2 overflow-y-auto">
         <article
           v-for="driver in data"
@@ -117,7 +198,8 @@ function focus(d: Driver) {
         >
           <button
             type="button"
-            class="w-full text-left font-medium hover:text-primary"
+            class="min-h-11 w-full text-left font-medium hover:text-primary focus-visible:outline-2 focus-visible:outline-ring"
+            :aria-pressed="selected === driver.id"
             @click="focus(driver)"
           >
             {{ driver.user.fullName }}

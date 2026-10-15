@@ -190,6 +190,8 @@ test("a driver must explicitly accept after five minutes, then completes a quote
 test("saved synthetic region coordinates survive reload and invalid drafts do not overwrite them", async ({
   page,
 }) => {
+  // Exercise coordinate-entry fallback without calling the external map vendor.
+  await page.route("https://api-maps.yandex.ru/**", (route) => route.abort());
   await login(page, "admin");
   await page.goto("/adminDistricts/boundaries");
   await expect(
