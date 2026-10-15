@@ -21,6 +21,7 @@ const state = reactive({
 export const driverState = readonly(state);
 let users = 0;
 let refreshVersion = 0;
+let districtSnapshotVersion = 0;
 let sessionGeneration = 0;
 let cleanups: Array<() => void> = [];
 let gpsWatch: number | undefined;
@@ -56,6 +57,7 @@ watch(
 async function refresh() {
   const request = ++refreshVersion;
   const generation = sessionGeneration;
+  const districtVersion = districtSnapshotVersion;
   const current = () =>
     request === refreshVersion &&
     generation === sessionGeneration &&
@@ -72,7 +74,8 @@ async function refresh() {
     if (!current()) return;
     state.profile = profile.data;
     state.balance = balance.data;
-    state.districts = districts.data;
+    if (districtVersion === districtSnapshotVersion)
+      state.districts = districts.data;
     state.active = active.data;
     if (state.active) dismissIncoming();
   } catch (error) {
@@ -207,7 +210,10 @@ function start() {
   on("connect", () => void refresh());
   on("balance:updated", () => void refresh());
   on("districts:stats", (payload) => {
-    if (Array.isArray(payload)) state.districts = payload as District[];
+    if (Array.isArray(payload)) {
+      districtSnapshotVersion++;
+      state.districts = payload as District[];
+    }
   });
   on("order:new", (payload) => {
     const order = payload as Order;

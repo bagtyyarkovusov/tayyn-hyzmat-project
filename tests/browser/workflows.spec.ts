@@ -451,12 +451,25 @@ test("dispatcher enters region, phone and price and the region modal closes afte
       .getByRole("dialog", { name: "Управление поездкой", exact: true })
       .getByRole("button", { name: "Close", exact: true })
       .click();
-    await driver.setViewportSize({ width: 320, height: 568 });
-    expect(
-      await driver.evaluate(
-        () => document.documentElement.scrollHeight <= innerHeight,
-      ),
-    ).toBe(true);
+    for (const viewport of [
+      { width: 320, height: 568 },
+      { width: 568, height: 320 },
+    ]) {
+      await driver.setViewportSize(viewport);
+      expect(
+        await driver.evaluate(
+          () => document.documentElement.scrollHeight <= innerHeight,
+        ),
+      ).toBe(true);
+      const cards = driver
+        .getByRole("group", { name: "Регионы", exact: true })
+        .getByRole("button");
+      for (const card of await cards.all())
+        await expect(card).toBeInViewport({ ratio: 1 });
+      await expect(
+        driver.getByRole("button", { name: "Поездка", exact: true }),
+      ).toBeInViewport({ ratio: 1 });
+    }
     await expect(
       driver
         .getByRole("group", { name: "Регионы", exact: true })
@@ -554,5 +567,194 @@ test("all nine driver regions fit on the home screen without page scrolling", as
       .getByRole("navigation", { name: "Разделы водителя" })
       .boundingBox();
     expect(grid!.y + grid!.height).toBeLessThanOrEqual(nav!.y);
+  }
+});
+
+test("regional queues and counts recover through updates, reconnect and reload", async ({
+  browser,
+}) => {
+  const a = await browser.newContext();
+  const b = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const dispatcher = await a.newPage();
+  const driver = await b.newPage();
+  try {
+    await login(dispatcher, "admin");
+    await login(driver, "driver", "+10000000103");
+    await driver
+      .getByRole("button", { name: "Выйти на линию", exact: true })
+      .click();
+    await expect(
+      driver.getByRole("button", { name: "Уйти с линии", exact: true }),
+    ).toBeVisible();
+    const token = await dispatcher.evaluate(() =>
+      localStorage.getItem("openride.admin.accessToken"),
+    );
+    const headers = { Authorization: `Bearer ${token}` };
+    const regions = await (
+      await dispatcher.request.get("/api/districts", { headers })
+    ).json();
+    const other = regions.find(
+      (r: { id: string }) => r.id !== process.env.TEST_REGION_ID,
+    );
+    const card = driver
+      .getByRole("group", { name: "Регионы", exact: true })
+      .getByRole("button", { name: new RegExp(other.name) });
+    await card.click();
+    const queue = driver.getByRole("dialog", {
+      name: "Заказы района",
+      exact: true,
+    });
+    await expect(queue.getByText(/Сейчас нет свободных заказов/)).toBeVisible();
+    async function create(pickupAddress: string) {
+      const response = await dispatcher.request.post("/api/admin/orders", {
+        headers,
+        data: {
+          districtId: other.id,
+          clientPhone: "+10000000777",
+          priceEstimated: 12,
+          pickupAddress,
+        },
+      });
+      expect(response.ok()).toBe(true);
+      return response.json();
+    }
+    await create("Live remote pickup one");
+    await expect(
+      queue.getByText("Live remote pickup one", { exact: true }),
+    ).toBeVisible();
+    await queue.getByLabel("Буду через").selectOption("20");
+    const second = await create("Live remote pickup two");
+    await expect(
+      queue.getByText("Live remote pickup two", { exact: true }),
+    ).toBeVisible();
+    await expect(queue.getByLabel("Буду через").first()).toHaveValue("20");
+    expect(
+      (
+        await dispatcher.request.post(`/api/admin/orders/${second.id}/cancel`, {
+          headers,
+          data: {},
+        })
+      ).ok(),
+    ).toBe(true);
+    await expect(
+      queue.getByText("Live remote pickup two", { exact: true }),
+    ).not.toBeVisible();
+    await expect(queue.getByLabel("Буду через")).toHaveValue("20");
+    await b.setOffline(true);
+    const third = await create("Live pickup while disconnected");
+    await b.setOffline(false);
+    await expect(
+      queue.getByText("Live pickup while disconnected", { exact: true }),
+    ).toBeVisible();
+    await expect(queue.getByLabel("Буду через").first()).toHaveValue("20");
+    expect(
+      (
+        await dispatcher.request.post(`/api/admin/orders/${third.id}/cancel`, {
+          headers,
+          data: {},
+        })
+      ).ok(),
+    ).toBe(true);
+    await expect(
+      queue.getByText("Live pickup while disconnected", { exact: true }),
+    ).not.toBeVisible();
+    await queue
+      .getByRole("button", { name: "Принять заказ", exact: true })
+      .click();
+    await expect(queue).not.toBeVisible();
+    await expect(
+      driver.getByRole("link", { name: "+10000000777", exact: true }),
+    ).toBeVisible();
+    await driver.reload();
+    const trip = driver.getByRole("dialog", {
+      name: "Управление поездкой",
+      exact: true,
+    });
+    await expect(
+      trip.getByText("Live remote pickup one", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      trip.getByText("Прибытие: 20 мин", { exact: true }),
+    ).toBeVisible();
+    await trip.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(driver.getByLabel("Тестовый баланс")).toHaveText("488 TMT");
+    await driver.screenshot({
+      path: "test-results/driver-live-trip-strip.png",
+      animations: "disabled",
+    });
+    await driver.emulateMedia({ reducedMotion: "reduce" });
+    await driver.getByRole("button", { name: "Поездка", exact: true }).click();
+    await driver.screenshot({ path: "test-results/driver-trip-dialog.png" });
+    for (const name of ["Я на месте", "Начать поездку", "Завершить поездку"])
+      await driver.getByRole("button", { name, exact: true }).click();
+    await expect(driver.getByLabel("Тестовый баланс")).toHaveText("488 TMT");
+    await test.step("an older HTTP snapshot cannot replace newer live counts", async () => {
+      let release = () => {};
+      try {
+        await expect(card.getByText("0:0", { exact: true })).toBeVisible();
+        let captured = () => {};
+        const ready = new Promise<void>((r) => {
+          captured = r;
+        });
+        const held = new Promise<void>((r) => {
+          release = r;
+        });
+        await driver.route(
+          "**/api/districts",
+          async (route) => {
+            const response = await route.fetch();
+            captured();
+            await held;
+            await route.fulfill({ response });
+          },
+          { times: 1 },
+        );
+        await driver.bringToFront();
+        await driver.evaluate(() =>
+          document.dispatchEvent(new Event("visibilitychange")),
+        );
+        await ready;
+        const response = await dispatcher.request.post("/api/admin/orders", {
+          headers,
+          data: {
+            districtId: other.id,
+            clientPhone: "+10000000777",
+            priceEstimated: 12,
+          },
+        });
+        expect(response.ok()).toBe(true);
+        const order = await response.json();
+        await expect(card.getByText("0:1", { exact: true })).toBeVisible();
+        const refreshed = driver.waitForResponse("**/api/districts");
+        release();
+        await (await refreshed).finished();
+        await driver.evaluate(
+          () =>
+            new Promise<void>((resolve) =>
+              requestAnimationFrame(() =>
+                requestAnimationFrame(() => resolve()),
+              ),
+            ),
+        );
+        await expect(card.getByText("0:1", { exact: true })).toBeVisible();
+        expect(
+          (
+            await dispatcher.request.post(
+              `/api/admin/orders/${order.id}/cancel`,
+              {
+                headers,
+                data: {},
+              },
+            )
+          ).ok(),
+        ).toBe(true);
+        await expect(card.getByText("0:0", { exact: true })).toBeVisible();
+      } finally {
+        release();
+      }
+    });
+  } finally {
+    await a.close();
+    await b.close();
   }
 });

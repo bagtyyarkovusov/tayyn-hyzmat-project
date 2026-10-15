@@ -2,7 +2,6 @@
 import { computed, ref, watch } from "vue";
 import {
   MapPin,
-  RefreshCw,
   LocateFixed,
   Power,
   Bell,
@@ -20,13 +19,24 @@ import {
 } from "@/shared/ui/dialog";
 import { useDriver } from "./useDriver";
 import { enableOrderAlerts } from "./alerts";
-import { money } from "./model";
+import { money, statusLabels } from "./model";
 import IncomingOrder from "./components/IncomingOrder.vue";
 import ActiveTrip from "./components/ActiveTrip.vue";
 import AvailableOrders from "./components/AvailableOrders.vue";
-const { state, refresh, setOnline, enableGps, session, dismissIncoming } =
-  useDriver();
+const { state, setOnline, enableGps, session, dismissIncoming } = useDriver();
 const selected = ref<string | null>(null);
+const availabilityPulse = ref(false);
+watch(
+  () => state.profile?.isOnline,
+  (online, previous) => {
+    if (
+      typeof previous === "boolean" &&
+      typeof online === "boolean" &&
+      online !== previous
+    )
+      availabilityPulse.value = true;
+  },
+);
 const tripOpen = ref(false),
   messageOpen = ref(false);
 const selectedDistrict = computed(() =>
@@ -96,7 +106,7 @@ watch(
           /></Button>
           <Button
             variant="outline"
-            class="size-12 shrink-0 rounded-full border-2 shadow-none [&_svg]:size-6 motion-safe:transition-[background-color,border-color,color,transform] motion-safe:duration-200 active:scale-95"
+            class="relative size-12 shrink-0 rounded-full border-2 shadow-none [&_svg]:size-6 motion-safe:transition-[background-color,border-color,color,transform] motion-safe:duration-200 active:scale-95"
             :class="
               state.profile?.isOnline
                 ? 'border-emerald-300 bg-emerald-300 text-emerald-950 hover:bg-emerald-200 dark:border-emerald-400 dark:bg-emerald-400 dark:hover:bg-emerald-300'
@@ -115,6 +125,13 @@ watch(
             "
             @click="setOnline"
           >
+            <span
+              v-if="availabilityPulse"
+              :key="String(state.profile?.isOnline)"
+              class="availability-pulse pointer-events-none absolute inset-0 rounded-full border-2 border-current"
+              aria-hidden="true"
+              @animationend="availabilityPulse = false"
+            />
             <LoaderCircle
               v-if="state.busy"
               class="motion-safe:animate-spin"
@@ -144,13 +161,6 @@ watch(
           >
         </div>
         <Button
-          v-if="state.active"
-          variant="secondary"
-          class="min-h-11 shrink-0"
-          @click="tripOpen = true"
-          >Поездка<ChevronRight
-        /></Button>
-        <Button
           v-if="message"
           variant="ghost"
           size="icon"
@@ -163,21 +173,35 @@ watch(
             >{{ message }}</span
           ></Button
         >
-        <Button
-          variant="ghost"
-          size="icon"
-          class="size-11 shrink-0"
-          aria-label="Обновить данные"
-          :disabled="state.loading"
-          @click="refresh"
-          ><RefreshCw :class="{ 'motion-safe:animate-spin': state.loading }"
-        /></Button>
       </div>
     </div>
+    <button
+      v-if="state.active"
+      class="trip-strip flex min-h-11 shrink-0 items-center gap-3 rounded-lg bg-secondary px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      aria-label="Поездка"
+      @click="tripOpen = true"
+    >
+      <span
+        class="size-2 shrink-0 rounded-full bg-primary"
+        aria-hidden="true"
+      />
+      <span class="min-w-0 flex-1 truncate text-sm font-semibold"
+        >{{ statusLabels[state.active.status] }} ·
+        {{ state.active.pickupAddress || "Поездка" }}</span
+      >
+      <span class="shrink-0 text-sm font-semibold tabular-nums">{{
+        money(state.active.priceEstimated)
+      }}</span>
+      <ChevronRight class="size-4 shrink-0" aria-hidden="true" />
+    </button>
     <p v-if="state.position" class="sr-only" role="status">
       GPS · точность {{ Math.round(state.position.accuracy) }} м
     </p>
-    <p v-if="!session.state.connected" role="status" class="sr-only">
+    <p
+      v-if="!session.state.connected"
+      role="status"
+      class="shrink-0 text-xs text-destructive"
+    >
       Переподключаемся к диспетчеру…
     </p>
     <p
@@ -264,7 +288,7 @@ watch(
           ><DialogDescription
             >Свяжитесь с клиентом и отмечайте этапы поездки.</DialogDescription
           ></DialogHeader
-        ><ActiveTrip />
+        ><ActiveTrip embedded />
         <p v-if="state.error" role="alert" class="text-sm text-destructive">
           {{ state.error }}
         </p></DialogContent
@@ -281,6 +305,26 @@ watch(
   </div>
 </template>
 <style scoped>
+.availability-pulse {
+  animation: availability-confirm 480ms ease-out both;
+}
+@keyframes availability-confirm {
+  from {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.4);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .availability-pulse {
+    animation: none;
+    display: none;
+  }
+}
+
 .region-grid {
   max-height: 24rem;
   grid-template-rows: repeat(var(--region-rows), minmax(0, 1fr));

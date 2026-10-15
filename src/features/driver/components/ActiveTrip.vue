@@ -13,6 +13,7 @@ import {
 import { Textarea } from "@/shared/ui/textarea";
 import { useDriver } from "../useDriver";
 import { money, statusLabels } from "../model";
+defineProps<{ embedded?: boolean }>();
 const { state, transition } = useDriver();
 const cancelOpen = ref(false);
 const reason = ref("");
@@ -35,7 +36,8 @@ async function cancel() {
 <template>
   <section
     v-if="state.active"
-    class="panel space-y-5 border-primary/40"
+    class="space-y-4"
+    :class="embedded ? 'pt-4' : 'panel border-primary/40'"
     aria-labelledby="trip-title"
   >
     <div class="flex items-start justify-between gap-4">

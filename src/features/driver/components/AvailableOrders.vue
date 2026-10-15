@@ -12,6 +12,7 @@ const { state, accept } = useDriver();
 const orders = ref<Order[]>([]),
   loading = ref(false),
   error = ref("");
+const loaded = ref(false);
 const eta = ref<Record<string, number>>({});
 let request = 0;
 async function load() {
@@ -22,7 +23,10 @@ async function load() {
     const { data } = await driverApi.get<Order[]>("/orders/available", {
       params: { districtId: props.districtId },
     });
-    if (id === request) orders.value = data;
+    if (id === request) {
+      orders.value = data;
+      loaded.value = true;
+    }
   } catch (e) {
     if (id === request) error.value = errorMessage(e);
   } finally {
@@ -31,23 +35,32 @@ async function load() {
 }
 async function claim(id: string) {
   await accept(id, eta.value[id] || 10);
-  await load();
+  if (!state.active) await load();
 }
 watch(
   () => props.districtId,
-  () => void load(),
+  () => {
+    loaded.value = false;
+    orders.value = [];
+    void load();
+  },
   { immediate: true },
 );
-const off = ["order:new", "order:taken", "connect"].map((event) =>
-  driverSession.on(event, () => void load()),
+const off = ["order:new", "order:taken", "districts:stats", "connect"].map(
+  (event) => driverSession.on(event, () => void load()),
 );
+const resume = () => {
+  if (!document.hidden) void load();
+};
+document.addEventListener("visibilitychange", resume);
 onUnmounted(() => {
+  document.removeEventListener("visibilitychange", resume);
   request++;
   off.forEach((fn) => fn());
 });
 </script>
 <template>
-  <section class="space-y-4" aria-label="Доступные заказы">
+  <section class="space-y-4" aria-label="Доступные заказы" :aria-busy="loading">
     <div class="flex items-center justify-between gap-3">
       <div>
         <h2 class="text-lg font-semibold">{{ districtName }}</h2>
@@ -69,7 +82,7 @@ onUnmounted(() => {
     >
       {{ error || state.error }}
     </p>
-    <p v-if="loading" role="status" class="muted py-6 text-center">
+    <p v-if="loading && !loaded" role="status" class="muted py-6 text-center">
       Загружаем заказы…
     </p>
     <p v-else-if="!orders.length" class="muted py-8 text-center">
