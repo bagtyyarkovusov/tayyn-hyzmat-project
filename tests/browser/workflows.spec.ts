@@ -267,6 +267,7 @@ test("logout wins over a delayed refresh response and keeps the other actor sign
 test("GPS reporting continues across driver routes and stops after logout", async ({
   browser,
 }) => {
+  test.setTimeout(60000);
   const context = await browser.newContext({
     permissions: ["geolocation"],
     geolocation: { latitude: 37.96, longitude: 58.32, accuracy: 10 },
@@ -274,10 +275,15 @@ test("GPS reporting continues across driver routes and stops after logout", asyn
   const page = await context.newPage();
   try {
     await login(page, "driver");
-    await page.clock.install();
+    const firstReport = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/driver/location") &&
+        response.request().method() === "POST",
+    );
     await page
       .getByRole("button", { name: "Включить GPS", exact: true })
       .click();
+    await (await firstReport).finished();
     await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
     const token = await page.evaluate(() =>
       localStorage.getItem("openride.driver.accessToken"),
@@ -286,7 +292,9 @@ test("GPS reporting continues across driver routes and stops after logout", asyn
       .getByRole("navigation", { name: "Разделы водителя" })
       .getByRole("link", { name: "Профиль", exact: true })
       .click();
-    await page.clock.fastForward(11000);
+    // Native geolocation runs outside the browser timer mock. Let the real
+    // reporting throttle expire before delivering each hardware location fix.
+    await page.waitForTimeout(11000);
     await context.setGeolocation({
       latitude: 37.9701,
       longitude: 58.3301,
@@ -303,7 +311,9 @@ test("GPS reporting continues across driver routes and stops after logout", asyn
       .toBe(37.9701);
     await page.getByRole("button", { name: "Выйти", exact: true }).click();
     await expect(page).toHaveURL(/driverLogin/);
-    await page.clock.fastForward(11000);
+    // Native geolocation runs outside the browser timer mock. Let the real
+    // reporting throttle expire before delivering each hardware location fix.
+    await page.waitForTimeout(11000);
     await context.setGeolocation({
       latitude: 37.98,
       longitude: 58.34,
