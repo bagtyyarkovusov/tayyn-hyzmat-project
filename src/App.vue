@@ -243,10 +243,10 @@ async function logout() {
   background: var(--primary);
 }
 .theme-select {
-  background: transparent;
+  background-color: transparent;
   font-size: 0.75rem;
   max-width: 7rem;
-  padding: 0.5rem;
+  padding: 0.5rem 2rem 0.5rem 0.5rem;
   border-radius: 0.4rem;
 }
 .admin-content {

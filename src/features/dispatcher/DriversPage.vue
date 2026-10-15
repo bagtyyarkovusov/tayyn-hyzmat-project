@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { RouterLink, useRoute } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 import { Search, ChevronRight } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
@@ -8,7 +8,17 @@ import { Badge } from "@/shared/ui/badge";
 import { adminApi } from "@/shared/api";
 import { money, statusLabel, type Driver, type Page } from "./domain";
 import { useResource } from "./useResource";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/shared/ui/dialog";
+import CreateDriverForm from "./components/CreateDriverForm.vue";
 import PageState from "./components/PageState.vue";
+const router = useRouter(),
+  create = ref(false);
 const route = useRoute(),
   filter = ref(String(route.query.status || "")),
   search = ref(""),
@@ -44,13 +54,16 @@ const visible = computed(() =>
 </script>
 <template>
   <div class="space-y-6">
-    <header>
-      <h1 class="page-heading">
-        Водители <span class="text-muted-foreground">{{ data.total }}</span>
-      </h1>
-      <p class="mt-2 text-muted-foreground">
-        Доступ, автомобили и синтетические балансы.
-      </p>
+    <header class="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h1 class="page-heading">
+          Водители <span class="text-muted-foreground">{{ data.total }}</span>
+        </h1>
+        <p class="mt-2 text-muted-foreground">
+          Доступ, автомобили и синтетические балансы.
+        </p>
+      </div>
+      <Button @click="create = true">Добавить водителя</Button>
     </header>
     <div class="flex flex-wrap items-center gap-3">
       <div class="relative min-w-52 flex-1">
@@ -133,5 +146,23 @@ const visible = computed(() =>
         >Далее</Button
       >
     </div>
+    <Dialog v-model:open="create">
+      <DialogContent class="max-h-[90dvh] overflow-y-auto">
+        <DialogHeader
+          ><DialogTitle>Новый водитель</DialogTitle
+          ><DialogDescription
+            >Укажите имя, телефон, пароль и район.</DialogDescription
+          ></DialogHeader
+        >
+        <CreateDriverForm
+          @created="
+            (driver) => {
+              create = false;
+              router.push(`/adminDrivers/${driver.id}`);
+            }
+          "
+        />
+      </DialogContent>
+    </Dialog>
   </div>
 </template>

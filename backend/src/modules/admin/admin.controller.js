@@ -2,6 +2,10 @@ const asyncHandler = require('../../utils/asyncHandler');
 const service = require('./admin.service');
 const ordersService = require('../orders/orders.service');
 
+const createDriver = asyncHandler(async (req, res) => {
+  res.status(201).json(await service.createDriver(req.body, req.user.id));
+});
+
 const listDrivers = asyncHandler(async (req, res) => {
   const result = await service.listDrivers(req.query);
   res.json(result);
@@ -114,6 +118,7 @@ const updateDistrictBoundary = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
+  createDriver,
   listDrivers,
   getDriver,
   approveDriver,

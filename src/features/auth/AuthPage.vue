@@ -17,7 +17,7 @@ const route = useRoute();
 const router = useRouter();
 const isAdmin = computed(() => route.path === "/adminLogin");
 const registering = computed(() => route.path === "/driverRegister");
-const phone = ref("");
+const phone = ref("+993");
 const password = ref("");
 const fullName = ref("");
 const busy = ref(false);

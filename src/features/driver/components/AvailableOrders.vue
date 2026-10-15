@@ -62,8 +62,12 @@ onUnmounted(() => {
         ><RefreshCw class="size-4" :class="{ 'animate-spin': loading }"
       /></Button>
     </div>
-    <p v-if="error" role="alert" class="text-sm text-destructive">
-      {{ error }}
+    <p
+      v-if="error || state.error"
+      role="alert"
+      class="text-sm text-destructive"
+    >
+      {{ error || state.error }}
     </p>
     <p v-if="loading" role="status" class="muted py-6 text-center">
       Загружаем заказы…

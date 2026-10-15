@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const validate = require('../../utils/validate');
 const {
+  createDriverSchema,
   driverIdParamSchema,
   orderIdParamSchema,
   listDriversQuerySchema,
@@ -20,6 +21,7 @@ const { createOrderSchema } = require('../orders/orders.validation');
 // Mounted in routes/index.js behind: authenticate, requireRole('ADMIN')
 const router = Router();
 
+router.post('/drivers', validate({ body: createDriverSchema }), controller.createDriver);
 router.get('/drivers', validate({ query: listDriversQuerySchema }), controller.listDrivers);
 router.get('/drivers/:id', validate({ params: driverIdParamSchema }), controller.getDriver);
 router.post('/drivers/:id/approve', validate({ params: driverIdParamSchema }), controller.approveDriver);

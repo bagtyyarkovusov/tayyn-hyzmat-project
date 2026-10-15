@@ -8,6 +8,7 @@ const { syncDriverDistrictRoom } = require('../../sockets/roomSync');
 const districtsService = require('../districts/districts.service');
 const driverService = require('../driver/driver.service');
 const authService = require('../auth/auth.service');
+const { hashPassword } = require('../../utils/password');
 
 const D = (value) => new Prisma.Decimal(value ?? 0);
 
@@ -33,6 +34,23 @@ function omitPushToken(driver) {
   const { pushToken, ...rest } = driver;
   void pushToken;
   return rest;
+}
+
+async function createDriver({ phone, fullName, password, districtId }, actorId) {
+  const district = await prisma.district.findFirst({ where: { id: districtId, isActive: true } });
+  if (!district) throw ApiError.notFound('Район не найден');
+  const passwordHash = await hashPassword(password);
+  const user = await prisma.user.create({
+    data: {
+      role: 'DRIVER', phone, fullName, passwordHash,
+      driver: { create: { districtId, status: 'APPROVED', approvedAt: new Date(), approvedBy: actorId } },
+      balance: { create: { amount: 0, currency: 'TMT' } }
+    },
+    select: { driver: { select: { id: true } } }
+  });
+  const driver = await getDriver(user.driver.id);
+  safeEmit(io => io.to(rooms.admins()).emit('driver:registered', driver));
+  return driver;
 }
 
 async function listDrivers({ status, page, limit }) {
@@ -557,6 +575,7 @@ async function updateDistrictBoundary(districtId, boundary) {
 }
 
 module.exports = {
+  createDriver,
   listDrivers,
   getDriver,
   approveDriver,

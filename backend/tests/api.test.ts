@@ -49,8 +49,11 @@ async function socket(token: string) {
   return client;
 }
 async function order(priceEstimated: number | null = 10) {
-  const response = await request('/admin/orders', adminToken, { districtId: regionId, ...(priceEstimated === null ? {} : { priceEstimated }), pickupAddress: 'Synthetic pickup', clientPhone: '+10000000999' });
+  const response = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: priceEstimated ?? 10, pickupAddress: 'Synthetic pickup', clientPhone: '+10000000999' });
   assert.equal(response.status, 201);
+  if (priceEstimated === null) {
+    await prisma.order.update({ where: { id: response.data.id }, data: { priceEstimated: null } });
+  }
   return response.data;
 }
 
@@ -107,19 +110,24 @@ test('dispatcher must select a region even when map coordinates are supplied', a
   }
 });
 
-test('region and phone alone create an unpriced order that can be completed without a balance charge', async () => {
-  const created = await request('/admin/orders', adminToken, { districtId: regionId, clientPhone: '+99361234567' });
-  assert.equal(created.status, 201);
+test('dispatcher must enter a positive order price manually', async () => {
+  for (const priceEstimated of [undefined, 0, -5]) {
+    const result = await request('/admin/orders', adminToken, { districtId: regionId, clientPhone: '+99361234567', priceEstimated });
+    assert.equal(result.status, 400);
+  }
+});
+
+test('an inherited unpriced order can be completed without a balance charge', async () => {
+  const created = { data: await order(null) };
   assert.equal(created.data.districtId, regionId);
-  assert.equal(created.data.priceEstimated, null);
-  assert.equal(created.data.pickupAddress, null);
   const available = await request('/orders/available', driverToken);
   const offered = available.data.find((item: { id: string }) => item.id === created.data.id);
   assert.ok(offered);
+  assert.equal(offered.priceEstimated, null);
   assert.equal('clientPhone' in offered, false);
   const claimed = await request('/orders/accept', driverToken, { orderId: created.data.id });
   assert.equal(claimed.status, 200);
-  assert.equal(claimed.data.clientPhone, '+99361234567');
+  assert.equal(claimed.data.clientPhone, '+10000000999');
   assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
   for (const action of ['waiting', 'start', 'complete']) assert.equal((await request(`/orders/${action}`, driverToken, { orderId: created.data.id })).status, 200);
   assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
@@ -234,6 +242,26 @@ for (const price of [null, 0, -10]) {
     assert.equal((await request('/driver/history', driverToken)).data.transactions.total, 0);
   });
 }
+
+test('dispatcher creates an approved driver with a zero TMT balance and no leaked password', async () => {
+  const body = { phone: '+99361123456', fullName: 'Added synthetic driver', password, districtId: regionId };
+  assert.equal((await request('/admin/drivers', driverToken, body)).status, 403);
+  assert.equal((await request('/admin/drivers', '', body)).status, 401);
+  assert.equal((await request('/admin/drivers', adminToken, { ...body, districtId: '00000000-0000-4000-8000-000000000000' })).status, 404);
+  const created = await request('/admin/drivers', adminToken, body);
+  assert.equal(created.status, 201);
+  assert.equal(created.data.status, 'APPROVED');
+  assert.equal(created.data.districtId, regionId);
+  assert.equal(created.data.user.phone, body.phone);
+  assert.equal(created.data.user.balance.amount, '0');
+  assert.equal(created.data.user.balance.currency, 'TMT');
+  assert.equal('passwordHash' in created.data.user, false);
+  assert.equal('password' in created.data.user, false);
+  assert.equal((await request('/admin/drivers', adminToken, body)).status, 409);
+  const loggedIn = await request('/auth/login', '', { phone: body.phone, password });
+  assert.equal(loggedIn.status, 200);
+  assert.equal(loggedIn.data.user.role, 'DRIVER');
+});
 
 test('a newly registered driver can log in only after dispatcher approval', async () => {
   const phone = '+10000000103';

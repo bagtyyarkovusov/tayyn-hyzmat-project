@@ -16,8 +16,8 @@ const cancelSchema = z.object({
   reason: z.string().trim().max(300).optional()
 });
 
-// Phone dispatch requires the selected region and a valid customer phone.
-// Addresses, map coordinates, quoted price and note are optional. Missing
+// Phone dispatch requires a region, customer phone and manually entered price.
+// Addresses, map coordinates and note are optional. Missing
 // pickup coordinates use the selected region centre for existing storage.
 const createOrderSchema = z.object({
   pickupLat: z.number().min(-90).max(90).optional(),
@@ -26,7 +26,7 @@ const createOrderSchema = z.object({
   dropoffLat: z.number().min(-90).max(90).optional(),
   dropoffLng: z.number().min(-180).max(180).optional(),
   dropoffAddress: z.string().trim().max(300).optional(),
-  priceEstimated: z.number().positive().optional(),
+  priceEstimated: z.number().finite().positive(),
   clientPhone: z.string().trim().min(6, 'Укажите телефон клиента').max(20, 'Некорректный телефон клиента')
     .regex(/^\+?[0-9][0-9\s-]*$/, 'Телефон может содержать цифры, пробелы, дефисы и начальный +')
     .refine(phone => { const digits = phone.replace(/\D/g, ''); return digits.length >= 6 && digits.length <= 15; }, 'Телефон должен содержать от 6 до 15 цифр'),

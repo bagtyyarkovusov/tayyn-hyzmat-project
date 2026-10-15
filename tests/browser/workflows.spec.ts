@@ -78,8 +78,8 @@ test("a driver must explicitly accept after five minutes, then completes a quote
       .getByRole("button", { name: "Выйти на линию", exact: true })
       .click();
     await expect(
-      driver.getByText("Вы принимаете заказы", { exact: true }),
-    ).toBeVisible();
+      driver.getByRole("button", { name: "Уйти с линии", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
     await driver.clock.install();
     let claimRequests = 0;
     driver.on("request", (request) => {
@@ -94,9 +94,7 @@ test("a driver must explicitly accept after five minutes, then completes a quote
     await dialog
       .getByLabel("Район", { exact: true })
       .selectOption(process.env.TEST_REGION_ID!);
-    await dialog
-      .getByText("Дополнительные сведения, необязательно", { exact: true })
-      .click();
+    await expect(dialog.getByLabel("Откуда", { exact: true })).toBeVisible();
     await dialog
       .getByLabel("Откуда", { exact: true })
       .fill("Тестовая улица 10");
@@ -396,7 +394,7 @@ test("switching driver account without logout clears the previous GPS session", 
     await context.close();
   }
 });
-test("dispatcher needs only region and phone and an unpriced driver trip leaves 500 TMT unchanged", async ({
+test("dispatcher enters region, phone and price and the region modal closes after driver acceptance", async ({
   browser,
 }) => {
   const a = await browser.newContext(),
@@ -410,8 +408,8 @@ test("dispatcher needs only region and phone and an unpriced driver trip leaves 
       .getByRole("button", { name: "Выйти на линию", exact: true })
       .click();
     await expect(
-      driver.getByText("Вы принимаете заказы", { exact: true }),
-    ).toBeVisible();
+      driver.getByRole("button", { name: "Уйти с линии", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
     await dispatcher.goto("/adminOrders");
     await dispatcher
       .getByRole("button", { name: "Создать заказ", exact: true })
@@ -420,10 +418,10 @@ test("dispatcher needs only region and phone and an unpriced driver trip leaves 
     await dialog
       .getByLabel("Район", { exact: true })
       .selectOption(process.env.TEST_REGION_ID!);
+    await expect(dialog.getByLabel("Телефон клиента")).toHaveValue("+993");
     await dialog.getByLabel("Телефон клиента").fill("+10000000888");
-    await expect(
-      dialog.getByLabel("Откуда", { exact: true }),
-    ).not.toBeVisible();
+    await dialog.getByLabel("Стоимость, TMT").fill("15");
+    await expect(dialog.getByLabel("Откуда", { exact: true })).toBeVisible();
     await dialog
       .getByRole("button", { name: "Отправить водителям", exact: true })
       .click();
@@ -435,8 +433,14 @@ test("dispatcher needs only region and phone and an unpriced driver trip leaves 
       driver.getByRole("link", { name: "+10000000888", exact: true }),
     ).not.toBeVisible();
     await driver
+      .getByRole("button", { name: "Скрыть предложение", exact: true })
+      .click();
+    await driver.getByRole("button", { name: /ТЕСТ.*Центральный/ }).click();
+    const regionOrders = driver.getByRole("dialog");
+    await regionOrders
       .getByRole("button", { name: "Принять заказ", exact: true })
       .click();
+    await expect(regionOrders).not.toBeVisible();
     await expect(
       driver.getByRole("link", { name: "+10000000888", exact: true }),
     ).toBeVisible();
@@ -444,10 +448,49 @@ test("dispatcher needs only region and phone and an unpriced driver trip leaves 
       await driver.getByRole("button", { name, exact: true }).click();
     await driver.goto("/driverProfile");
     await expect(
-      driver.getByText("500 TMT", { exact: true }).first(),
+      driver.getByText("485 TMT", { exact: true }).first(),
     ).toBeVisible();
   } finally {
     await a.close();
     await b.close();
   }
+});
+
+test("dispatcher adds an approved driver and opens their zero TMT balance", async ({
+  page,
+}) => {
+  await login(page, "admin");
+  await page.goto("/adminDrivers");
+  await page
+    .getByRole("button", { name: "Добавить водителя", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByLabel("Телефон", { exact: true })).toHaveValue(
+    "+993",
+  );
+  await dialog
+    .getByLabel("Имя", { exact: true })
+    .fill("Новый тестовый водитель");
+  await dialog.getByLabel("Телефон", { exact: true }).fill("+99361999888");
+  await dialog
+    .getByLabel("Пароль", { exact: true })
+    .fill("SyntheticBrowser123!");
+  await dialog
+    .getByLabel("Район", { exact: true })
+    .selectOption(process.env.TEST_REGION_ID!);
+  await dialog
+    .getByRole("button", { name: "Добавить водителя", exact: true })
+    .click();
+  await expect(dialog).not.toBeVisible();
+  await expect(page).toHaveURL(/adminDrivers\/[a-f0-9-]+/);
+  await expect(
+    page.getByRole("heading", { name: "Новый тестовый водитель", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Баланс", exact: true }).click();
+  await expect(page.getByText("0 TMT", { exact: true }).first()).toBeVisible();
+  await page.getByLabel("Сумма, TMT", { exact: true }).fill("100");
+  await page.getByRole("button", { name: "Пополнить", exact: true }).click();
+  await expect(
+    page.getByText("100 TMT", { exact: true }).first(),
+  ).toBeVisible();
 });
