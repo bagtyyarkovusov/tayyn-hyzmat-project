@@ -92,18 +92,19 @@ export interface Activity {
   actor?: string;
   at: string;
 }
+const statusLabels: Record<string, string> = {
+  NEW: "Новый",
+  ACCEPTED: "Принят",
+  WAITING: "Ожидание",
+  STARTED: "В пути",
+  COMPLETED: "Завершён",
+  CANCELLED: "Отменён",
+  PENDING: "На проверке",
+  APPROVED: "Одобрен",
+  BLOCKED: "Заблокирован",
+};
 export const statusLabel = (status: string): string =>
-  ({
-    NEW: "Новый",
-    ACCEPTED: "Принят",
-    WAITING: "Ожидание",
-    STARTED: "В пути",
-    COMPLETED: "Завершён",
-    CANCELLED: "Отменён",
-    PENDING: "На проверке",
-    APPROVED: "Одобрен",
-    BLOCKED: "Заблокирован",
-  })[status] ?? status;
+  statusLabels[status] ?? status;
 export const money = (value: number | string | undefined): string =>
   `${Number(value ?? 0).toLocaleString("ru-RU", { maximumFractionDigits: 2 })} TMT`;
 export const date = (value?: string): string =>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, reactive, ref } from "vue";
+import { onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { Label } from "@/shared/ui/label";
@@ -14,6 +14,10 @@ const districts = ref<District[]>([]),
   mapError = ref(""),
   mapElement = ref<HTMLElement>(),
   point = ref<[number, number] | null>(null);
+const pickMode = ref<"pickup" | "dropoff">("pickup");
+const destination = ref<[number, number] | null>(null);
+const edited = reactive({ pickup: false, dropoff: false });
+const versions = { pickup: 0, dropoff: 0 };
 const form = reactive({
   districtId: "",
   pickupAddress: "",
@@ -24,6 +28,7 @@ const form = reactive({
 });
 let map: any,
   marker: any,
+  destinationMarker: any,
   disposed = false;
 onMounted(async () => {
   try {
@@ -45,13 +50,32 @@ onMounted(async () => {
     });
     map.events.add("click", (e: any) => {
       const coords = e.get("coords") as [number, number];
-      point.value = coords;
-      if (marker) marker.geometry.setCoordinates(coords);
-      else {
-        marker = new y.Placemark(coords);
-        map.geoObjects.add(marker);
+      const mode = pickMode.value;
+      if (mode === "pickup") {
+        point.value = coords;
+        if (marker) marker.geometry.setCoordinates(coords);
+        else {
+          marker = new y.Placemark(
+            coords,
+            {},
+            { preset: "islands#greenCircleIcon" },
+          );
+          map.geoObjects.add(marker);
+        }
+      } else {
+        destination.value = coords;
+        if (destinationMarker)
+          destinationMarker.geometry.setCoordinates(coords);
+        else {
+          destinationMarker = new y.Placemark(
+            coords,
+            {},
+            { preset: "islands#redCircleIcon" },
+          );
+          map.geoObjects.add(destinationMarker);
+        }
       }
-      void reverse(coords);
+      void reverse(coords, mode);
     });
   } catch (e) {
     mapError.value = errorMessage(e);
@@ -61,18 +85,38 @@ onUnmounted(() => {
   disposed = true;
   map?.destroy();
 });
-async function reverse(coords: [number, number]) {
+async function reverse(
+  coords: [number, number],
+  mode: "pickup" | "dropoff" = "pickup",
+) {
+  if (edited[mode]) return;
+  const version = ++versions[mode];
   try {
     const { data } = await adminApi.get<{ address?: string }>("/geo/reverse", {
       params: { lat: coords[0], lng: coords[1] },
     });
-    if (point.value === coords && data.address)
-      form.pickupAddress = data.address;
+    if (
+      !disposed &&
+      !edited[mode] &&
+      version === versions[mode] &&
+      data.address
+    )
+      form[mode === "pickup" ? "pickupAddress" : "dropoffAddress"] =
+        data.address;
   } catch {
     /* Address remains manually editable when geocoder is unavailable. */
   }
 }
+watch(
+  () => form.districtId,
+  (id) => {
+    if (!id || point.value || edited.pickup) return;
+    const d = districts.value.find((d) => d.id === id);
+    if (d) void reverse([Number(d.centerLat), Number(d.centerLng)]);
+  },
+);
 async function submit() {
+  if (pending.value || (!point.value && !form.districtId)) return;
   pending.value = true;
   error.value = "";
   try {
@@ -83,6 +127,9 @@ async function submit() {
         : undefined,
       ...(point.value
         ? { pickupLat: point.value[0], pickupLng: point.value[1] }
+        : {}),
+      ...(destination.value
+        ? { dropoffLat: destination.value[0], dropoffLng: destination.value[1] }
         : {}),
     });
     emit("created");
@@ -96,7 +143,27 @@ async function submit() {
 <template>
   <form class="space-y-4" @submit.prevent="submit">
     <div>
-      <p class="mb-2 text-sm font-medium">Точка подачи</p>
+      <div class="mb-3 flex flex-wrap gap-2">
+        <Button
+          type="button"
+          size="sm"
+          :variant="pickMode === 'pickup' ? 'default' : 'outline'"
+          :aria-pressed="pickMode === 'pickup'"
+          @click="pickMode = 'pickup'"
+          >Откуда {{ point ? "✓" : "" }}</Button
+        ><Button
+          type="button"
+          size="sm"
+          :variant="pickMode === 'dropoff' ? 'default' : 'outline'"
+          :aria-pressed="pickMode === 'dropoff'"
+          @click="pickMode = 'dropoff'"
+          >Куда {{ destination ? "✓" : "" }}</Button
+        >
+      </div>
+      <p class="mb-2 text-xs text-muted-foreground">
+        Нажмите на карту, чтобы выбрать
+        {{ pickMode === "pickup" ? "точку подачи" : "место назначения" }}.
+      </p>
       <div
         v-if="!mapError"
         ref="mapElement"
@@ -124,6 +191,21 @@ async function submit() {
         </button>
       </p>
     </div>
+    <p v-if="destination" class="text-xs text-muted-foreground">
+      Назначение: {{ destination[0].toFixed(5) }},
+      {{ destination[1].toFixed(5) }}
+      <button
+        type="button"
+        class="underline"
+        @click="
+          destination = null;
+          destinationMarker && map.geoObjects.remove(destinationMarker);
+          destinationMarker = null;
+        "
+      >
+        Убрать
+      </button>
+    </p>
     <div class="space-y-2">
       <Label for="order-region">Район</Label
       ><select
@@ -146,6 +228,7 @@ async function submit() {
         ><Input
           id="pickup"
           v-model="form.pickupAddress"
+          @input="edited.pickup = true"
           maxlength="300"
           placeholder="Улица, дом, ориентир"
         />
@@ -155,6 +238,7 @@ async function submit() {
         ><Input
           id="dropoff"
           v-model="form.dropoffAddress"
+          @input="edited.dropoff = true"
           maxlength="300"
           placeholder="Адрес назначения"
         />

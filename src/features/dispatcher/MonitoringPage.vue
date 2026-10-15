@@ -109,15 +109,19 @@ function focus(d: Driver) {
         aria-label="Карта водителей"
       />
       <div class="max-h-[65dvh] space-y-2 overflow-y-auto">
-        <button
+        <article
           v-for="driver in data"
           :key="driver.id"
-          type="button"
-          class="w-full rounded-lg border bg-card p-4 text-left hover:bg-muted"
+          class="w-full rounded-lg border bg-card p-4 text-left"
           :class="selected === driver.id ? 'border-primary' : ''"
-          @click="focus(driver)"
         >
-          <p class="font-medium">{{ driver.user.fullName }}</p>
+          <button
+            type="button"
+            class="w-full text-left font-medium hover:text-primary"
+            @click="focus(driver)"
+          >
+            {{ driver.user.fullName }}
+          </button>
           <p class="mt-1 text-xs text-muted-foreground">
             {{ driver.currentVehicle?.plateNumber || "Нет машины" }} ·
             {{ driver.isOnline ? "На линии" : "Не в сети" }}
@@ -135,7 +139,7 @@ function focus(d: Driver) {
             @click.stop
             >Карточка водителя →</RouterLink
           >
-        </button>
+        </article>
       </div>
     </div>
   </div>
