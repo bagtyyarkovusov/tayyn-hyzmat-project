@@ -24,7 +24,7 @@
     "android:assembleDebug": "pnpm cap:sync && cd android && ./gradlew assembleDebug",
     "android:assembleRelease": "pnpm cap:sync && cd android && ./gradlew assembleRelease",
     "preview:isolated": "node scripts/test-browser.mjs --serve",
-    "format:check": "prettier --check src tests *.ts scripts/test-browser.mjs"
+    "format:check": "prettier --check src tests *.ts scripts/test-browser.mjs scripts/test-container-startup.mjs"
   },
   "dependencies": {
     "@capacitor/android": "6.2.1",

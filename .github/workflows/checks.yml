@@ -42,6 +42,9 @@ jobs:
           context: .
           file: deploy/Dockerfile.web
           push: false
+          load: true
+          tags: tayyn-web-check
           cache-from: type=gha,scope=modern-web
           cache-to: type=gha,mode=max,scope=modern-web
       - run: docker build -t tayyn-api-check backend
+      - run: node scripts/test-container-startup.mjs
