@@ -72,7 +72,7 @@ function draft(d: District): Point[][] {
   ];
 }
 function snapshot(coords: Point[][]): Point[][] {
-  return structuredClone(coords);
+  return coords.map((ring) => ring.map(([lat, lng]) => [lat, lng] as Point));
 }
 function select(id: string) {
   if (pending.value) return;

@@ -1,19 +1,19 @@
 # Tayyn Hyzmat
 
-Dispatcher and driver pilot for Ashgabat. Dispatchers create orders in a region and drivers receive live offers. Development uses synthetic accounts and TMT balances, with no real payments.
+Dispatcher and driver pilot for regional order dispatch. A dispatcher selects a region, available drivers receive offers, and a driver claims and completes an order. Development uses synthetic balances, no real payments and TMT only.
 
-Vue 2 serves the dispatcher and driver browser apps. Express, Socket.IO, Prisma and PostgreSQL run the backend. Backend TypeScript adoption has started with region matching. See [architecture](docs/architecture.md) for the current limits.
+The active browser apps use Vue 3, Vite, strict TypeScript and official shadcn-vue components. Express, PostgreSQL, Prisma and Socket.IO power the API. pnpm 10.33.2 manages the workspaces; Docker images are the deployment unit. The inherited customer app remains available at `/legacy/`.
 
-## Start here
+Start with [contributor commands](CONTRIBUTING.md), [isolated development](docs/development.md) and [product scope](docs/product.md). Architecture and limits are in [architecture](docs/architecture.md); checks are in [testing](docs/testing.md); implementation rules are in [coding standards](docs/coding-standards.md). [GLOSSARY](GLOSSARY.md) defines domain terms and [ADRs](docs/adr/) record architectural decisions. Track work through [GitHub Issues](https://github.com/bagtyyarkovusov/tayyn-hyzmat-project/issues).
 
-1. Read [development](docs/development.md) for the isolated local environment and Railway deployment flow.
-2. Follow [CONTRIBUTING.md](CONTRIBUTING.md) for installation and checks.
-3. Read [product scope](docs/product.md), [testing](docs/testing.md) and [coding standards](docs/coding-standards.md) before changing behavior.
+```sh
+corepack enable
+pnpm install --frozen-lockfile
+pnpm preview:isolated
+```
 
-[Domain vocabulary](GLOSSARY.md) defines the terms. [Architectural decisions](docs/adr/) record settled choices. Work is tracked in [GitHub Issues](https://github.com/bagtyyarkovusov/tayyn-hyzmat-project/issues).
+The preview creates its own synthetic database and prints its loopback URL. Its ignored `.local/browser-context.json` contains actor credentials. Stop it with Ctrl-C to clean up. No Railway access is required. `main` automatically deploys shared Railway, where a supporting developer edits real regions; keep test data and feature work isolated.
 
-## Previous documentation
+Original documentation is preserved intact in `archive/documentation-2026-10-15.tar.gz`, with a SHA-256 manifest. It is historical reference, not current agent instructions.
 
-Eight original documents are preserved intact in `archive/documentation-2026-10-15.tar.gz`, including a SHA-256 manifest. View the contents with `tar -tzf archive/documentation-2026-10-15.tar.gz`. Extract to a temporary directory when consulting history. Archived instructions are historical, not current project guidance.
-
-This project derives from [OpenRide](https://github.com/majordomo-consulting/openride). It retains the [GPL-3.0 license](LICENSE).
+Derived from [majordomo-consulting/openride](https://github.com/majordomo-consulting/openride). See [LICENSE](LICENSE) for GPL-3.0 terms. shadcn-vue component sources retain their upstream MIT terms; see [third-party notices](docs/third-party-notices.md).

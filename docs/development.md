@@ -29,3 +29,9 @@ Configure secrets in Railway variables and ignored local environment files. The 
 Start with the driver app in a mobile browser. Loopback port 8081 is only reachable on this computer. Physical-phone GPS testing needs an isolated HTTPS URL and API proxy, which has not yet been provisioned.
 
 Production will use Docker images on a VPS. The existing `container-images.yml` workflow publishes web and API images to GHCR on version tags or manual dispatch. Production secrets, TLS, backups, restoration and a verified VPS rollout remain deployment work. Railway development is not production readiness evidence.
+
+## Modernization preview
+
+Use `pnpm preview:isolated` in the modernization worktree. It creates a new tmpfs PostgreSQL container and real API/frontend on random loopback ports, without reading the original worktree environment. Inspect ignored `.local/browser-context.json` for current actor URLs and synthetic credentials. Leave the command running while reviewing and stop it with Ctrl-C afterward. This preview is independent of the older zone-test stack above and shared Railway.
+
+The modern app uses `VITE_API_URL`, `VITE_SOCKET_URL` and `VITE_YANDEX_MAPS_API_KEY`; existing `VUE_APP_*` names remain supported for Docker/Railway build compatibility. Configure a development-restricted map key separately if live vendor rendering is needed. With no key, lists, region selection and explicit coordinate editing remain available. The disposable suite intentionally supplies no map key.

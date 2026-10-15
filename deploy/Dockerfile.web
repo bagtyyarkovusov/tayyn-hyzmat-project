@@ -4,6 +4,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY backend/package.json ./backend/package.json
 COPY legacy/package.json ./legacy/package.json
+COPY patches ./patches
 RUN pnpm install --frozen-lockfile
 COPY . .
 ARG VUE_APP_YANDEX_MAPS_API_KEY=""

@@ -21,6 +21,8 @@ const state = reactive({
   position: null as { lat: number; lng: number; accuracy: number } | null,
 });
 let users = 0;
+let refreshVersion = 0;
+let sessionGeneration = 0;
 let cleanups: Array<() => void> = [];
 let clock: ReturnType<typeof setInterval> | undefined;
 let autoAccept: ReturnType<typeof setTimeout> | undefined;
@@ -38,8 +40,10 @@ function dismissIncoming() {
 // Session cleanup outlives route components, including navigation to login.
 watch(
   () => driverSession.state.accessToken,
-  (token) => {
+  (token, previous) => {
+    if (!token || !previous) sessionGeneration++;
     if (token) return;
+    refreshVersion++;
     dismissIncoming();
     state.profile = null;
     state.balance = null;
@@ -54,6 +58,12 @@ watch(
   },
 );
 async function refresh() {
+  const request = ++refreshVersion;
+  const generation = sessionGeneration;
+  const current = () =>
+    request === refreshVersion &&
+    generation === sessionGeneration &&
+    Boolean(driverSession.state.accessToken);
   state.loading = true;
   state.error = "";
   try {
@@ -63,15 +73,16 @@ async function refresh() {
       driverApi.get<District[]>("/districts"),
       driverApi.get<Order | null>("/orders/current"),
     ]);
+    if (!current()) return;
     state.profile = profile.data;
     state.balance = balance.data;
     state.districts = districts.data;
     state.active = active.data;
     if (state.active) dismissIncoming();
   } catch (error) {
-    state.error = errorMessage(error);
+    if (current()) state.error = errorMessage(error);
   } finally {
-    state.loading = false;
+    if (current()) state.loading = false;
   }
 }
 async function act(work: () => Promise<void>) {
@@ -178,8 +189,8 @@ function enableGps() {
       state.gpsPending = false;
       state.gpsError =
         "Нет доступа к GPS. Разрешите геолокацию в браузере или выберите район вручную.";
-      if (gpsWatch !== undefined) navigator.geolocation.clearWatch(gpsWatch);
-      gpsWatch = undefined;
+      // GPS belongs to the authenticated driver session, not the current screen.
+      // Explicit logout above releases the watch.
     },
     { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 },
   );
@@ -235,8 +246,8 @@ export function useDriver() {
       cleanups.forEach((fn) => fn());
       cleanups = [];
       if (clock) clearInterval(clock);
-      if (gpsWatch !== undefined) navigator.geolocation.clearWatch(gpsWatch);
-      gpsWatch = undefined;
+      // GPS belongs to the authenticated driver session, not the current screen.
+      // Explicit logout above releases the watch.
     }
   });
   return {

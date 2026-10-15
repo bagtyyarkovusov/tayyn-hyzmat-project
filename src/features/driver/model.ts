@@ -1,11 +1,6 @@
 export type Money = number | string;
 export type OrderStatus =
-  | "NEW"
-  | "ACCEPTED"
-  | "WAITING"
-  | "STARTED"
-  | "COMPLETED"
-  | "CANCELLED";
+  "NEW" | "ACCEPTED" | "WAITING" | "STARTED" | "COMPLETED" | "CANCELLED";
 export interface District {
   id: string;
   name: string;
