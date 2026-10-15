@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { onMounted, onUnmounted, reactive, ref } from "vue";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { Label } from "@/shared/ui/label";
@@ -7,6 +7,7 @@ import { Textarea } from "@/shared/ui/textarea";
 import { adminApi, errorMessage } from "@/shared/api";
 import { hasYandexMapsApiKey, loadYandexMaps } from "@/shared/maps/yandex";
 import type { District } from "../domain";
+const phonePattern = String.raw`[+]?[0-9][0-9\s\-]{5,19}`;
 const emit = defineEmits<{ created: [] }>();
 const districts = ref<District[]>([]),
   pending = ref(false),
@@ -107,21 +108,27 @@ async function reverse(
     /* Address remains manually editable when geocoder is unavailable. */
   }
 }
-watch(
-  () => form.districtId,
-  (id) => {
-    if (!id || point.value || edited.pickup) return;
-    const d = districts.value.find((d) => d.id === id);
-    if (d) void reverse([Number(d.centerLat), Number(d.centerLng)]);
-  },
-);
 async function submit() {
-  if (pending.value || (!point.value && !form.districtId)) return;
+  if (pending.value) return;
+  const phone = form.clientPhone.trim();
+  if (!form.districtId) {
+    error.value = "Выберите район";
+    return;
+  }
+  if (
+    !/^\+?[0-9][0-9\s-]*$/.test(phone) ||
+    phone.replace(/\D/g, "").length < 6 ||
+    phone.replace(/\D/g, "").length > 15
+  ) {
+    error.value = "Укажите телефон клиента: от 6 до 15 цифр";
+    return;
+  }
   pending.value = true;
   error.value = "";
   try {
     await adminApi.post("/admin/orders", {
       ...Object.fromEntries(Object.entries(form).filter(([, v]) => v !== "")),
+      clientPhone: phone,
       priceEstimated: form.priceEstimated
         ? Number(form.priceEstimated)
         : undefined,
@@ -141,107 +148,29 @@ async function submit() {
 }
 </script>
 <template>
-  <form class="space-y-4" @submit.prevent="submit">
-    <div>
-      <div class="mb-3 flex flex-wrap gap-2">
-        <Button
-          type="button"
-          size="sm"
-          :variant="pickMode === 'pickup' ? 'default' : 'outline'"
-          :aria-pressed="pickMode === 'pickup'"
-          @click="pickMode = 'pickup'"
-          >Откуда {{ point ? "✓" : "" }}</Button
-        ><Button
-          type="button"
-          size="sm"
-          :variant="pickMode === 'dropoff' ? 'default' : 'outline'"
-          :aria-pressed="pickMode === 'dropoff'"
-          @click="pickMode = 'dropoff'"
-          >Куда {{ destination ? "✓" : "" }}</Button
-        >
-      </div>
-      <p class="mb-2 text-xs text-muted-foreground">
-        Нажмите на карту, чтобы выбрать
-        {{ pickMode === "pickup" ? "точку подачи" : "место назначения" }}.
-      </p>
-      <div
-        v-if="!mapError"
-        ref="mapElement"
-        class="h-52 overflow-hidden rounded-lg border"
-        aria-label="Карта выбора точки подачи"
-      />
-      <p
-        v-if="mapError"
-        class="rounded-lg bg-muted p-3 text-sm text-muted-foreground"
-      >
-        {{ mapError }}
-      </p>
-      <p v-if="point" class="mt-2 text-xs text-muted-foreground">
-        Выбрано: {{ point[0].toFixed(5) }}, {{ point[1].toFixed(5) }}
-        <button
-          type="button"
-          class="ml-2 underline"
-          @click="
-            point = null;
-            marker && map.geoObjects.remove(marker);
-            marker = null;
-          "
-        >
-          Убрать точку
-        </button>
-      </p>
-    </div>
-    <p v-if="destination" class="text-xs text-muted-foreground">
-      Назначение: {{ destination[0].toFixed(5) }},
-      {{ destination[1].toFixed(5) }}
-      <button
-        type="button"
-        class="underline"
-        @click="
-          destination = null;
-          destinationMarker && map.geoObjects.remove(destinationMarker);
-          destinationMarker = null;
-        "
-      >
-        Убрать
-      </button>
+  <form class="space-y-5" @submit.prevent="submit">
+    <p class="text-sm text-muted-foreground">
+      Достаточно района и телефона. После принятия водитель позвонит клиенту и
+      уточнит место подачи.
     </p>
-    <div class="space-y-2">
-      <Label for="order-region">Район</Label
-      ><select
-        id="order-region"
-        v-model="form.districtId"
-        class="native-select w-full"
-        :required="!point"
-      >
-        <option value="">
-          {{ point ? "Определить по точке" : "Выберите район" }}
-        </option>
-        <option v-for="d in districts" :key="d.id" :value="d.id">
-          {{ d.name }}
-        </option>
-      </select>
-    </div>
     <div class="grid gap-4 sm:grid-cols-2">
       <div class="space-y-2">
-        <Label for="pickup">Откуда</Label
-        ><Input
-          id="pickup"
-          v-model="form.pickupAddress"
-          @input="edited.pickup = true"
-          maxlength="300"
-          placeholder="Улица, дом, ориентир"
-        />
-      </div>
-      <div class="space-y-2">
-        <Label for="dropoff">Куда</Label
-        ><Input
-          id="dropoff"
-          v-model="form.dropoffAddress"
-          @input="edited.dropoff = true"
-          maxlength="300"
-          placeholder="Адрес назначения"
-        />
+        <Label for="order-region">Район</Label
+        ><select
+          id="order-region"
+          v-model="form.districtId"
+          class="native-select w-full"
+          required
+        >
+          <option value="">Выберите район</option>
+          <option
+            v-for="district in districts"
+            :key="district.id"
+            :value="district.id"
+          >
+            {{ district.name }}
+          </option>
+        </select>
       </div>
       <div class="space-y-2">
         <Label for="client-phone">Телефон клиента</Label
@@ -249,38 +178,141 @@ async function submit() {
           id="client-phone"
           v-model="form.clientPhone"
           type="tel"
+          autocomplete="tel"
+          inputmode="tel"
+          required
+          minlength="6"
           maxlength="20"
+          :pattern="phonePattern"
           placeholder="+993…"
         />
+        <p class="text-xs text-muted-foreground">
+          Номер виден водителю только после принятия.
+        </p>
       </div>
-      <div class="space-y-2">
-        <Label for="order-price">Стоимость, TMT</Label
-        ><Input
-          id="order-price"
-          v-model="form.priceEstimated"
-          type="number"
-          min="0.01"
-          step="0.01"
-          placeholder="Необязательно"
+    </div>
+    <details
+      class="rounded-xl border p-4"
+      @toggle="map?.container.fitToViewport()"
+    >
+      <summary class="cursor-pointer text-sm font-medium">
+        Дополнительные сведения, необязательно
+      </summary>
+      <div class="mt-4 space-y-4">
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div class="space-y-2">
+            <Label for="pickup">Откуда</Label
+            ><Input
+              id="pickup"
+              v-model="form.pickupAddress"
+              @input="edited.pickup = true"
+              maxlength="300"
+              placeholder="Улица, дом, ориентир"
+            />
+          </div>
+          <div class="space-y-2">
+            <Label for="dropoff">Куда</Label
+            ><Input
+              id="dropoff"
+              v-model="form.dropoffAddress"
+              @input="edited.dropoff = true"
+              maxlength="300"
+              placeholder="Адрес назначения"
+            />
+          </div>
+        </div>
+        <div class="space-y-2">
+          <Label for="order-price">Стоимость, TMT</Label
+          ><Input
+            id="order-price"
+            v-model="form.priceEstimated"
+            type="number"
+            min="0.01"
+            step="0.01"
+            placeholder="Не указана"
+          />
+          <p class="text-xs text-muted-foreground">
+            Без стоимости баланс водителя не списывается.
+          </p>
+        </div>
+        <div class="space-y-2">
+          <Label for="order-note">Комментарий</Label
+          ><Textarea
+            id="order-note"
+            v-model="form.note"
+            maxlength="500"
+            placeholder="Подъезд, багаж или пожелания"
+          />
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            size="sm"
+            :variant="pickMode === 'pickup' ? 'default' : 'outline'"
+            :aria-pressed="pickMode === 'pickup'"
+            @click="pickMode = 'pickup'"
+            >Откуда {{ point ? "✓" : "" }}</Button
+          ><Button
+            type="button"
+            size="sm"
+            :variant="pickMode === 'dropoff' ? 'default' : 'outline'"
+            :aria-pressed="pickMode === 'dropoff'"
+            @click="pickMode = 'dropoff'"
+            >Куда {{ destination ? "✓" : "" }}</Button
+          >
+        </div>
+        <p class="text-xs text-muted-foreground">
+          Точки карты необязательны и не заменяют выбранный район.
+        </p>
+        <div
+          v-if="!mapError"
+          ref="mapElement"
+          class="h-52 overflow-hidden rounded-lg border"
+          aria-label="Карта уточнения точки подачи"
         />
+        <p
+          v-if="mapError"
+          class="rounded-lg bg-muted p-3 text-sm text-muted-foreground"
+        >
+          {{ mapError }}
+        </p>
+        <p v-if="point" class="text-xs text-muted-foreground">
+          Точка подачи выбрана
+          <button
+            type="button"
+            class="ml-2 underline"
+            @click="
+              point = null;
+              marker && map.geoObjects.remove(marker);
+              marker = null;
+            "
+          >
+            Убрать
+          </button>
+        </p>
+        <p v-if="destination" class="text-xs text-muted-foreground">
+          Место назначения выбрано
+          <button
+            type="button"
+            class="ml-2 underline"
+            @click="
+              destination = null;
+              destinationMarker && map.geoObjects.remove(destinationMarker);
+              destinationMarker = null;
+            "
+          >
+            Убрать
+          </button>
+        </p>
       </div>
-    </div>
-    <div class="space-y-2">
-      <Label for="order-note">Комментарий</Label
-      ><Textarea
-        id="order-note"
-        v-model="form.note"
-        maxlength="500"
-        placeholder="Подъезд, багаж или пожелания"
-      />
-    </div>
+    </details>
     <p v-if="error" role="alert" class="text-sm text-destructive">
       {{ error }}
     </p>
     <div class="flex justify-end border-t pt-4">
       <Button
         type="submit"
-        :disabled="pending || (!form.districtId && !point)"
+        :disabled="pending || !form.districtId || !form.clientPhone.trim()"
         >{{ pending ? "Создаём…" : "Отправить водителям" }}</Button
       >
     </div>

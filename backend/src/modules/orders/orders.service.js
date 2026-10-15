@@ -336,31 +336,18 @@ async function cancel(orderId, driver, reason) {
   return result.order;
 }
 
-// Manual/admin dispatch - see orders.validation.js#createOrderSchema for why
-// this exists instead of a client-facing create endpoint. The district
-// decides which drivers' sockets actually get "Новый заказ" (see the
-// broadcast below). An admin dispatching a real phone call usually knows
-// which district it belongs to better than a map click does, so an
-// explicit `districtId` wins when provided; only falls back to the
-// nearest-center lookup (same one driver GPS uses) when the admin left it
-// on auto.
+// Phone dispatch always uses the selected region for order offers. Optional
+// pickup coordinates refine the location without overriding that selection.
 async function createOrder(data) {
-  let districtId = null;
-  let district = null;
-  if (data.districtId) {
-    district = await prisma.district.findUnique({ where: { id: data.districtId } });
-    if (!district || !district.isActive) throw ApiError.badRequest('Указанный район не найден или неактивен');
-    districtId = district.id;
-  } else {
-    const nearest = await districtsService.findNearestDistrictForPoint(data.pickupLat, data.pickupLng);
-    districtId = nearest ? nearest.id : null;
-  }
+  const district = await prisma.district.findUnique({ where: { id: data.districtId } });
+  if (!district || !district.isActive) throw ApiError.badRequest('Указанный район не найден или неактивен');
+  const districtId = district.id;
 
   // pickupLat/pickupLng are non-nullable columns, but the dispatcher isn't
   // required to click a precise point on the map - picking a district is
   // enough (see orders.validation.js#createOrderSchema). When they didn't,
-  // the district's own centre stands in: "close enough" for phone dispatch,
-  // and the district is what actually decides who the order is broadcast to.
+  // the district centre is a storage fallback, not a precise customer pickup.
+  // The driver calls the customer after accepting to agree on pickup details.
   const pickupLat = data.pickupLat !== undefined ? data.pickupLat : district && Number(district.centerLat);
   const pickupLng = data.pickupLng !== undefined ? data.pickupLng : district && Number(district.centerLng);
   if (!Number.isFinite(pickupLat) || !Number.isFinite(pickupLng)) {

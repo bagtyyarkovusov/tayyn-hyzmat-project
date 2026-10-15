@@ -137,8 +137,8 @@ async function confirmCancel() {
         ><DialogHeader
           ><DialogTitle>Новый заказ</DialogTitle
           ><DialogDescription
-            >Выберите район или точку подачи. Уведомление получат доступные
-            водители.</DialogDescription
+            >Выберите район и укажите телефон клиента. Остальные сведения
+            необязательны.</DialogDescription
           ></DialogHeader
         ><CreateOrderForm
           @created="

@@ -22,7 +22,7 @@ defineEmits<{ cancel: [Order] }>();
     <div class="my-4 grid grid-cols-[20px_1fr] items-center gap-x-2 gap-y-1">
       <MapPin class="size-4 text-primary" />
       <p class="font-medium">
-        {{ order.pickupAddress || "Точка подачи на карте" }}
+        {{ order.pickupAddress || "Подача уточняется по телефону" }}
       </p>
       <ArrowDown class="size-4 text-muted-foreground" />
       <p class="text-sm text-muted-foreground">

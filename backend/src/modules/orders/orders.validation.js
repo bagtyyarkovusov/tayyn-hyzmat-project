@@ -16,36 +16,22 @@ const cancelSchema = z.object({
   reason: z.string().trim().max(300).optional()
 });
 
-// Admin/manual dispatch - see orders.service.js#createOrder. There is no
-// client app yet, so this is the only way an order currently enters the
-// system; pickup coordinates are required (that's what places it in a
-// district's broadcast), everything else is optional. districtId lets the
-// dispatching admin pick the district explicitly instead of relying purely
-// on nearest-center matching against the pickup point they clicked on the
-// map - the admin usually knows which district a phone call actually
-// belongs to better than an approximate map click does.
-const createOrderSchema = z
-  .object({
-    // Optional so an admin dispatching by phone can just pick a district and
-    // send it - the pickup point is then the district's own centre, filled
-    // in server-side (orders.service.js#createOrder). The frontend used to
-    // compute that centre itself from the districts list, but GET /districts
-    // never returned centerLat/centerLng, so it sent NaN -> null and every
-    // such order was rejected with "Некорректные данные запроса".
-    pickupLat: z.number().min(-90).max(90).optional(),
-    pickupLng: z.number().min(-180).max(180).optional(),
-    pickupAddress: z.string().trim().max(300).optional(),
-    dropoffLat: z.number().min(-90).max(90).optional(),
-    dropoffLng: z.number().min(-180).max(180).optional(),
-    dropoffAddress: z.string().trim().max(300).optional(),
-    priceEstimated: z.number().positive().optional(),
-    clientPhone: z.string().trim().max(20).optional(),
-    districtId: z.string().uuid('Некорректный идентификатор района').optional(),
-    note: z.string().trim().max(500).optional()
-  })
-  .refine((data) => (data.pickupLat !== undefined && data.pickupLng !== undefined) || Boolean(data.districtId), {
-    message: 'Укажите точку «Откуда» на карте или выберите район',
-    path: ['pickupLat']
+// Phone dispatch requires the selected region and a valid customer phone.
+// Addresses, map coordinates, quoted price and note are optional. Missing
+// pickup coordinates use the selected region centre for existing storage.
+const createOrderSchema = z.object({
+  pickupLat: z.number().min(-90).max(90).optional(),
+  pickupLng: z.number().min(-180).max(180).optional(),
+  pickupAddress: z.string().trim().max(300).optional(),
+  dropoffLat: z.number().min(-90).max(90).optional(),
+  dropoffLng: z.number().min(-180).max(180).optional(),
+  dropoffAddress: z.string().trim().max(300).optional(),
+  priceEstimated: z.number().positive().optional(),
+  clientPhone: z.string().trim().min(6, 'Укажите телефон клиента').max(20, 'Некорректный телефон клиента')
+    .regex(/^\+?[0-9][0-9\s-]*$/, 'Телефон может содержать цифры, пробелы, дефисы и начальный +')
+    .refine(phone => { const digits = phone.replace(/\D/g, ''); return digits.length >= 6 && digits.length <= 15; }, 'Телефон должен содержать от 6 до 15 цифр'),
+  districtId: z.string().uuid('Выберите район'),
+  note: z.string().trim().max(500).optional()
   });
 
 // GET /orders/available?districtId=... - districtId is optional (defaults

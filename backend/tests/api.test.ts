@@ -93,6 +93,39 @@ test('private driver data requires authentication and dispatcher data requires a
   assert.equal((await request('/admin/drivers', driverToken)).status, 403);
 });
 
+test('dispatcher cannot create an order without a valid customer phone', async () => {
+  for (const clientPhone of [undefined, '', '   ', 'call-me', '+', '12']) {
+    const response = await request('/admin/orders', adminToken, { districtId: regionId, ...(clientPhone === undefined ? {} : { clientPhone }) });
+    assert.equal(response.status, 400, `invalid phone ${String(clientPhone)} must be rejected`);
+  }
+});
+
+test('dispatcher must select a region even when map coordinates are supplied', async () => {
+  for (const coordinates of [{}, { pickupLat: 37.96, pickupLng: 58.32 }]) {
+    const response = await request('/admin/orders', adminToken, { clientPhone: '+99361234567', ...coordinates });
+    assert.equal(response.status, 400);
+  }
+});
+
+test('region and phone alone create an unpriced order that can be completed without a balance charge', async () => {
+  const created = await request('/admin/orders', adminToken, { districtId: regionId, clientPhone: '+99361234567' });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.districtId, regionId);
+  assert.equal(created.data.priceEstimated, null);
+  assert.equal(created.data.pickupAddress, null);
+  const available = await request('/orders/available', driverToken);
+  const offered = available.data.find((item: { id: string }) => item.id === created.data.id);
+  assert.ok(offered);
+  assert.equal('clientPhone' in offered, false);
+  const claimed = await request('/orders/accept', driverToken, { orderId: created.data.id });
+  assert.equal(claimed.status, 200);
+  assert.equal(claimed.data.clientPhone, '+99361234567');
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
+  for (const action of ['waiting', 'start', 'complete']) assert.equal((await request(`/orders/${action}`, driverToken, { orderId: created.data.id })).status, 200);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
+  assert.equal((await request('/driver/history', driverToken)).data.transactions.total, 0);
+});
+
 test('a claimed order progresses to completion and charges the quoted TMT price once', async () => {
   const created = await order();
   const body = { orderId: created.id, etaMinutes: 5 };
