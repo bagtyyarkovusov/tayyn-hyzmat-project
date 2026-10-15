@@ -29,3 +29,7 @@ Configure secrets in Railway variables and ignored local environment files. The 
 Start with the driver app in a mobile browser. Loopback port 8081 is only reachable on this computer. Physical-phone GPS testing needs an isolated HTTPS URL and API proxy, which has not yet been provisioned.
 
 Production will use Docker images on a VPS. The existing `container-images.yml` workflow publishes web and API images to GHCR on version tags or manual dispatch. Production secrets, TLS, backups, restoration and a verified VPS rollout remain deployment work. Railway development is not production readiness evidence.
+
+## Default region geometry
+
+New environments use the finalized versioned [canonical regions](regions.md). The shared Railway editor already stores them. The old isolated rectangle remains only an explicit edge-case fixture.

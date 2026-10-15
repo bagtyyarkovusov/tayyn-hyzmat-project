@@ -19,7 +19,8 @@
     "typecheck": "npm run build && tsc -p tsconfig.tests.json --noEmit",
     "test:unit": "tsx --test tests/geo.test.ts",
     "test:integration": "node ../scripts/test-backend.mjs",
-    "test": "npm run test:unit && npm run test:integration"
+    "test": "npm run test:unit && npm run test:integration",
+    "seed:regions": "node prisma/default-regions.cjs"
   },
   "prisma": {
     "seed": "node prisma/seed.js"

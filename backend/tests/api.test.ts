@@ -173,3 +173,45 @@ test('a newly registered driver can log in only after dispatcher approval', asyn
   const token = await login(phone);
   assert.equal((await request('/driver/profile', token)).data.status, 'APPROVED');
 });
+
+test('canonical region bootstrap persists all finalized polygons and preserves later edits', async () => {
+  const { seedDefaultRegions } = require('../prisma/default-regions.cjs');
+  const first = await prisma.$transaction(async tx => seedDefaultRegions(tx));
+  assert.equal(first.created, 9);
+  const response = await request('/admin/districts', adminToken);
+  const gurtly = response.data.find((region: { name: string }) => region.name === '30мкр, Гуртлы');
+  assert.ok(gurtly);
+  assert.equal(gurtly.boundary[0].length, 26);
+  const dataset = require('../prisma/data/default-regions.json');
+  for (const expected of dataset.regions) {
+    const persisted = response.data.find((region: { id: string }) => region.id === expected.id);
+    assert.deepEqual(persisted.boundary, expected.boundary);
+  }
+  const edited = [[[37.94, 58.30], [37.98, 58.30], [37.98, 58.36], [37.94, 58.30]]];
+  const saved = await fetch(`${base}/admin/districts/${gurtly.id}/boundary`, {
+    method: 'PATCH', headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ boundary: edited }), signal: AbortSignal.timeout(5000)
+  });
+  assert.equal(saved.status, 200);
+  const repeated = await prisma.$transaction(async tx => seedDefaultRegions(tx));
+  assert.deepEqual(repeated, { created: 0, filled: 0, preserved: 9 });
+  const reread = await request('/admin/districts', adminToken);
+  assert.deepEqual(reread.data.find((region: { id: string }) => region.id === gurtly.id).boundary, edited);
+});
+
+test('canonical bootstrap fills a missing boundary without changing an existing region identity', async () => {
+  const { seedDefaultRegions } = require('../prisma/default-regions.cjs');
+  const { Prisma } = require('@prisma/client');
+  await prisma.$transaction(async tx => seedDefaultRegions(tx));
+  // Set up an older environment whose named region predates the saved geometry.
+  const oldId = '1c1154fc-38c3-40d2-9d08-56a6cabce276';
+  const canonicalId = '80c54215-b1a7-4be8-a9c5-2df3053822b6';
+  await prisma.district.update({ where: { id: canonicalId }, data: { id: oldId, boundary: Prisma.DbNull } });
+  const result = await prisma.$transaction(async tx => seedDefaultRegions(tx));
+  assert.equal(result.filled, 1);
+  const response = await request('/admin/districts', adminToken);
+  const restored = response.data.filter((region: { name: string }) => region.name === '30мкр, Гуртлы');
+  assert.equal(restored.length, 1);
+  assert.equal(restored[0].id, oldId);
+  assert.equal(restored[0].boundary[0].length, 26);
+});
