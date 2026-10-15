@@ -1,0 +1,32 @@
+# Always run with -p tayyn-zone-test and --env-file .local/zone-test.env.
+# A separate database name, volume and network keep shared editing isolated.
+services:
+  db:
+    environment:
+      POSTGRES_DB: tayyn_zone_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tayyn -d tayyn_zone_test"]
+  migrate:
+    environment:
+      DATABASE_URL: postgresql://tayyn:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/tayyn_zone_test
+  api:
+    environment:
+      DATABASE_URL: postgresql://tayyn:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/tayyn_zone_test
+  web:
+    ports: !override
+      - "127.0.0.1:8081:8080"
+  seed-zone:
+    image: ${API_IMAGE:-tayyn-api:local}
+    profiles: ["fixtures"]
+    environment:
+      DATABASE_URL: postgresql://tayyn:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/tayyn_zone_test
+      SEED_ADMIN_PHONE: ${SEED_ADMIN_PHONE:?Set SEED_ADMIN_PHONE}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?Set SEED_ADMIN_PASSWORD}
+      SEED_DRIVER_PASSWORD: ${SEED_DRIVER_PASSWORD:?Set SEED_DRIVER_PASSWORD}
+      ISOLATED_ZONE_FIXTURE: "true"
+    volumes:
+      - ./scripts/seed-zone-test.cjs:/app/seed-zone-test.cjs:ro
+    command: ["node", "/app/seed-zone-test.cjs"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
