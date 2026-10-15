@@ -147,6 +147,7 @@ onUnmounted(() => {
             state.busy ||
             !!state.active ||
             Number(state.balance?.amount ?? 0) <= 0 ||
+            !state.gpsReady ||
             !state.profile?.isOnline
           "
           @click="claim(order.id)"

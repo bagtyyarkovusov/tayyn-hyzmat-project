@@ -16,6 +16,7 @@ const state = reactive({
   notice: "",
   gpsError: "",
   gpsPending: false,
+  gpsReady: false,
   position: null as { lat: number; lng: number; accuracy: number } | null,
 });
 export const driverState = readonly(state);
@@ -27,6 +28,44 @@ let cleanups: Array<() => void> = [];
 let gpsWatch: number | undefined;
 let lastLocationSent = 0;
 let locationSending = false;
+let gpsTimer: ReturnType<typeof setInterval> | undefined;
+let lastFixAt = 0;
+let offlinePending = false;
+let gpsEpoch = 0;
+const GPS_MAX_AGE_MS = 60000;
+function hasCurrentGps() {
+  return (
+    state.gpsReady &&
+    Date.now() - lastLocationSent < GPS_MAX_AGE_MS &&
+    Date.now() - lastFixAt < GPS_MAX_AGE_MS
+  );
+}
+function hideAvailableOrders() {
+  dismissIncoming();
+  state.districts = state.districts.map((d) => ({
+    ...d,
+    activeOrders: 0,
+    onlineDrivers: 0,
+    freeDrivers: 0,
+  }));
+}
+async function loseGps(message: string) {
+  gpsEpoch++;
+  state.gpsReady = false;
+  state.gpsError = message;
+  hideAvailableOrders();
+  if (!state.profile?.isOnline || offlinePending) return;
+  state.profile.isOnline = false;
+  offlinePending = true;
+  const generation = sessionGeneration;
+  try {
+    await driverApi.post("/driver/status", { isOnline: false });
+  } catch (error) {
+    if (generation === sessionGeneration) state.error = errorMessage(error);
+  } finally {
+    if (generation === sessionGeneration) offlinePending = false;
+  }
+}
 function dismissIncoming() {
   closeOrderAlerts();
   state.incoming = null;
@@ -37,6 +76,7 @@ watch(
   () => driverSession.state.user?.id,
   () => {
     sessionGeneration++;
+    gpsEpoch++;
     refreshVersion++;
     dismissIncoming();
     state.profile = null;
@@ -47,6 +87,12 @@ watch(
     state.notice = "";
     state.loading = false;
     state.position = null;
+    state.gpsReady = false;
+    lastFixAt = 0;
+    locationSending = false;
+    offlinePending = false;
+    if (gpsTimer !== undefined) clearInterval(gpsTimer);
+    gpsTimer = undefined;
     lastLocationSent = 0;
     state.gpsError = "";
     state.gpsPending = false;
@@ -78,6 +124,11 @@ async function refresh() {
       state.districts = districts.data;
     state.active = active.data;
     if (state.active) dismissIncoming();
+    if (!state.gpsReady) {
+      hideAvailableOrders();
+      if (state.profile.isOnline)
+        void loseGps("Включите GPS перед выходом на линию.");
+    }
   } catch (error) {
     if (current()) state.error = errorMessage(error);
   } finally {
@@ -98,6 +149,11 @@ async function act(work: () => Promise<void>) {
   }
 }
 async function accept(orderId: string, etaMinutes: number) {
+  if (!hasCurrentGps() || !state.profile?.isOnline) {
+    dismissIncoming();
+    state.error = "Включите GPS и выйдите на линию, чтобы принимать заказы.";
+    return;
+  }
   if (!driverSession.state.accessToken) {
     dismissIncoming();
     return;
@@ -131,6 +187,10 @@ async function transition(
 async function setOnline() {
   if (!state.profile) return;
   const isOnline = !state.profile.isOnline;
+  if (isOnline && !hasCurrentGps()) {
+    state.gpsError = "Включите GPS перед выходом на линию.";
+    return;
+  }
   await act(async () => {
     await driverApi.post("/driver/status", { isOnline, isAvailable: isOnline });
     await refresh();
@@ -145,79 +205,122 @@ async function setDistrict(districtId: string) {
 function enableGps() {
   state.gpsError = "";
   if (!navigator.geolocation) {
-    state.gpsError = "Браузер не поддерживает геолокацию.";
+    void loseGps("Браузер не поддерживает геолокацию.");
     return;
   }
   if (gpsWatch !== undefined) return;
   state.gpsPending = true;
   const generation = sessionGeneration;
-  gpsWatch = navigator.geolocation.watchPosition(
-    async (position) => {
+  const options = {
+    enableHighAccuracy: true,
+    maximumAge: 10000,
+    timeout: 20000,
+  };
+  const report = async (position: GeolocationPosition) => {
+    if (generation !== sessionGeneration) return;
+    const {
+      latitude: lat,
+      longitude: lng,
+      accuracy,
+      heading,
+      speed,
+    } = position.coords;
+    const age = Date.now() - position.timestamp;
+    if (!Number.isFinite(age) || age < -5000 || age > GPS_MAX_AGE_MS) {
+      void loseGps("GPS устарел. Ожидаем новые координаты.");
+      return;
+    }
+    lastFixAt = position.timestamp;
+    state.position = { lat, lng, accuracy };
+    if (locationSending || Date.now() - lastLocationSent < 10000) return;
+    locationSending = true;
+    const epoch = gpsEpoch;
+    try {
+      const { data } = await driverApi.post<{ districtId: string | null }>(
+        "/driver/location",
+        {
+          lat,
+          lng,
+          accuracy,
+          ...(heading !== null ? { heading } : {}),
+          ...(speed !== null && speed >= 0 ? { speed } : {}),
+        },
+      );
       if (generation !== sessionGeneration) return;
+      if (epoch !== gpsEpoch) return;
+      lastLocationSent = Date.now();
       state.gpsPending = false;
+      state.gpsReady = true;
       state.gpsError = "";
-      const {
-        latitude: lat,
-        longitude: lng,
-        accuracy,
-        heading,
-        speed,
-      } = position.coords;
-      state.position = { lat, lng, accuracy };
-      if (locationSending || Date.now() - lastLocationSent < 10000) return;
-      locationSending = true;
-      try {
-        const { data } = await driverApi.post<{ districtId: string | null }>(
-          "/driver/location",
-          {
-            lat,
-            lng,
-            accuracy,
-            ...(heading !== null ? { heading } : {}),
-            ...(speed !== null && speed >= 0 ? { speed } : {}),
-          },
-        );
-        if (generation !== sessionGeneration) return;
-        lastLocationSent = Date.now();
-        if (state.profile) state.profile.districtId = data.districtId;
-      } catch (error) {
-        if (generation !== sessionGeneration) return;
-        state.gpsError = "Координаты не отправлены. " + errorMessage(error);
-      } finally {
-        locationSending = false;
-      }
-    },
-    (error) => {
+      if (state.profile) state.profile.districtId = data.districtId;
+    } catch (error) {
       if (generation !== sessionGeneration) return;
       state.gpsPending = false;
-      state.gpsError =
-        error.code === error.PERMISSION_DENIED
-          ? "Нет доступа к GPS. Разрешите геолокацию в браузере."
-          : "GPS временно недоступен. Ожидаем координаты.";
-      // Permission denial ends the browser watch. Transient unavailable/timeout
-      // errors keep watching so the next position fix can recover automatically.
-      if (error.code === error.PERMISSION_DENIED) {
-        if (gpsWatch !== undefined) navigator.geolocation.clearWatch(gpsWatch);
-        gpsWatch = undefined;
-      }
-    },
-    { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 },
-  );
+      void loseGps("Координаты не отправлены. " + errorMessage(error));
+    } finally {
+      if (generation === sessionGeneration) locationSending = false;
+    }
+  };
+  const failed = (error: GeolocationPositionError) => {
+    if (generation !== sessionGeneration) return;
+    state.gpsPending = false;
+    void loseGps(
+      error.code === error.PERMISSION_DENIED
+        ? "Нет доступа к GPS. Разрешите геолокацию в браузере."
+        : "GPS временно недоступен. Ожидаем координаты.",
+    );
+    if (error.code === error.PERMISSION_DENIED) {
+      if (gpsWatch !== undefined) navigator.geolocation.clearWatch(gpsWatch);
+      gpsWatch = undefined;
+      if (gpsTimer !== undefined) clearInterval(gpsTimer);
+      gpsTimer = undefined;
+    }
+  };
+  gpsWatch = navigator.geolocation.watchPosition(report, failed, options);
+  // A stationary driver may get no watch updates. Request a new fix rather
+  // than reporting an old coordinate as fresh to keep availability alive.
+  gpsTimer = setInterval(() => {
+    if (generation !== sessionGeneration) return;
+    if (
+      Date.now() - lastLocationSent > GPS_MAX_AGE_MS ||
+      Date.now() - lastFixAt > GPS_MAX_AGE_MS
+    )
+      void loseGps("GPS устарел. Ожидаем новые координаты.");
+    navigator.geolocation.getCurrentPosition(report, failed, options);
+  }, 20000);
 }
 function start() {
   const on = (event: string, handler: (payload: unknown) => void) =>
     cleanups.push(driverSession.on(event, handler));
   on("connect", () => void refresh());
   on("balance:updated", () => void refresh());
+  on("driver:status", (payload) => {
+    const status = payload as {
+      driverId: string;
+      isOnline: boolean;
+      isAvailable: boolean;
+    };
+    if (status.driverId !== state.profile?.id) return;
+    state.profile.isOnline = status.isOnline;
+    state.profile.isAvailable = status.isAvailable;
+    if (!status.isOnline) hideAvailableOrders();
+    void refresh();
+  });
   on("districts:stats", (payload) => {
-    if (Array.isArray(payload)) {
+    if (Array.isArray(payload) && hasCurrentGps() && state.profile?.isOnline) {
       districtSnapshotVersion++;
       state.districts = payload as District[];
     }
   });
   on("order:new", (payload) => {
     const order = payload as Order;
-    if (state.active || state.incoming) return;
+    if (
+      !hasCurrentGps() ||
+      !state.profile?.isOnline ||
+      state.active ||
+      state.incoming
+    )
+      return;
     state.incoming = order;
     notifyOrder(order);
   });

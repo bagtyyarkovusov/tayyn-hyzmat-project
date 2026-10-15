@@ -24,6 +24,19 @@ async function login(
     role === "admin" ? /adminDashboard/ : /driverDashboard/,
   );
 }
+async function startGps(page: Page) {
+  await page.context().grantPermissions(["geolocation"]);
+  await page
+    .context()
+    .setGeolocation({ latitude: 37.96, longitude: 58.32, accuracy: 10 });
+  const report = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/driver/location") &&
+      response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  expect((await report).ok()).toBe(true);
+}
 test("protected deep links require login and a failed login gives a recoverable error", async ({
   page,
 }) => {
@@ -76,6 +89,7 @@ test("a driver must explicitly accept after five minutes, then completes a quote
   try {
     await login(dispatcher, "admin");
     await login(driver, "driver");
+    await startGps(driver);
     await driver
       .getByRole("button", { name: "Выйти на линию", exact: true })
       .click();
@@ -119,6 +133,18 @@ test("a driver must explicitly accept after five minutes, then completes a quote
       driver.getByRole("link", { name: "+10000000999", exact: true }),
     ).not.toBeVisible();
     await expect(driver.getByText(/500\s*TMT/).first()).toBeVisible();
+    // Advancing the browser clock also expires GPS. Reacquire a real fix
+    // before explicitly returning online and choosing the still-unclaimed order.
+    await driver.clock.setSystemTime(new Date());
+    await driver.reload();
+    await startGps(driver);
+    await driver
+      .getByRole("button", { name: "Выйти на линию", exact: true })
+      .click();
+    await driver
+      .getByRole("group", { name: "Регионы", exact: true })
+      .getByRole("button", { name: /Мой район/ })
+      .click();
     await driver
       .getByRole("button", { name: "Принять заказ", exact: true })
       .click();
@@ -496,24 +522,45 @@ test("GPS reporting continues across driver routes and stops after logout", asyn
     await context.close();
   }
 });
-test("GPS can be retried after browser permission is granted", async ({
+test("GPS is required to go online and can be retried after permission is granted", async ({
   browser,
 }) => {
+  test.setTimeout(45000);
   const context = await browser.newContext({
     geolocation: { latitude: 37.96, longitude: 58.32, accuracy: 10 },
   });
   const page = await context.newPage();
   try {
     await login(page, "driver");
+    const power = page.getByRole("button", {
+      name: "Выйти на линию",
+      exact: true,
+    });
+    await expect(power).toBeDisabled();
     await page
       .getByRole("button", { name: "Включить GPS", exact: true })
       .click();
     await expect(page.getByText(/Нет доступа к GPS/)).toBeVisible();
+    await expect(power).toBeDisabled();
     await context.grantPermissions(["geolocation"]);
     await page
       .getByRole("button", { name: "Включить GPS", exact: true })
       .click();
     await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+    await expect(power).toBeEnabled();
+    await power.click();
+    await expect(
+      page.getByRole("button", { name: "Уйти с линии", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await context.clearPermissions();
+    await expect(power).toBeVisible({ timeout: 30000 });
+    await expect(power).toBeDisabled();
+    await expect(
+      page
+        .getByRole("group", { name: "Регионы", exact: true })
+        .getByRole("button")
+        .first(),
+    ).toBeDisabled();
   } finally {
     await context.close();
   }
@@ -559,6 +606,7 @@ test("dispatcher enters region, phone and price and the region modal closes afte
   try {
     await login(dispatcher, "admin");
     await login(driver, "driver", "+10000000102");
+    await startGps(driver);
     await driver
       .getByRole("button", { name: "Выйти на линию", exact: true })
       .click();
@@ -735,6 +783,7 @@ test("regional queues and counts recover through updates, reconnect and reload",
   try {
     await login(dispatcher, "admin");
     await login(driver, "driver", "+10000000103");
+    await startGps(driver);
     await driver
       .getByRole("button", { name: "Выйти на линию", exact: true })
       .click();

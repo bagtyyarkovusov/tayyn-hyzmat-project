@@ -39,6 +39,12 @@ watch(
       availabilityPulse.value = true;
   },
 );
+watch(
+  () => state.gpsReady,
+  (ready) => {
+    if (!ready) selected.value = null;
+  },
+);
 const tripOpen = ref(false),
   messageOpen = ref(false);
 const selectedDistrict = computed(() =>
@@ -93,7 +99,7 @@ watch(
             <LocateFixed
               class="size-5"
               :class="{
-                'text-primary': state.position,
+                'text-primary': state.gpsReady,
                 'motion-safe:animate-pulse': state.gpsPending,
               }"
             />
@@ -123,13 +129,14 @@ watch(
               state.busy ||
               !state.profile ||
               (!state.profile.isOnline &&
-                Number(state.balance?.amount ?? 0) <= 0)
+                (Number(state.balance?.amount ?? 0) <= 0 || !state.gpsReady))
             "
             @click="setOnline"
           >
             <span
               v-if="
                 state.profile?.isOnline &&
+                state.gpsReady &&
                 session.state.connected &&
                 visibility === 'visible'
               "
@@ -245,6 +252,7 @@ watch(
             : 'bg-card hover:bg-secondary/50',
           d.id === state.profile?.districtId ? 'ring-1 ring-primary' : '',
         ]"
+        :disabled="!state.gpsReady || !state.profile?.isOnline"
         @click="selected = d.id"
       >
         <span
@@ -257,7 +265,11 @@ watch(
         <strong
           class="region-score text-2xl font-semibold leading-none tabular-nums"
           :aria-label="`Машин на линии: ${d.onlineDrivers ?? d.freeDrivers}. Заказов: ${d.activeOrders}`"
-          >{{ d.onlineDrivers ?? d.freeDrivers }}:{{ d.activeOrders }}</strong
+          >{{
+            state.gpsReady && state.profile?.isOnline
+              ? `${d.onlineDrivers ?? d.freeDrivers}:${d.activeOrders}`
+              : "—:—"
+          }}</strong
         >
       </button>
     </div>
@@ -270,12 +282,12 @@ watch(
           ></DialogHeader
         >
         <AvailableOrders
-          v-if="selectedDistrict && state.profile?.isOnline"
+          v-if="selectedDistrict && state.profile?.isOnline && state.gpsReady"
           :district-id="selectedDistrict.id"
           :district-name="selectedDistrict.name"
         />
         <p v-else class="muted text-sm">
-          Включите кнопку на главном экране, чтобы принимать заказы.
+          Включите GPS и выйдите на линию, чтобы принимать заказы.
         </p>
       </DialogContent></Dialog
     >
