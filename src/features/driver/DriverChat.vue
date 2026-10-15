@@ -18,8 +18,12 @@ const messages = ref<Message[]>([]),
   total = ref(0),
   end = ref<HTMLElement | null>(null);
 let alive = true;
+let refreshQueued = false;
 async function load(older = false) {
-  if (loading.value) return;
+  if (loading.value) {
+    if (!older) refreshQueued = true;
+    return;
+  }
   loading.value = true;
   error.value = "";
   try {
@@ -43,6 +47,10 @@ async function load(older = false) {
     if (alive) error.value = errorMessage(e);
   } finally {
     loading.value = false;
+    if (refreshQueued && alive) {
+      refreshQueued = false;
+      void load();
+    }
   }
 }
 async function send() {
