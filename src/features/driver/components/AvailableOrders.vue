@@ -82,7 +82,9 @@ onUnmounted(() => {
           <p class="flex items-start gap-2 font-medium">
             <MapPin class="mt-0.5 size-4 shrink-0 text-primary" /><span
               class="break-words"
-              >{{ order.pickupAddress || "Адрес не указан" }}</span
+              >{{
+                order.pickupAddress || "Подача уточняется по телефону"
+              }}</span
             >
           </p>
           <p

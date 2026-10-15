@@ -87,8 +87,15 @@ try {
   const dbPort = run("docker", ["port", container, "5432/tcp"])
     .split(":")
     .at(-1);
-  const apiPort = await port();
-  const webPort = await port();
+  const serving = process.argv.includes("--serve");
+  const apiPort =
+    serving && process.env.TAYYN_PREVIEW_API_PORT
+      ? Number(process.env.TAYYN_PREVIEW_API_PORT)
+      : await port();
+  const webPort =
+    serving && process.env.TAYYN_PREVIEW_WEB_PORT
+      ? Number(process.env.TAYYN_PREVIEW_WEB_PORT)
+      : await port();
   const env = {
     ...process.env,
     DATABASE_URL: `postgresql://postgres:${password}@127.0.0.1:${dbPort}/tayyn_browser_test`,
@@ -130,22 +137,30 @@ try {
         admin: { create: { permissionLevel: "SUPER" } },
       },
     });
-    const region = await prisma.district.create({
-      data: {
-        name: "ТЕСТ — Центральный",
-        centerLat: 37.96,
-        centerLng: 58.32,
-        boundary: [
-          [
-            [37.94, 58.3],
-            [37.98, 58.3],
-            [37.98, 58.36],
-            [37.94, 58.36],
-            [37.94, 58.3],
+    let region;
+    if (serving) {
+      const { seedDefaultRegions } = require("./prisma/default-regions.cjs");
+      await prisma.$transaction(seedDefaultRegions);
+      region = await prisma.district.findFirstOrThrow({
+        orderBy: { name: "asc" },
+      });
+    } else
+      region = await prisma.district.create({
+        data: {
+          name: "ТЕСТ — Центральный",
+          centerLat: 37.96,
+          centerLng: 58.32,
+          boundary: [
+            [
+              [37.94, 58.3],
+              [37.98, 58.3],
+              [37.98, 58.36],
+              [37.94, 58.36],
+              [37.94, 58.3],
+            ],
           ],
-        ],
-      },
-    });
+        },
+      });
     env.TEST_REGION_ID = region.id;
     for (const [phone, name] of [
       ["+10000000101", "Тестовый водитель"],

@@ -55,7 +55,7 @@ async function cancel() {
         <div>
           <p class="muted text-xs">Откуда</p>
           <p class="font-medium break-words">
-            {{ state.active.pickupAddress || "Адрес не указан" }}
+            {{ state.active.pickupAddress || "Подача уточняется по телефону" }}
           </p>
         </div>
       </div>
@@ -85,10 +85,14 @@ async function cancel() {
         ></Button
       ><Button v-if="navigation" as-child variant="outline"
         ><a :href="navigation" target="_blank" rel="noopener"
-          ><Navigation class="size-4" />Маршрут</a
+          ><Navigation class="size-4" />Ориентир на карте</a
         ></Button
       >
     </div>
+    <p class="muted text-xs">
+      Позвоните клиенту и уточните подачу. Точка на карте может быть центром
+      района, а не точным местом клиента.
+    </p>
     <div class="grid gap-2 sm:grid-cols-[1fr_auto]">
       <Button
         v-if="state.active.status === 'ACCEPTED'"

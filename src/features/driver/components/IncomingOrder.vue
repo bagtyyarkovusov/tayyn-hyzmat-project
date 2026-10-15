@@ -18,7 +18,9 @@ const eta = ref(10);
         money(state.incoming.priceEstimated)
       }}</span>
     </div>
-    <p class="break-words font-medium">{{ state.incoming.pickupAddress }}</p>
+    <p class="break-words font-medium">
+      {{ state.incoming.pickupAddress || "Подача уточняется по телефону" }}
+    </p>
     <p v-if="state.incoming.dropoffAddress" class="muted text-sm break-words">
       {{ state.incoming.dropoffAddress }}
     </p>

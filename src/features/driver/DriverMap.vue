@@ -51,7 +51,11 @@ function draw() {
       map.geoObjects.add(
         new ymaps.Placemark(
           [Number(lat), Number(lng)],
-          { iconCaption: drop ? "Назначение" : "Подача" },
+          {
+            iconCaption: drop
+              ? "Назначение"
+              : "Ориентир подачи: уточните по телефону",
+          },
           { preset: "islands:redDotIcon" },
         ),
       );

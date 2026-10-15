@@ -12,7 +12,7 @@ export interface District {
 export interface Order {
   id: string;
   status: OrderStatus;
-  pickupAddress: string;
+  pickupAddress: string | null;
   dropoffAddress?: string | null;
   pickupLat?: Money | null;
   pickupLng?: Money | null;
