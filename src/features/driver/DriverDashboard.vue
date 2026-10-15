@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { useDocumentVisibility } from "@vueuse/core";
 import {
   MapPin,
   LocateFixed,
@@ -25,6 +26,7 @@ import ActiveTrip from "./components/ActiveTrip.vue";
 import AvailableOrders from "./components/AvailableOrders.vue";
 const { state, setOnline, enableGps, session, dismissIncoming } = useDriver();
 const selected = ref<string | null>(null);
+const visibility = useDocumentVisibility();
 const availabilityPulse = ref(false);
 watch(
   () => state.profile?.isOnline,
@@ -125,6 +127,15 @@ watch(
             "
             @click="setOnline"
           >
+            <span
+              v-if="
+                state.profile?.isOnline &&
+                session.state.connected &&
+                visibility === 'visible'
+              "
+              class="online-beacon pointer-events-none absolute inset-0 rounded-full border-2 border-current"
+              aria-hidden="true"
+            />
             <span
               v-if="availabilityPulse"
               :key="String(state.profile?.isOnline)"
@@ -305,6 +316,25 @@ watch(
   </div>
 </template>
 <style scoped>
+.online-beacon {
+  animation: online-beacon 2.8s ease-out infinite;
+}
+@keyframes online-beacon {
+  0%,
+  65%,
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+  10% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+  55% {
+    opacity: 0;
+    transform: scale(1.3);
+  }
+}
 .availability-pulse {
   animation: availability-confirm 480ms ease-out both;
 }
@@ -319,6 +349,7 @@ watch(
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .online-beacon,
   .availability-pulse {
     animation: none;
     display: none;
