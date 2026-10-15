@@ -41,7 +41,8 @@ test("theme preference survives a refreshed deep link and mobile navigation stay
   page,
 }) => {
   await login(page, "admin");
-  await page.getByLabel("Тема", { exact: true }).selectOption("dark");
+  await page.getByRole("button", { name: "Тема", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "Тёмная" }).click();
   await expect(page.locator("html")).toHaveClass(/dark/);
   await page.goto("/adminOrders");
   await page.reload();
@@ -54,7 +55,8 @@ test("theme preference survives a refreshed deep link and mobile navigation stay
       .last()
       .getByRole("link", { name: "Регионы", exact: true }),
   ).toBeVisible();
-  await page.getByLabel("Тема", { exact: true }).selectOption("light");
+  await page.getByRole("button", { name: "Тема", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "Светлая" }).click();
   await expect(page.locator("html")).not.toHaveClass(/dark/);
   await expect
     .poll(() =>
@@ -214,9 +216,7 @@ test("driver and dispatcher exchange real messages across separate role sessions
     await driver
       .getByLabel("Сообщение диспетчеру")
       .fill("Тестовая связь с диспетчером");
-    await driver
-      .getByRole("button", { name: "Отправить", exact: true })
-      .click();
+    await driver.getByLabel("Сообщение диспетчеру").press("Enter");
     await expect(
       driver.getByText("Тестовая связь с диспетчером", { exact: true }),
     ).toBeVisible();
@@ -231,12 +231,167 @@ test("driver and dispatcher exchange real messages across separate role sessions
     await dispatcher
       .getByLabel("Сообщение водителю")
       .fill("Связь подтверждена");
-    await dispatcher
-      .getByRole("button", { name: "Отправить сообщение", exact: true })
-      .click();
+    await dispatcher.getByLabel("Сообщение водителю").press("Enter");
     await expect(
       driver.getByText("Связь подтверждена", { exact: true }),
     ).toBeVisible();
+    for (const [actor, label] of [
+      [driver, "Сообщение диспетчеру"],
+      [dispatcher, "Сообщение водителю"],
+    ] as const) {
+      const input = actor.getByLabel(label);
+      await input.fill("Первая строка");
+      await input.press("Shift+Enter");
+      await input.press("End");
+      await input.press("a");
+      await expect(input).toHaveValue("Первая строка\na");
+      await input.dispatchEvent("keydown", { key: "Enter", isComposing: true });
+      await expect(input).toHaveValue("Первая строка\na");
+      await input.fill("   ");
+      await expect(
+        actor.getByRole("button", { name: "Отправить сообщение", exact: true }),
+      ).toBeDisabled();
+      await input.fill("");
+      for (const viewport of [
+        { width: 320, height: 568 },
+        { width: 390, height: 844 },
+        { width: 568, height: 320 },
+        { width: 390, height: 400 },
+      ]) {
+        await actor.setViewportSize(viewport);
+        await expect
+          .poll(() =>
+            actor.evaluate(
+              () =>
+                document.documentElement.scrollHeight <= innerHeight &&
+                document.documentElement.scrollWidth <= innerWidth,
+            ),
+          )
+          .toBe(true);
+        await expect
+          .poll(async () => {
+            const box = await input.boundingBox();
+            return box!.y + box!.height;
+          })
+          .toBeLessThanOrEqual(viewport.height);
+        await expect
+          .poll(() =>
+            input.evaluate((el) => {
+              const inputBox = el.getBoundingClientRect();
+              const buttonBox = el
+                .closest("form")!
+                .querySelector("button")!
+                .getBoundingClientRect();
+              return Math.abs(
+                buttonBox.y +
+                  buttonBox.height / 2 -
+                  inputBox.y -
+                  inputBox.height / 2,
+              );
+            }),
+          )
+          .toBeLessThan(2);
+        const navigation = actor
+          .getByRole("navigation", {
+            name: actor === driver ? "Разделы водителя" : "Разделы диспетчера",
+          })
+          .last();
+        await expect(navigation).toBeVisible();
+        await expect
+          .poll(() =>
+            navigation.evaluate((el) => el.getBoundingClientRect().bottom),
+          )
+          .toBeLessThanOrEqual(viewport.height);
+      }
+    }
+    await driver.setViewportSize({ width: 390, height: 844 });
+    await dispatcher.setViewportSize({ width: 390, height: 844 });
+    const failedDraft = "Черновик остаётся после ошибки";
+    await driver.route("**/api/driver/messages", async (route) => {
+      if (route.request().method() === "POST")
+        await route.fulfill({
+          status: 503,
+          json: { message: "Тестовая ошибка доставки" },
+        });
+      else await route.continue();
+    });
+    await driver.getByLabel("Сообщение диспетчеру").fill(failedDraft);
+    await driver.getByLabel("Сообщение диспетчеру").press("Enter");
+    await expect(driver.getByRole("alert")).toBeVisible();
+    await expect(driver.getByLabel("Сообщение диспетчеру")).toHaveValue(
+      failedDraft,
+    );
+    await driver.unroute("**/api/driver/messages");
+    await driver.getByLabel("Сообщение диспетчеру").press("Enter");
+    await expect(
+      dispatcher.getByText(failedDraft, { exact: true }),
+    ).toBeVisible();
+    await driver.reload();
+    await expect(driver.getByText(failedDraft, { exact: true })).toBeVisible();
+    let submits = 0;
+    let release!: () => void;
+    let received!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reached = new Promise<void>((resolve) => {
+      received = resolve;
+    });
+    await driver.route("**/api/driver/messages", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      submits++;
+      received();
+      await held;
+      await route.continue();
+    });
+    try {
+      await driver
+        .getByLabel("Сообщение диспетчеру")
+        .fill("Одна отправка при двойном Enter");
+      await driver.getByLabel("Сообщение диспетчеру").press("Enter");
+      await reached;
+      await driver.getByLabel("Сообщение диспетчеру").press("Enter");
+      await expect(
+        driver.getByRole("button", {
+          name: "Отправить сообщение",
+          exact: true,
+        }),
+      ).toBeDisabled();
+    } finally {
+      release();
+    }
+    await expect(
+      dispatcher.getByText("Одна отправка при двойном Enter", { exact: true }),
+    ).toBeVisible();
+    expect(submits).toBe(1);
+    await driver.unroute("**/api/driver/messages");
+
+    // A long message exercises internal history scrolling through the real message endpoint.
+    const longMessage = "История\n" + "Строка сообщения\n".repeat(40);
+    await dispatcher.getByLabel("Сообщение водителю").fill(longMessage);
+    await dispatcher.getByLabel("Сообщение водителю").press("Enter");
+    await expect(
+      driver.getByText(longMessage.trim(), { exact: true }),
+    ).toBeVisible();
+    const history = driver.getByRole("region", { name: "Переписка" });
+    await history.evaluate((el) => {
+      el.scrollTop = 0;
+      el.dispatchEvent(new Event("scroll"));
+    });
+    await dispatcher
+      .getByLabel("Сообщение водителю")
+      .fill("Новое сообщение без прыжка");
+    await dispatcher.getByLabel("Сообщение водителю").press("Enter");
+    await expect(
+      driver.getByText("Новое сообщение без прыжка", { exact: true }),
+    ).toBeAttached();
+    await expect
+      .poll(() => history.evaluate((el) => el.scrollTop))
+      .toBeLessThan(10);
+    await driver.screenshot({ path: "test-results/driver-chat-mobile.png" });
+    await dispatcher.screenshot({
+      path: "test-results/dispatcher-chat-mobile.png",
+    });
   } finally {
     await a.close();
     await b.close();

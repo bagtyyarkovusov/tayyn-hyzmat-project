@@ -1,22 +1,35 @@
 <script setup lang="ts">
 import IncomingOrder from "./components/IncomingOrder.vue";
-import { nextTick, onMounted, onUnmounted, ref } from "vue";
-import { Send, RefreshCw } from "lucide-vue-next";
+import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
+import { RefreshCw } from "lucide-vue-next";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
+} from "@/shared/ui/dialog";
 import { Button } from "@/shared/ui/button";
-import { Textarea } from "@/shared/ui/textarea";
+import ChatComposer from "@/shared/ChatComposer.vue";
+import { useChatScroll } from "@/shared/useChatScroll";
 import { driverApi, errorMessage } from "@/shared/api";
 import { driverSession } from "@/features/auth/session";
 import { useDriver } from "./useDriver";
 import { date, type Message, type Page } from "./model";
-const { state } = useDriver();
+const { state, dismissIncoming } = useDriver();
+const offerOpen = computed({
+  get: () => !!state.incoming && !state.active,
+  set: (value) => {
+    if (!value) dismissIncoming();
+  },
+});
+const { history, track, updated } = useChatScroll();
 const messages = ref<Message[]>([]),
   draft = ref(""),
   error = ref(""),
   loading = ref(false),
   sending = ref(false),
   page = ref(1),
-  total = ref(0),
-  end = ref<HTMLElement | null>(null);
+  total = ref(0);
 let alive = true;
 let refreshQueued = false;
 async function load(older = false) {
@@ -27,22 +40,24 @@ async function load(older = false) {
   loading.value = true;
   error.value = "";
   try {
+    const previousHeight = history.value?.scrollHeight ?? 0;
     const next = older ? page.value + 1 : 1;
     const { data } = await driverApi.get<Page<Message>>("/driver/messages", {
       params: { page: next, limit: 50 },
     });
     if (!alive) return;
-    page.value = next;
+    if (older) page.value = next;
     total.value = data.total;
-    const combined = older ? [...data.items, ...messages.value] : data.items;
+    const combined = [...messages.value, ...data.items];
     messages.value = [...new Map(combined.map((m) => [m.id, m])).values()].sort(
       (a, b) => Date.parse(a.sentAt) - Date.parse(b.sentAt),
     );
     await driverApi.post("/driver/messages/read");
-    if (!older) {
+    if (older) {
       await nextTick();
-      end.value?.scrollIntoView({ block: "nearest" });
-    }
+      if (history.value)
+        history.value.scrollTop += history.value.scrollHeight - previousHeight;
+    } else await updated();
   } catch (e) {
     if (alive) error.value = errorMessage(e);
   } finally {
@@ -62,13 +77,13 @@ async function send() {
     const { data } = await driverApi.post<Message>("/driver/messages", {
       body,
     });
+    if (!alive) return;
     if (!messages.value.some((m) => m.id === data.id))
       messages.value.push(data);
     draft.value = "";
-    await nextTick();
-    end.value?.scrollIntoView({ block: "nearest" });
+    await updated(true);
   } catch (e) {
-    error.value = errorMessage(e);
+    if (alive) error.value = errorMessage(e);
   } finally {
     sending.value = false;
   }
@@ -84,11 +99,10 @@ onUnmounted(() => {
 });
 </script>
 <template>
-  <div class="mx-auto flex max-w-3xl flex-col gap-4">
-    <header class="flex items-center justify-between">
+  <div class="mx-auto flex h-full min-h-0 max-w-3xl flex-col gap-2">
+    <header class="flex shrink-0 items-center justify-between">
       <div>
-        <h1 class="page-heading">Диспетчер</h1>
-        <p class="muted mt-1 text-sm">Личная переписка и общие объявления.</p>
+        <h1 class="text-lg font-semibold">Диспетчер</h1>
       </div>
       <Button
         variant="outline"
@@ -99,7 +113,13 @@ onUnmounted(() => {
         ><RefreshCw class="size-4" :class="{ 'animate-spin': loading }"
       /></Button>
     </header>
-    <IncomingOrder />
+    <Dialog v-model:open="offerOpen"
+      ><DialogContent
+        ><DialogTitle class="sr-only">Новый заказ</DialogTitle
+        ><DialogDescription class="sr-only"
+          >Выберите время прибытия и подтвердите заказ.</DialogDescription
+        ><IncomingOrder /></DialogContent
+    ></Dialog>
     <p
       v-if="error"
       role="alert"
@@ -108,7 +128,9 @@ onUnmounted(() => {
       {{ error }}
     </p>
     <section
-      class="min-h-64 space-y-4 rounded-xl border bg-card p-4"
+      ref="history"
+      class="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain rounded-xl border bg-card p-3"
+      @scroll="track"
       aria-label="Переписка"
       aria-live="polite"
     >
@@ -152,30 +174,12 @@ onUnmounted(() => {
           }}</time>
         </div>
       </article>
-      <div ref="end" />
     </section>
-    <form
-      class="sticky bottom-20 space-y-2 rounded-xl border bg-background p-3 md:bottom-4"
-      @submit.prevent="send"
-    >
-      <label for="driver-message" class="field-label"
-        >Сообщение диспетчеру</label
-      ><Textarea
-        id="driver-message"
-        v-model="draft"
-        rows="3"
-        maxlength="2000"
-        placeholder="Чем можем помочь?"
-        :disabled="sending"
-      />
-      <div class="flex items-center justify-between gap-3">
-        <span class="muted text-xs tabular-nums">{{ draft.length }} / 2000</span
-        ><Button type="submit" :disabled="sending || !draft.trim()"
-          ><Send class="size-4" />{{
-            sending ? "Отправляем…" : "Отправить"
-          }}</Button
-        >
-      </div>
-    </form>
+    <ChatComposer
+      v-model="draft"
+      label="Сообщение диспетчеру"
+      :pending="sending"
+      @send="send"
+    />
   </div>
 </template>

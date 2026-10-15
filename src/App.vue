@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   LayoutDashboard,
@@ -14,6 +14,9 @@ import {
   UserRound,
   Navigation,
   Menu,
+  Sun,
+  Moon,
+  Monitor,
 } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
 import { adminSession, driverSession } from "@/features/auth/session";
@@ -22,8 +25,35 @@ import {
   setTheme,
   type ThemePreference,
 } from "@/shared/theme";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+} from "@/shared/ui/dropdown-menu";
 import { driverState } from "@/features/driver/useDriver";
 const route = useRoute();
+const chat = computed(
+  () => route.path === "/driverChat" || route.path.startsWith("/adminChat"),
+);
+const viewportHeight = ref<string>();
+const viewportTop = ref("0px");
+function resizeChat() {
+  viewportHeight.value = window.visualViewport
+    ? `${window.visualViewport.height}px`
+    : undefined;
+  viewportTop.value = `${window.visualViewport?.offsetTop ?? 0}px`;
+}
+onMounted(() => {
+  resizeChat();
+  window.visualViewport?.addEventListener("resize", resizeChat);
+  window.visualViewport?.addEventListener("scroll", resizeChat);
+});
+onUnmounted(() => {
+  window.visualViewport?.removeEventListener("resize", resizeChat);
+  window.visualViewport?.removeEventListener("scroll", resizeChat);
+});
 const router = useRouter();
 const auth = computed(() =>
   ["/adminLogin", "/driverLogin", "/driverRegister"].includes(route.path),
@@ -62,10 +92,12 @@ async function logout() {
   <RouterView v-if="auth" />
   <div
     v-else
+    :style="chat ? { height: viewportHeight, top: viewportTop } : undefined"
     :class="[
       'workspace',
       {
         'driver-workspace': driver,
+        'chat-workspace': chat,
         'driver-home-workspace': route.path === '/driverDashboard',
       },
     ]"
@@ -130,26 +162,39 @@ async function logout() {
           >
         </div>
         <div class="flex shrink-0 items-center gap-2">
-          <label class="sr-only" for="theme">Тема</label
-          ><select
-            id="theme"
-            aria-label="Тема"
-            class="theme-select"
-            :value="themePreference"
-            @change="
-              setTheme(
-                ($event.target as HTMLSelectElement).value as ThemePreference,
-              )
-            "
-          >
-            <option value="system">Системная</option>
-            <option value="light">Светлая</option>
-            <option value="dark">Тёмная</option></select
-          ><Button
-            variant="ghost"
-            size="icon"
-            aria-label="Выйти"
-            @click="logout"
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child
+              ><Button variant="ghost" size="icon" aria-label="Тема"
+                ><component
+                  :is="
+                    themePreference === 'system'
+                      ? Monitor
+                      : themePreference === 'dark'
+                        ? Moon
+                        : Sun
+                  "
+                  class="size-5" /></Button
+            ></DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuRadioGroup
+                :model-value="themePreference"
+                @update:model-value="setTheme($event as ThemePreference)"
+              >
+                <DropdownMenuRadioItem value="system"
+                  ><Monitor
+                    class="mr-2 size-4"
+                  />Системная</DropdownMenuRadioItem
+                >
+                <DropdownMenuRadioItem value="light"
+                  ><Sun class="mr-2 size-4" />Светлая</DropdownMenuRadioItem
+                >
+                <DropdownMenuRadioItem value="dark"
+                  ><Moon class="mr-2 size-4" />Тёмная</DropdownMenuRadioItem
+                >
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button variant="ghost" size="icon" aria-label="Выйти" @click="logout"
             ><LogOut class="size-4"
           /></Button>
         </div>
@@ -267,13 +312,6 @@ async function logout() {
 .connection .online,
 .driver-workspace .connection .online {
   background: var(--primary);
-}
-.theme-select {
-  background-color: transparent;
-  font-size: 0.75rem;
-  max-width: 7rem;
-  padding: 0.5rem 2rem 0.5rem 0.5rem;
-  border-radius: 0.4rem;
 }
 .admin-content {
   max-width: 1600px;
@@ -418,5 +456,48 @@ async function logout() {
     padding-block: 0.15rem;
     gap: 0;
   }
+}
+/* Chat keeps the composer and navigation in the visible viewport, including a resized keyboard viewport. */
+.chat-workspace {
+  position: fixed;
+  inset: 0;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+.chat-workspace.driver-workspace {
+  flex-direction: column;
+}
+.chat-workspace > div {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.chat-workspace .workspace-header {
+  flex-shrink: 0;
+  height: 56px;
+  width: 100%;
+}
+.chat-workspace .mobile-admin-nav {
+  flex-shrink: 0;
+  padding-block: 0.25rem;
+}
+.chat-workspace .route-content {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  margin: 0 auto;
+  padding: 0.5rem 0.75rem;
+  overflow: hidden;
+}
+.chat-workspace .driver-nav {
+  position: static;
+  transform: none;
+  flex-shrink: 0;
+  margin: 0 auto;
+  padding-top: 0.25rem;
+}
+.chat-workspace .driver-nav a {
+  padding-block: 0.2rem;
 }
 </style>

@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { nextTick, onUnmounted, ref, watch } from "vue";
+import { onUnmounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
-import { Send, ArrowLeft } from "lucide-vue-next";
+import { ArrowLeft } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
 import { Label } from "@/shared/ui/label";
+import ChatComposer from "@/shared/ChatComposer.vue";
+import { useChatScroll } from "@/shared/useChatScroll";
 import { Textarea } from "@/shared/ui/textarea";
 import {
   Dialog,
@@ -19,13 +21,17 @@ import { date, type Driver, type Page, type Message } from "./domain";
 import { useResource } from "./useResource";
 import PageState from "./components/PageState.vue";
 const props = defineProps<{ driverId?: string }>();
+const { history, track, updated } = useChatScroll();
+let alive = true;
+onUnmounted(() => {
+  alive = false;
+});
 const body = ref(""),
   pending = ref(false),
   sendError = ref(""),
   broadcast = ref(false),
   broadcastBody = ref(""),
   sent = ref(false),
-  bottom = ref<HTMLElement>(),
   unread = ref<string[]>([]);
 const {
   data: drivers,
@@ -88,15 +94,14 @@ watch(
     body.value = "";
     sendError.value = "";
     void loadThread();
+    void updated(true);
   },
 );
-watch(thread, async () => {
-  await nextTick();
-  bottom.value?.scrollIntoView({ block: "nearest" });
-});
+watch(thread, () => void updated());
 async function send(all = false) {
   const text = (all ? broadcastBody.value : body.value).trim();
-  if (!text) return;
+  if (!text || pending.value) return;
+  const targetDriver = props.driverId;
   pending.value = true;
   sendError.value = "";
   sent.value = false;
@@ -105,8 +110,9 @@ async function send(all = false) {
       "/admin/messages",
       all
         ? { broadcast: true, body: text }
-        : { driverId: props.driverId, body: text },
+        : { driverId: targetDriver, body: text },
     );
+    if (!alive || (!all && targetDriver !== props.driverId)) return;
     if (all) {
       broadcastBody.value = "";
       broadcast.value = false;
@@ -114,19 +120,21 @@ async function send(all = false) {
     } else {
       body.value = "";
       await loadThread();
+      await updated(true);
     }
   } catch (e) {
-    sendError.value = errorMessage(e);
+    if (alive && (all || targetDriver === props.driverId))
+      sendError.value = errorMessage(e);
   } finally {
     pending.value = false;
   }
 }
 </script>
 <template>
-  <div class="space-y-6">
-    <header class="flex flex-wrap items-end justify-between gap-4">
+  <div class="flex h-full min-h-0 flex-col gap-2">
+    <header class="flex shrink-0 items-center justify-between gap-2">
       <div>
-        <h1 class="page-heading">Сообщения</h1>
+        <h1 class="text-lg font-semibold">Сообщения</h1>
       </div>
       <Button
         variant="outline"
@@ -140,8 +148,11 @@ async function send(all = false) {
     <p v-if="sent" role="status" class="text-sm text-primary">
       Сообщение отправлено всем водителям.
     </p>
-    <div class="grid gap-5 lg:grid-cols-[300px_1fr]">
-      <aside :class="driverId ? 'hidden lg:block' : ''">
+    <div class="grid min-h-0 flex-1 gap-3 lg:grid-cols-[300px_1fr]">
+      <aside
+        class="min-h-0 overflow-y-auto overscroll-contain"
+        :class="driverId ? 'hidden lg:block' : ''"
+      >
         <PageState
           :loading="loading"
           :error="error"
@@ -172,9 +183,9 @@ async function send(all = false) {
       </aside>
       <section
         v-if="driverId"
-        class="flex min-h-[65dvh] min-w-0 flex-col overflow-hidden rounded-xl border bg-card"
+        class="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border bg-card"
       >
-        <div class="flex items-center gap-3 border-b p-4">
+        <div class="flex shrink-0 items-center gap-3 border-b p-3">
           <RouterLink to="/adminChat" aria-label="Все диалоги" class="lg:hidden"
             ><ArrowLeft class="size-4"
           /></RouterLink>
@@ -198,7 +209,10 @@ async function send(all = false) {
           >
         </div>
         <div
-          class="max-h-[50dvh] min-h-64 flex-1 space-y-4 overflow-y-auto p-4"
+          ref="history"
+          aria-label="Переписка"
+          class="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-3"
+          @scroll="track"
         >
           <PageState
             :loading="threadLoading"
@@ -243,29 +257,20 @@ async function send(all = false) {
               </p>
             </div>
           </div>
-          <div ref="bottom" />
         </div>
-        <form class="space-y-2 border-t p-4" @submit.prevent="send()">
-          <Label for="chat-message" class="sr-only">Сообщение водителю</Label>
-          <div class="flex items-end gap-2">
-            <Textarea
-              id="chat-message"
-              v-model="body"
-              placeholder="Написать сообщение…"
-              maxlength="2000"
-              rows="2"
-              :disabled="pending"
-            /><Button
-              type="submit"
-              :disabled="pending || !body.trim()"
-              aria-label="Отправить сообщение"
-              ><Send class="size-4"
-            /></Button>
-          </div>
-          <p v-if="sendError" role="alert" class="text-sm text-destructive">
-            {{ sendError }}
-          </p>
-        </form>
+        <ChatComposer
+          v-model="body"
+          label="Сообщение водителю"
+          :pending="pending"
+          @send="send()"
+        />
+        <p
+          v-if="sendError"
+          role="alert"
+          class="shrink-0 px-3 pb-2 text-sm text-destructive"
+        >
+          {{ sendError }}
+        </p>
       </section>
       <section
         v-else
