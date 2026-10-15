@@ -191,13 +191,19 @@ function enableGps() {
         locationSending = false;
       }
     },
-    () => {
+    (error) => {
       if (generation !== sessionGeneration) return;
       state.gpsPending = false;
       state.gpsError =
-        "Нет доступа к GPS. Разрешите геолокацию в браузере или выберите район вручную.";
-      if (gpsWatch !== undefined) navigator.geolocation.clearWatch(gpsWatch);
-      gpsWatch = undefined;
+        error.code === error.PERMISSION_DENIED
+          ? "Нет доступа к GPS. Разрешите геолокацию в браузере или выберите район вручную."
+          : "GPS временно недоступен. Ожидаем координаты; район можно выбрать вручную.";
+      // Permission denial ends the browser watch. Transient unavailable/timeout
+      // errors keep watching so the next position fix can recover automatically.
+      if (error.code === error.PERMISSION_DENIED) {
+        if (gpsWatch !== undefined) navigator.geolocation.clearWatch(gpsWatch);
+        gpsWatch = undefined;
+      }
     },
     { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 },
   );
