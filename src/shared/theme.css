@@ -28,28 +28,28 @@
   --radius-xl: 1rem;
 }
 :root {
-  --background: #f6f5f1;
-  --foreground: #222b28;
+  --background: #f7fcf8;
+  --foreground: #193c29;
   --card: #fff;
-  --primary: #225c47;
+  --primary: #00843d;
   --primary-foreground: #fff;
-  --secondary: #eaece6;
-  --muted-foreground: #5c6661;
+  --secondary: #e8f6ec;
+  --muted-foreground: #516b5a;
   --destructive: #b63b30;
-  --border: #d7ddd5;
+  --border: #d3e7d9;
   font-family: "Manrope Variable", sans-serif;
   color-scheme: light;
 }
 .dark {
-  --background: #151d19;
-  --foreground: #e9eee7;
-  --card: #1d2822;
-  --primary: #abd5b1;
-  --primary-foreground: #173c2b;
-  --secondary: #2b3930;
-  --muted-foreground: #b0beb1;
+  --background: #112219;
+  --foreground: #edf8ef;
+  --card: #1a3023;
+  --primary: #8fe0aa;
+  --primary-foreground: #103720;
+  --secondary: #244330;
+  --muted-foreground: #b3cbb9;
   --destructive: #ee8f83;
-  --border: #3a4b3f;
+  --border: #3c6049;
   color-scheme: dark;
 }
 @layer base {
@@ -126,13 +126,13 @@
   select {
     appearance: none;
     padding-inline-end: 2.5rem;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%235c6661' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23516b5a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 0.75rem center;
     background-size: 1rem;
   }
   .dark select {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23b0beb1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23b3cbb9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   }
   .native-select {
     @apply h-10 w-full min-w-0 rounded-md border bg-card ps-3 pe-10 text-sm;
