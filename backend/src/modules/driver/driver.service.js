@@ -1,0 +1,343 @@
+const prisma = require('../../lib/prisma');
+const { getIO } = require('../../lib/socket');
+const rooms = require('../../sockets/rooms');
+const logger = require('../../config/logger');
+const ApiError = require('../../utils/ApiError');
+const districtsService = require('../districts/districts.service');
+const { syncDriverDistrictRoom } = require('../../sockets/roomSync');
+
+async function getProfile(driverId) {
+  const driver = await prisma.driver.findUnique({
+    where: { id: driverId },
+    include: {
+      user: { select: { id: true, phone: true, fullName: true, avatarUrl: true, status: true, createdAt: true } },
+      district: true,
+      currentVehicle: true,
+      vehicles: true
+    }
+  });
+  if (!driver) return driver;
+  // pushToken is an internal routing detail (see savePushToken below), not
+  // something the profile endpoint's consumers need echoed back.
+  const { pushToken, ...rest } = driver;
+  void pushToken;
+  return rest;
+}
+
+async function getBalance(userId) {
+  // Defensive: every driver is created with a Balance row in the same
+  // transaction as registration, but if data was seeded/imported
+  // out-of-band, don't 500 - lazily create a zero balance instead.
+  const balance = await prisma.balance.upsert({
+    where: { userId },
+    update: {},
+    create: { userId, amount: 0 }
+  });
+  return balance;
+}
+
+function emitToInterestedRooms(driver, event, payload) {
+  const io = getIO();
+  // Chained .to() calls union the rooms into a single emit, so a socket
+  // that happens to be in more than one of these (e.g. the driver's own
+  // room AND their district room) still gets exactly one copy - two
+  // separate emit() calls would double-deliver to it.
+  let target = io.to(rooms.admins()).to(rooms.driver(driver.id)); // the driver always sees their own dot, regardless of balance/district gating
+  if (driver.districtId) {
+    target = target.to(rooms.district(driver.districtId));
+  }
+  target.emit(event, payload);
+}
+
+// A driver's district is NOT a fixed assignment - it is derived live from
+// their GPS ping via nearest-center lookup, so the 9 district cards always
+// reflect where drivers actually are right now, not where an admin last
+// filed them. See src/utils/geo.js for the nearest-center math.
+async function updateLocation(driver, data) {
+  const { lat, lng, heading, speed, accuracy } = data;
+
+  const nearest = await districtsService.findNearestDistrictForPoint(lat, lng);
+  const newDistrictId = nearest ? nearest.id : driver.districtId;
+  const districtChanged = newDistrictId !== driver.districtId;
+
+  const [updatedDriver] = await prisma.$transaction([
+    prisma.driver.update({
+      where: { id: driver.id },
+      data: {
+        lastLat: lat,
+        lastLng: lng,
+        lastHeading: heading,
+        lastSpeed: speed,
+        lastLocationAt: new Date(),
+        ...(districtChanged ? { districtId: newDistrictId } : {})
+      }
+    }),
+    prisma.driverLocation.create({
+      data: { driverId: driver.id, lat, lng, heading, speed, accuracy }
+    })
+  ]);
+
+  try {
+    emitToInterestedRooms(updatedDriver, 'driver:location', {
+      driverId: driver.id,
+      lat,
+      lng,
+      heading,
+      speed,
+      recordedAt: new Date().toISOString()
+    });
+  } catch (err) {
+    // Socket layer being unavailable must never fail the REST write path.
+    logger.warn({ err }, 'Failed to broadcast driver:location');
+  }
+
+  if (districtChanged) {
+    const balance = await prisma.balance.findUnique({ where: { userId: driver.userId } });
+    const hasPositiveBalance = Boolean(balance) && Number(balance.amount) > 0;
+    await syncDriverDistrictRoom(driver.id, {
+      previousDistrictId: driver.districtId,
+      districtId: newDistrictId,
+      eligible: driver.isOnline && hasPositiveBalance
+    });
+    await districtsService.broadcastDistrictStats();
+  }
+
+  return updatedDriver;
+}
+
+async function setStatus(driver, data) {
+  const updated = await prisma.driver.update({
+    where: { id: driver.id },
+    data: {
+      ...(data.isOnline !== undefined ? { isOnline: data.isOnline } : {}),
+      ...(data.isAvailable !== undefined ? { isAvailable: data.isAvailable } : {})
+    }
+  });
+
+  try {
+    emitToInterestedRooms(updated, 'driver:status', {
+      driverId: driver.id,
+      isOnline: updated.isOnline,
+      isAvailable: updated.isAvailable,
+      updatedAt: new Date().toISOString()
+    });
+  } catch (err) {
+    logger.warn({ err }, 'Failed to broadcast driver:status');
+  }
+
+  // Toggling offline must immediately stop new-order broadcasts from
+  // reaching this driver (and toggling back online must resume them) for
+  // whatever sockets are already connected - a fresh connection is
+  // evaluated from the database directly in sockets/index.js. Without this,
+  // isOnline only ever affected admin's display and the "free drivers"
+  // count, not actual order delivery.
+  if (data.isOnline !== undefined) {
+    const balance = await prisma.balance.findUnique({ where: { userId: driver.userId } });
+    const hasPositiveBalance = Boolean(balance) && Number(balance.amount) > 0;
+    await syncDriverDistrictRoom(driver.id, {
+      previousDistrictId: updated.districtId,
+      districtId: updated.districtId,
+      eligible: updated.isOnline && hasPositiveBalance
+    });
+  }
+
+  // Online/available toggling changes the "free drivers" count on whichever
+  // district card this driver currently belongs to.
+  await districtsService.broadcastDistrictStats();
+
+  return updated;
+}
+
+// Plate number / vehicle upsert. Used to be a driver self-service route;
+// now only called from admin.service.js#updateVehicle - drivers can view
+// their own vehicle (see getProfile above) but not change it themselves.
+// If the driver already has a current vehicle, it's updated in place;
+// otherwise a new one is created and set as current.
+async function upsertVehicle(driver, data) {
+  const vehicleData = {
+    plateNumber: data.plateNumber,
+    make: data.make,
+    model: data.model,
+    color: data.color
+  };
+
+  try {
+    if (driver.currentVehicleId) {
+      return await prisma.vehicle.update({ where: { id: driver.currentVehicleId }, data: vehicleData });
+    }
+
+    // vehicleSchema (both admin's and the old driver copy) always treated
+    // make/model as optional - this UI only ever asks for a plate number,
+    // nothing reads vehicle.make/model anywhere in the app - but the
+    // Vehicle model itself has no `?`/@default on either column, so
+    // Prisma's create() rejected an explicit `undefined` for them with a
+    // PrismaClientValidationError ("Argument `make` is missing"), 500-ing
+    // on literally every driver's very first plate save (confirmed in
+    // production logs, predating this admin-side move). update() above
+    // never hit this - Prisma treats undefined there as "leave unchanged",
+    // only create() requires every non-optional column. Placeholders here
+    // are the minimal fix without a schema migration on a live table.
+    return await prisma.$transaction(async (tx) => {
+      const created = await tx.vehicle.create({
+        data: {
+          ...vehicleData,
+          make: vehicleData.make || 'Не указано',
+          model: vehicleData.model || 'Не указано',
+          driverId: driver.id,
+          status: 'ACTIVE'
+        }
+      });
+      await tx.driver.update({ where: { id: driver.id }, data: { currentVehicleId: created.id } });
+      return created;
+    });
+  } catch (err) {
+    if (err.code === 'P2002') {
+      throw ApiError.conflict('Этот номер уже используется другим водителем');
+    }
+    throw err;
+  }
+}
+
+// Manual fallback for `districtId` - normally set live from GPS
+// (updateLocation above). Exists because a driver whose GPS genuinely can't
+// be read (e.g. this deployment's website is still plain http://, and
+// browsers refuse the Geolocation API on anything but a secure origin/
+// localhost - see services/geo.js on the frontend) would otherwise never
+// get a district at all and so never join a district room / never receive
+// order:new broadcasts, with no way to fix it themselves. Reuses the exact
+// same room-sync path GPS updates use, so once picked this works identically
+// to a GPS-derived district until the driver's GPS starts reporting again
+// and overwrites it on the next successful location update.
+async function setDistrict(driver, districtId) {
+  const district = await prisma.district.findUnique({ where: { id: districtId } });
+  if (!district) throw ApiError.badRequest('Район не найден');
+
+  const previousDistrictId = driver.districtId;
+  const updated = await prisma.driver.update({ where: { id: driver.id }, data: { districtId }, include: { district: true } });
+
+  const balance = await prisma.balance.findUnique({ where: { userId: driver.userId } });
+  const hasPositiveBalance = Boolean(balance) && Number(balance.amount) > 0;
+  await syncDriverDistrictRoom(driver.id, { previousDistrictId, districtId, eligible: driver.isOnline && hasPositiveBalance });
+  await districtsService.broadcastDistrictStats();
+
+  return updated;
+}
+
+// Same conversation model as admin.service.js#getDriverMessages: every
+// Message where this driver's own user id is either sender or receiver.
+// isBroadcast admin messages are included too (receiverId is null on
+// those, but every driver is meant to see them - see sendMessage below for
+// why an outgoing driver message never sets isBroadcast).
+// The driver's own history for their profile screen (DriverProfile.vue) -
+// same two lists the admin already sees for a driver
+// (admin.service.js#getHistory), just scoped to the authenticated driver
+// instead of taking a driverId, so one driver can never read another's.
+async function getHistory(driver, { page, limit }) {
+  const balance = await prisma.balance.findUnique({ where: { userId: driver.userId } });
+
+  const [transactions, transactionsTotal, orders, ordersTotal] = await Promise.all([
+    balance
+      ? prisma.transaction.findMany({
+          where: { balanceId: balance.id },
+          orderBy: { createdAt: 'desc' },
+          skip: (page - 1) * limit,
+          take: limit
+        })
+      : Promise.resolve([]),
+    balance ? prisma.transaction.count({ where: { balanceId: balance.id } }) : Promise.resolve(0),
+    prisma.order.findMany({
+      where: { driverId: driver.id },
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
+      include: { district: true }
+    }),
+    prisma.order.count({ where: { driverId: driver.id } })
+  ]);
+
+  return {
+    transactions: { items: transactions, total: transactionsTotal, page, limit },
+    orders: { items: orders, total: ordersTotal, page, limit }
+  };
+}
+
+async function getMessages(driver, { page, limit }) {
+  const where = {
+    OR: [{ senderId: driver.userId }, { receiverId: driver.userId }, { isBroadcast: true }]
+  };
+
+  // Anything the admin sent (i.e. not written by this driver) after they
+  // last opened their chat. Returned alongside the messages so the app can
+  // show a badge for messages that arrived while it was closed - previously
+  // the unread counter only ever grew from live socket events, so those
+  // were invisible until the driver happened to open the chat.
+  const unreadWhere = {
+    // Anything from the admin side: addressed to this driver, or sent to
+    // all drivers at once. Broadcasts count too - "сообщение всем
+    // водителям" is still a message they need to see, and lastChatReadAt
+    // being per-driver keeps that correct for each of them individually.
+    OR: [{ receiverId: driver.userId }, { isBroadcast: true }],
+    NOT: { senderId: driver.userId },
+    ...(driver.lastChatReadAt ? { sentAt: { gt: driver.lastChatReadAt } } : {})
+  };
+
+  const [items, total, unread] = await Promise.all([
+    prisma.message.findMany({
+      where,
+      orderBy: { sentAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit
+    }),
+    prisma.message.count({ where }),
+    prisma.message.count({ where: unreadWhere })
+  ]);
+
+  return { items: items.reverse(), total, page, limit, unread };
+}
+
+// Called when the driver actually opens their chat screen - everything the
+// admin sent up to now counts as seen.
+async function markChatRead(driver) {
+  await prisma.driver.update({ where: { id: driver.id }, data: { lastChatReadAt: new Date() } });
+}
+
+// A driver message has no single recipient (any on-duty admin can pick it
+// up) - receiverId stays null, same shape Message already supports for the
+// admin broadcast case, just mirrored for the other direction.
+async function sendMessage(driver, body) {
+  const message = await prisma.message.create({
+    data: { senderId: driver.userId, body, isBroadcast: false }
+  });
+
+  try {
+    getIO()
+      .to(rooms.admins())
+      .emit('driver:message', { id: message.id, senderId: driver.userId, driverId: driver.id, body, sentAt: message.sentAt });
+  } catch (err) {
+    logger.warn({ err }, 'Failed to broadcast driver:message');
+  }
+
+  return message;
+}
+
+// Called once by the driver APK after @capacitor/push-notifications hands
+// back an FCM registration token. Just storage - nothing in this codebase
+// sends a push yet (needs a real Firebase project's server credentials,
+// which this project doesn't have; see backend/README.md).
+async function savePushToken(driver, token) {
+  return prisma.driver.update({ where: { id: driver.id }, data: { pushToken: token } });
+}
+
+module.exports = {
+  getProfile,
+  getBalance,
+  updateLocation,
+  setStatus,
+  upsertVehicle,
+  setDistrict,
+  getHistory,
+  getMessages,
+  markChatRead,
+  sendMessage,
+  savePushToken
+};

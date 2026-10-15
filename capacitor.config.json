@@ -1,0 +1,11 @@
+{
+  "appId": "io.openride.driver",
+  "appName": "Tayyn Hyzmat",
+  "webDir": "dist-driver",
+  "android": {
+    "allowMixedContent": false
+  },
+  "server": {
+    "cleartext": false
+  }
+}

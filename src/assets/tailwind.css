@@ -1,0 +1,109 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Scrollbar + selection tuning only for the new driver panel, kept out of
+   the global stylesheet so it never touches the existing Vuetify pages. */
+.driver-app ::selection {
+  @apply bg-brand-500 bg-opacity-30;
+}
+
+/* `preflight` is off (see tailwind.config.js), so <body> never gets a
+   background-color from Tailwind's own reset - it stays the browser
+   default (white). A page whose own content is shorter than the viewport,
+   or that overscrolls/bounces (iOS Safari, Android's own rubber-banding),
+   then flashes that white strip behind/above the fixed header or below the
+   fixed bottom nav for a moment. `.dark` is already toggled on <html> by
+   the driver panel (always) and the admin panel (per its own light/dark/
+   system toggle) - matching that here keeps the flash the same near-black
+   as the driver/admin pages' own background instead of white, in both. */
+body {
+  background-color: #f8fafc; /* slate-50 - matches the admin panel's light background */
+}
+:root.dark body {
+  background-color: #090b10; /* matches driver panel's ink-950 / admin's near-black dark background */
+}
+
+/* Chrome/Safari autofill (and just-typed-then-autocompleted values) paints
+   its own opaque white/pale-yellow background and near-black text over
+   whatever the input's own CSS says, ignoring normal background-color /
+   color rules entirely - that's the "white pill, barely-visible text" bug
+   on the driver/admin panels' dark inputs (any text field: address, price,
+   phone, search, message...). -webkit-box-shadow inset is the only thing
+   that actually overrides it (background-color itself does not); pairing
+   it with -webkit-text-fill-color: currentColor keeps the input's own text
+   color instead of Chrome's forced dark text, so it reads correctly in
+   both light and dark theme inputs.transition on background-color is the
+   standard trick to delay Chrome's own re-paint long enough that this wins. */
+/* public/driver.html sets viewport-fit=cover so the Capacitor Android
+   WebView draws edge-to-edge behind the OS's own gesture/nav bar (instead
+   of that bar pushing the page content up) - without reserving
+   env(safe-area-inset-bottom) somewhere, that system bar can sit on top of
+   this app's own fixed bottom nav and whatever page content ends right
+   above it (e.g. the "Выйти" button at the bottom of Профиль), since a
+   plain pb-24 was sized only for the nav's own ~56-64px visible height,
+   not the extra ~24-48px an Android gesture bar adds on top of that. These
+   replace the plain pb-24 + md:pb-* pairs on every scrollable page that
+   sits above a fixed mobile bottom nav (driver AND admin panels both use
+   the same viewport-fit=cover meta tag). Desktop's sidebar nav needs no
+   such clearance, so the md: breakpoint values here match whatever plain
+   md:pb-* each page used before. env()'s fallback keeps this identical to
+   plain pb-24 on any browser that doesn't support env() at all. */
+.pb-safe-mobile-nav {
+  padding-bottom: calc(6rem + env(safe-area-inset-bottom, 0px));
+}
+.pb-safe-mobile-nav-lg {
+  padding-bottom: calc(6rem + env(safe-area-inset-bottom, 0px));
+}
+.pb-safe-mobile-nav-sm {
+  padding-bottom: calc(6rem + env(safe-area-inset-bottom, 0px));
+}
+@media (min-width: 768px) {
+  .pb-safe-mobile-nav {
+    padding-bottom: 2rem; /* matches the old md:pb-8 */
+  }
+  .pb-safe-mobile-nav-lg {
+    padding-bottom: 2.5rem; /* matches the old md:pb-10 */
+  }
+  .pb-safe-mobile-nav-sm {
+    padding-bottom: 1.5rem; /* matches the old md:pb-6 */
+  }
+}
+
+/* The fixed bottom nav bars themselves (BottomNav.vue / AdminNav.vue
+   mobile bars) also need to reserve the same inset so their own icons/
+   labels aren't drawn under the system bar - additive on top of each
+   bar's existing padding via calc() rather than Tailwind's py-* utility,
+   for the same reason as above. */
+.nav-safe-bottom {
+  padding-bottom: calc(0.25rem + env(safe-area-inset-bottom, 0px)); /* matches BottomNav.vue's old py-1 */
+}
+.nav-safe-bottom-lg {
+  padding-bottom: calc(0.375rem + env(safe-area-inset-bottom, 0px)); /* matches AdminNav.vue's old py-1.5 */
+}
+
+/* ActiveOrderPanel.vue's bottom sheet - same reasoning, its own action
+   buttons (Позвонить/Завершить/Отменить) sit right at the sheet's bottom
+   edge. */
+.sheet-safe-bottom {
+  padding-bottom: calc(2rem + env(safe-area-inset-bottom, 0px)); /* matches the old pb-8 */
+}
+@media (min-width: 640px) {
+  .sheet-safe-bottom {
+    padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px)); /* matches the old sm:pb-6 */
+  }
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus {
+  -webkit-text-fill-color: currentColor;
+  -webkit-box-shadow: 0 0 0 1000px transparent inset;
+  box-shadow: 0 0 0 1000px transparent inset;
+  caret-color: currentColor;
+  transition: background-color 9999s ease-in-out 0s;
+}

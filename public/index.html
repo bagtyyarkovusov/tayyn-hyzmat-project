@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <title>Tayyn hyzmat</title>
+    <meta name="description" content="Tayyn hyzmat - служба заказа поездок.">
+    <meta name="author" content="Tayyn hyzmat">
+    <link rel="icon" type="image/png" href="<%= htmlWebpackPlugin.files.publicPath %>static/img/icons/favicon.ico">
+    
+    <!--[if IE]><link rel="shortcut icon" href="/static/img/icons/favicon.ico"><![endif]-->
+    
+    <!-- Add to home screen for Android and modern mobile browsers -->
+    <link rel="manifest" href="<%= htmlWebpackPlugin.files.publicPath %>manifest.json">
+    <meta name="theme-color" content="#53346d">
+
+    <!-- Add to home screen for Safari on iOS. apple-mobile-web-app-capable
+         is iOS Safari-specific and still required there (Safari doesn't
+         understand the standard tag below) - mobile-web-app-capable is the
+         cross-browser standard version Chrome/Android expects, added
+         alongside it so Chrome DevTools stops flagging the Apple-only tag
+         as deprecated; neither replaces the other. -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="Tayyn hyzmat">
+    <link rel="apple-touch-icon" href="<%= htmlWebpackPlugin.files.publicPath %>static/img/icons/apple-touch-icon-144x144.png">
+    
+    <!-- Add to home screen for Windows -->
+    <meta name="msapplication-TileImage" content="<%= htmlWebpackPlugin.files.publicPath %>static/img/icons/favicon-144.png">
+    <meta name="msapplication-TileColor" content="#000000">
+    <!-- `webpack.chunks` here used to mean "this page's chunks" back when
+         this was the only HTML page in the build - now that vue.config.js
+         builds two separate pages (index + driver) from one webpack
+         compilation, it means every chunk across BOTH, so this loop was
+         preloading driver.js/driver.css into every web visitor's browser
+         too (confirmed in the built HTML, and the "preloaded but not used"
+         console warning it caused). `htmlWebpackPlugin.files.js`/`.css`
+         are already scoped to just this page's own `chunks: ['index']`
+         (see vue.config.js), so this preloads only what index.html
+         actually uses. -->
+    <% for (var file of htmlWebpackPlugin.files.css) { %>
+    <link rel="preload" href="<%= file %>" as="style">
+    <% } %>
+    <% for (var file of htmlWebpackPlugin.files.js) { %>
+    <link rel="preload" href="<%= file %>" as="script">
+    <% } %>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/3.7.2/animate.min.css">
+    <link href="https://fonts.googleapis.com/css?family=Roboto:100,300,400,500,700,900" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/@mdi/font@4.x/css/materialdesignicons.min.css" rel="stylesheet">
+    <link href="https://use.fontawesome.com/releases/v5.0.13/css/all.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.2.0/dist/leaflet.css" integrity="sha512-M2wvCLH6DSRazYeZRIm1JnYyh22purTM+FDB5CsyxtQJYeKq83arPe5wgbNmcFXGqiSH2XR8dT/fJISVA1r/zQ=="
+      crossorigin="" />
+    <link href='https://fonts.googleapis.com/css?family=Source+Code+Pro' rel='stylesheet' type='text/css'>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/normalize/5.0.0/normalize.min.css">
+    <meta property="og:title" content="Tayyn hyzmat" />
+    <meta property="og:description" content="Tayyn hyzmat - служба заказа поездок." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="" />
+    <meta property="og:image" content="" />
+  </head>
+
+  <body>
+    <div id="app"></div>
+    <!-- Todo: only include in production -->
+    <%= htmlWebpackPlugin.options.serviceWorkerLoader %>
+      <!-- built files will be auto injected -->
+    </body>
+  <script src='https://cdnjs.cloudflare.com/ajax/libs/jquery/3.3.1/jquery.min.js'></script>
+  <script src="./script.js"></script>
+</html>

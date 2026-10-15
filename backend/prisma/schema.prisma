@@ -1,0 +1,446 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  CLIENT
+  DRIVER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  BLOCKED
+}
+
+enum DriverStatus {
+  PENDING // ожидает подтверждения администратора
+  APPROVED
+  BLOCKED
+}
+
+enum VehicleStatus {
+  PENDING
+  ACTIVE
+  INACTIVE
+}
+
+enum OrderStatus {
+  NEW // создан, транслируется водителям в районе, ещё не принят
+  ACCEPTED // водитель выбрал "принять через X минут" и едет в точку А
+  WAITING // водитель нажал "Ожидаю" в точке А - идёт платный/бесплатный отсчёт ожидания
+  STARTED // нажата "Начать поездку" - идёт тариф по километражу
+  COMPLETED
+  CANCELLED
+}
+
+enum TransactionType {
+  TOPUP
+  EARNING
+  COMMISSION
+  PAYMENT // водитель платит платформе цену заказа (списание при ПРИНЯТИИ заказа, не при завершении - см. orders.service.js#accept)
+  WITHDRAWAL
+  REFUND
+  BONUS
+  ADJUSTMENT
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum AdminPermission {
+  SUPER
+  DISPATCHER
+  FINANCE
+  SUPPORT
+}
+
+enum NotificationType {
+  SYSTEM
+  ORDER
+  BALANCE
+  ADMIN_MESSAGE
+}
+
+// ---------------------------------------------------------------------------
+// Core identity
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String     @id @default(uuid())
+  role         Role
+  phone        String     @unique
+  email        String?    @unique
+  passwordHash String     @map("password_hash")
+  fullName     String     @map("full_name")
+  avatarUrl    String?    @map("avatar_url")
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+  lastLoginAt  DateTime?  @map("last_login_at")
+
+  driver           Driver?
+  admin            Admin?
+  balance          Balance?
+  ordersAsClient   Order[]        @relation("ClientOrders")
+  sentMessages     Message[]      @relation("SentMessages")
+  receivedMessages Message[]      @relation("ReceivedMessages")
+  notifications    Notification[]
+  refreshTokens    RefreshToken[]
+
+  @@map("users")
+}
+
+model Driver {
+  id               String       @id @default(uuid())
+  userId           String       @unique @map("user_id")
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  licenseNumber    String?      @map("license_number")
+  licenseExpiry    DateTime?    @map("license_expiry")
+  status           DriverStatus @default(PENDING)
+  ratingAvg        Decimal      @default(0) @map("rating_avg") @db.Decimal(3, 2)
+  districtId       String?      @map("district_id")
+  district         District?    @relation(fields: [districtId], references: [id])
+  currentVehicleId String?      @unique @map("current_vehicle_id")
+  currentVehicle   Vehicle?     @relation("CurrentVehicle", fields: [currentVehicleId], references: [id])
+  isOnline         Boolean      @default(false) @map("is_online")
+  isAvailable      Boolean      @default(false) @map("is_available")
+
+  // Cached last known position - fast path for the live admin map.
+  // Full history/trail is kept in DriverLocation.
+  lastLat          Decimal?  @map("last_lat") @db.Decimal(10, 7)
+  lastLng          Decimal?  @map("last_lng") @db.Decimal(10, 7)
+  lastHeading      Decimal?  @map("last_heading") @db.Decimal(6, 2)
+  lastSpeed        Decimal?  @map("last_speed") @db.Decimal(6, 2)
+  lastLocationAt   DateTime? @map("last_location_at")
+
+  // FCM registration token from the driver APK (@capacitor/push-notifications).
+  // Actually SENDING a push still needs a real Firebase project's service
+  // account on the server - this column is only the plumbing to know WHERE
+  // to send one; see backend/README.md "Push-уведомления" for what's missing.
+  pushToken String? @map("push_token")
+
+  // When any admin last opened this driver's chat thread - a driver's own
+  // messages have no single recipient (see driver.service.js#sendMessage,
+  // "any on-duty admin can pick it up"), so read state is shared across
+  // admins rather than tracked per-admin: one admin opening the thread
+  // clears the "new message" badge for every admin, not just themselves.
+  // Compared against the driver's own most recent message timestamp in
+  // admin.service.js#listDrivers to compute hasUnreadMessage.
+  lastReadByAdminAt DateTime? @map("last_read_by_admin_at")
+
+  // Mirror of the above for the other direction: when this driver last
+  // opened their own chat screen. Anything the admin sent after this counts
+  // as unread for them. Without it the driver's unread badge was driven
+  // purely by live socket events, so a message sent while their app was
+  // closed produced no badge at all - it only existed in the database and
+  // they had to happen to open the chat to ever see it.
+  lastChatReadAt DateTime? @map("last_chat_read_at")
+
+  approvedAt  DateTime? @map("approved_at")
+  approvedBy  String?   @map("approved_by")
+  blockedAt   DateTime? @map("blocked_at")
+  blockedBy   String?   @map("blocked_by")
+  blockReason String?   @map("block_reason")
+
+  // Single-device login, now with device memory: a driver is bound to
+  // whichever device last logged in (currentDeviceId/currentDeviceLabel -
+  // label is a human-readable "Samsung SM-A047F, Android 13" string from
+  // @capacitor/device, for the admin panel - see auth.service.js#login).
+  // Logging in from a device already in `devices` below (one the driver
+  // has used and been approved on before) auto-switches with no admin
+  // approval and force-logs-out whatever was active. A genuinely new
+  // device is rejected and recorded as a pending request here instead, for
+  // an admin to approve or reject (admin.service.js#approveDevice/
+  // rejectDevice) - approving adds it to `devices` too, so it's
+  // remembered for next time.
+  currentDeviceId          String?   @map("current_device_id")
+  currentDeviceLabel       String?   @map("current_device_label")
+  pendingDeviceId          String?   @map("pending_device_id")
+  pendingDeviceLabel       String?   @map("pending_device_label")
+  pendingDeviceRequestedAt DateTime? @map("pending_device_requested_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  vehicles  Vehicle[]        @relation("DriverVehicles")
+  orders    Order[]
+  locations DriverLocation[]
+  devices   DriverDevice[]
+
+  @@index([status])
+  @@map("drivers")
+}
+
+// A device this driver has been approved on before - once here, logging in
+// from it again never needs another admin approval, even after switching
+// away to a different (also-known) device and back. See Driver's
+// currentDeviceId/pendingDeviceId comment above for the full flow.
+model DriverDevice {
+  id          String   @id @default(uuid())
+  driverId    String   @map("driver_id")
+  driver      Driver   @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  deviceId    String   @map("device_id")
+  label       String?  @map("label")
+  firstSeenAt DateTime @default(now()) @map("first_seen_at")
+  lastLoginAt DateTime @default(now()) @map("last_login_at")
+
+  @@unique([driverId, deviceId])
+  @@map("driver_devices")
+}
+
+model Admin {
+  id              String          @id @default(uuid())
+  userId          String          @unique @map("user_id")
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permissionLevel AdminPermission @default(SUPPORT) @map("permission_level")
+  createdAt       DateTime        @default(now()) @map("created_at")
+
+  updatedSettings Setting[]
+
+  @@map("admins")
+}
+
+// ---------------------------------------------------------------------------
+// Fleet / operations
+// ---------------------------------------------------------------------------
+
+model Vehicle {
+  id          String        @id @default(uuid())
+  driverId    String        @map("driver_id")
+  driver      Driver        @relation("DriverVehicles", fields: [driverId], references: [id], onDelete: Cascade)
+  make        String
+  model       String
+  year        Int?
+  color       String?
+  plateNumber String        @unique @map("plate_number")
+  category    String?
+  capacity    Int?          @default(4)
+  photoUrl    String?       @map("photo_url")
+  status      VehicleStatus @default(PENDING)
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  currentForDriver Driver? @relation("CurrentVehicle")
+
+  @@map("vehicles")
+}
+
+model District {
+  id         String   @id @default(uuid())
+  name       String
+  city       String?
+  baseFare   Decimal  @default(0) @map("base_fare") @db.Decimal(10, 2)
+  perKmRate  Decimal  @default(0) @map("per_km_rate") @db.Decimal(10, 2)
+  perMinRate Decimal  @default(0) @map("per_min_rate") @db.Decimal(10, 2)
+  isActive   Boolean  @default(true) @map("is_active")
+
+  // Dispatch-zone center, NOT an official administrative/cadastral boundary.
+  // Still used as: (a) the fallback for a point no polygon below claims,
+  // and (b) the starting draft shape the admin boundary editor seeds a new
+  // district with (a rounded shape around this point at radiusKm) before
+  // it's been hand-adjusted to real streets.
+  centerLat Decimal @map("center_lat") @db.Decimal(10, 7)
+  centerLng Decimal @map("center_lng") @db.Decimal(10, 7)
+  radiusKm  Decimal @default(5) @map("radius_km") @db.Decimal(6, 2)
+
+  // Hand-drawn dispatch boundary from the admin "Границы районов" editor
+  // (AdminDistrictBoundaries.vue) - an array of one outer ring, each ring
+  // an array of [lat, lng] pairs (Yandex's own polygon geometry order, NOT
+  // GeoJSON's [lng, lat]): [[[lat,lng], [lat,lng], ...]]. Null until an
+  // admin has actually drawn/saved one - see utils/geo.js#findDistrictByBoundary
+  // for how a null boundary here falls back to nearest-center matching.
+  boundary Json? @map("boundary")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  drivers Driver[]
+  orders  Order[]
+
+  @@map("districts")
+}
+
+model Order {
+  id         String    @id @default(uuid())
+  clientId   String?   @map("client_id")
+  client     User?     @relation("ClientOrders", fields: [clientId], references: [id])
+  // Raw phone number for phone/manually-dispatched orders, which is the
+  // only way orders exist right now (no client app yet - see migration
+  // plan). Deliberately separate from `clientId`/`client`, which stays for
+  // the future case of a real client account placing the order.
+  clientPhone String? @map("client_phone")
+  driverId    String? @map("driver_id")
+  driver      Driver? @relation(fields: [driverId], references: [id])
+  vehicleId   String? @map("vehicle_id")
+  districtId  String? @map("district_id")
+  district    District? @relation(fields: [districtId], references: [id])
+
+  pickupLat      Decimal @map("pickup_lat") @db.Decimal(10, 7)
+  pickupLng      Decimal @map("pickup_lng") @db.Decimal(10, 7)
+  pickupAddress  String? @map("pickup_address")
+  dropoffLat     Decimal? @map("dropoff_lat") @db.Decimal(10, 7)
+  dropoffLng     Decimal? @map("dropoff_lng") @db.Decimal(10, 7)
+  dropoffAddress String? @map("dropoff_address")
+
+  // Free-text dispatcher remark, set at creation (CreateOrderModal.vue's
+  // "Примечание") - "клиент с собакой", "оплата картой", "перезвонить если
+  // не берёт трубку" etc. Shown to the driver in the "Новый заказ" popup
+  // too, not just kept admin-side - a note only the person who wrote it can
+  // see wouldn't be much of a dispatch note.
+  note String? @map("note")
+
+  status         OrderStatus @default(NEW)
+  // Water minutes the driver committed to when accepting: 5 / 10 / 15 / 20.
+  etaMinutes     Int?        @map("eta_minutes")
+  priceEstimated Decimal?    @map("price_estimated") @db.Decimal(10, 2)
+  priceFinal     Decimal?    @map("price_final") @db.Decimal(10, 2)
+  // waitFee/distanceFee are the two components that sum to priceFinal -
+  // kept separately so the driver's UI (and any future receipt) can show
+  // the breakdown, not just the total. See orders.service.js for the tariff.
+  waitFee        Decimal?    @map("wait_fee") @db.Decimal(10, 2)
+  distanceFee    Decimal?    @map("distance_fee") @db.Decimal(10, 2)
+  distanceKm     Decimal?    @map("distance_km") @db.Decimal(10, 2)
+  durationMin    Int?        @map("duration_min")
+  paymentMethod  String?     @map("payment_method")
+
+  createdAt    DateTime  @default(now()) @map("created_at")
+  acceptedAt   DateTime? @map("accepted_at")
+  arrivedAt    DateTime? @map("arrived_at") // когда водитель нажал "Ожидаю" - начало отсчёта WAITING
+  startedAt    DateTime? @map("started_at") // когда нажата "Начать поездку" - начало отсчёта STARTED
+  completedAt  DateTime? @map("completed_at")
+  cancelledAt  DateTime? @map("cancelled_at")
+  cancelReason String?   @map("cancel_reason")
+
+  transactions Transaction[]
+  messages     Message[]
+
+  @@index([status])
+  @@index([driverId])
+  @@index([districtId])
+  @@map("orders")
+}
+
+// ---------------------------------------------------------------------------
+// Wallet
+// ---------------------------------------------------------------------------
+
+model Balance {
+  id        String   @id @default(uuid())
+  userId    String   @unique @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount    Decimal  @default(0) @db.Decimal(12, 2)
+  currency  String   @default("TMT") // Turkmen manat - this deployment is Ashgabat, Turkmenistan
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  transactions Transaction[]
+
+  @@map("balances")
+}
+
+model Transaction {
+  id           String             @id @default(uuid())
+  balanceId    String             @map("balance_id")
+  balance      Balance            @relation(fields: [balanceId], references: [id], onDelete: Cascade)
+  orderId      String?            @map("order_id")
+  order        Order?             @relation(fields: [orderId], references: [id])
+  type         TransactionType
+  amount       Decimal            @db.Decimal(12, 2) // signed: positive = credit, negative = debit
+  balanceAfter Decimal            @map("balance_after") @db.Decimal(12, 2)
+  currency     String             @default("TMT")
+  status       TransactionStatus  @default(COMPLETED)
+  note         String?
+  createdBy    String?            @map("created_by") // admin id, if manually adjusted
+  createdAt    DateTime           @default(now()) @map("created_at")
+
+  @@index([balanceId])
+  @@index([orderId])
+  @@map("transactions")
+}
+
+// ---------------------------------------------------------------------------
+// Realtime / tracking
+// ---------------------------------------------------------------------------
+
+model DriverLocation {
+  id         String   @id @default(uuid())
+  driverId   String   @map("driver_id")
+  driver     Driver   @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  lat        Decimal  @db.Decimal(10, 7)
+  lng        Decimal  @db.Decimal(10, 7)
+  heading    Decimal? @db.Decimal(6, 2)
+  speed      Decimal? @db.Decimal(6, 2)
+  accuracy   Decimal? @db.Decimal(6, 2)
+  recordedAt DateTime @default(now()) @map("recorded_at")
+
+  @@index([driverId, recordedAt])
+  @@map("driver_locations")
+}
+
+model Message {
+  id          String    @id @default(uuid())
+  orderId     String?   @map("order_id")
+  order       Order?    @relation(fields: [orderId], references: [id])
+  senderId    String?   @map("sender_id")
+  sender      User?     @relation("SentMessages", fields: [senderId], references: [id])
+  receiverId  String?   @map("receiver_id")
+  receiver    User?     @relation("ReceivedMessages", fields: [receiverId], references: [id])
+  body        String
+  isBroadcast Boolean   @default(false) @map("is_broadcast")
+  sentAt      DateTime  @default(now()) @map("sent_at")
+  readAt      DateTime? @map("read_at")
+
+  @@index([receiverId])
+  @@map("messages")
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String           @map("user_id")
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType @default(SYSTEM)
+  title     String
+  body      String?
+  payload   Json?
+  isRead    Boolean          @default(false) @map("is_read")
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+model Setting {
+  key         String   @id
+  value       Json
+  description String?
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  updatedBy   String?  @map("updated_by")
+  updater     Admin?   @relation(fields: [updatedBy], references: [id])
+
+  @@map("settings")
+}
+
+// Opaque refresh tokens, stored hashed, so they can be revoked/rotated
+// server-side (a plain long-lived JWT could not be invalidated on block/logout).
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}

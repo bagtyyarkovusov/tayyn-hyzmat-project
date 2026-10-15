@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Tayyn Hyzmat</string>
+    <string name="title_activity_main">Tayyn Hyzmat</string>
+    <string name="package_name">io.openride.driver</string>
+    <string name="custom_url_scheme">io.openride.driver</string>
+</resources>
