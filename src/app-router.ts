@@ -10,7 +10,7 @@ export function makeRouter(driverOnly = false) {
     { path: '/admin', redirect: '/adminDashboard' },
     { path: '/adminLogin', component: AuthPage }, { path: '/driverLogin', component: AuthPage }, { path: '/driverRegister', component: AuthPage },
     ...(!driverOnly ? dispatcherRoutes : []), ...driverRoutes,
-    ...legacyPaths.map(path => ({ path: `/${path}`, beforeEnter: () => { window.location.assign(`/legacy/${path}${window.location.search}${window.location.hash}`); return false } })),
+    ...legacyPaths.map(path => ({ path: `/${path}`, component: { render: () => null }, beforeEnter: () => { window.location.assign(`/legacy/${path}${window.location.search}${window.location.hash}`); return false } })),
     { path: '/:pathMatch(.*)*', redirect: driverOnly ? '/driverDashboard' : '/adminDashboard' }
   ] })
   let adminRestored = false; let driverRestored = false

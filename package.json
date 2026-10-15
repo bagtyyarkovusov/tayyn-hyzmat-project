@@ -25,14 +25,14 @@
     "android:assembleRelease": "pnpm cap:sync && cd android && ./gradlew assembleRelease"
   },
   "dependencies": {
-    "@capacitor/android": "^6.2.1",
+    "@capacitor/android": "6.2.1",
     "@capacitor/core": "^6.2.1",
     "@fontsource-variable/manrope": "^5.2.8",
     "@lucide/vue": "^1.57.0",
     "@vueuse/core": "^15.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "lucide-vue-next": "^0.577.0",
+    "lucide-vue-next": "npm:@lucide/vue@^1.57.0",
     "reka-ui": "^2.9.2",
     "socket.io-client": "^4.8.4",
     "tailwind-merge": "^3.5.0",

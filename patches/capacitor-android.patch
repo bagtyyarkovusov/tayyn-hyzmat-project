@@ -1,0 +1,37 @@
+diff --git a/capacitor/src/main/java/com/getcapacitor/Plugin.java b/capacitor/src/main/java/com/getcapacitor/Plugin.java
+index d8a3e82..1750dba 100644
+--- a/capacitor/src/main/java/com/getcapacitor/Plugin.java
++++ b/capacitor/src/main/java/com/getcapacitor/Plugin.java
+@@ -179,7 +179,15 @@ public class Plugin {
+         bridge.setPluginCallForLastActivity(call);
+         lastPluginCallId = call.getCallbackId();
+         bridge.saveCall(call);
+-        activityResultLauncher.launch(intent);
++        // launch() reaches into AndroidX's ActivityResultRegistry, which
++        // assumes main-thread-only access - PluginCall dispatch itself runs
++        // on Bridge's own background "CapacitorPlugins" HandlerThread (see
++        // Bridge.java), not the UI thread, so calling launch() directly from
++        // here without hopping back to the main thread first is a real,
++        // reproducible NullPointerException risk deep in AndroidX internals
++        // (confirmed via a real device crash report on the permission-launch
++        // path below, same underlying pattern applies here).
++        bridge.executeOnMainThread(() -> activityResultLauncher.launch(intent));
+     }
+ 
+     private void permissionActivityResult(PluginCall call, String[] permissionStrings, String callbackName) {
+@@ -190,7 +198,14 @@ public class Plugin {
+         }
+ 
+         bridge.savePermissionCall(call);
+-        permissionResultLauncher.launch(permissionStrings);
++        // See the identical comment on startActivityForResult() above -
++        // ActivityResultLauncher.launch() must run on the main thread.
++        // This exact call (from GeolocationPlugin.requestPermissions(),
++        // reached via PluginCall dispatch on Bridge's background
++        // "CapacitorPlugins" HandlerThread) is what a real device crash
++        // report showed throwing a NullPointerException in AndroidX
++        // internals before this fix.
++        bridge.executeOnMainThread(() -> permissionResultLauncher.launch(permissionStrings));
+     }
+ 
+     /**

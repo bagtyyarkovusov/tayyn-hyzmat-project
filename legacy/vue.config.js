@@ -1,5 +1,7 @@
 module.exports = {
   publicPath: '/legacy/',
+  parallel: false,
+  css: { loaderOptions: { postcss: { config: { path: __dirname } } } },
   outputDir: '../dist/legacy',
   transpileDependencies: ['vuetify'],
 
@@ -63,6 +65,7 @@ module.exports = {
   // inlined copy of vue/vuex/vue-router rather than sharing a vendor chunk
   // with index.js - a fine trade since only driver's output ships in the APK).
   chainWebpack: (config) => {
+    config.module.rule('vue').use('vue-loader').tap(options => ({ ...options, compiler: require('vue-template-compiler') }))
     config.optimization.delete('splitChunks')
 
     // Vue CLI's own preload-webpack-plugin instances are already configured
