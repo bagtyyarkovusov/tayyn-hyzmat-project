@@ -18,6 +18,7 @@ import {
 import { useDriver } from "./useDriver";
 import { enableOrderAlerts } from "./alerts";
 import { money } from "./model";
+import IncomingOrder from "./components/IncomingOrder.vue";
 import ActiveTrip from "./components/ActiveTrip.vue";
 import AvailableOrders from "./components/AvailableOrders.vue";
 const {
@@ -137,24 +138,7 @@ const ownRegion = computed(
       ><span class="muted text-xs">Для работающего браузера</span>
     </div>
     <ActiveTrip />
-    <section
-      v-if="state.incoming && !state.active"
-      class="panel space-y-3 border-primary/40"
-      aria-live="polite"
-    >
-      <h2 class="font-semibold">Новый заказ</h2>
-      <p class="break-words">{{ state.incoming.pickupAddress }}</p>
-      <p class="muted text-sm">
-        Автоматическое принятие через {{ Math.floor(countdown / 60) }}:{{
-          String(countdown % 60).padStart(2, "0")
-        }}
-        с прибытием за 5 мин. Можно скрыть предложение и отменить автоматическое
-        принятие.
-      </p>
-      <Button variant="outline" @click="dismissIncoming"
-        >Скрыть предложение</Button
-      >
-    </section>
+    <IncomingOrder />
     <section class="panel space-y-3">
       <div class="flex gap-3">
         <MapPin class="mt-1 size-5 shrink-0 text-primary" />

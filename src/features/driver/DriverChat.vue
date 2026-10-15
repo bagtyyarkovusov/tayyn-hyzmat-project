@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IncomingOrder from "./components/IncomingOrder.vue";
 import { nextTick, onMounted, onUnmounted, ref } from "vue";
 import { Send, RefreshCw } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
@@ -90,6 +91,7 @@ onUnmounted(() => {
         ><RefreshCw class="size-4" :class="{ 'animate-spin': loading }"
       /></Button>
     </header>
+    <IncomingOrder />
     <p
       v-if="error"
       role="alert"

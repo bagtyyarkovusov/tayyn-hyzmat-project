@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IncomingOrder from "./components/IncomingOrder.vue";
 import { onMounted, ref } from "vue";
 import { Car, Wallet, ChevronLeft, ChevronRight } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
@@ -44,6 +45,7 @@ onMounted(() => void load());
       <h1 class="page-heading">Профиль</h1>
       <p class="muted mt-1">Ваш автомобиль, баланс и поездки.</p>
     </header>
+    <IncomingOrder />
     <p v-if="state.error" role="alert" class="text-destructive">
       {{ state.error }}
     </p>

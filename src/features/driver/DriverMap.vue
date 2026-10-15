@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IncomingOrder from "./components/IncomingOrder.vue";
 import { onMounted, onUnmounted, ref, watch } from "vue";
 import { LocateFixed, MapPin } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
@@ -113,6 +114,7 @@ onUnmounted(() => {
         ><LocateFixed class="size-4" />Моё положение</Button
       >
     </header>
+    <IncomingOrder />
     <p v-if="state.gpsError" role="alert" class="text-sm text-destructive">
       {{ state.gpsError }}
     </p>

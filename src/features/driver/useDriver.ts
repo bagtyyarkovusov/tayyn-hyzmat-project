@@ -34,6 +34,25 @@ function dismissIncoming() {
   state.incoming = null;
   state.deadline = 0;
 }
+
+// Session cleanup outlives route components, including navigation to login.
+watch(
+  () => driverSession.state.accessToken,
+  (token) => {
+    if (token) return;
+    dismissIncoming();
+    state.profile = null;
+    state.balance = null;
+    state.active = null;
+    state.districts = [];
+    state.error = "";
+    state.position = null;
+    state.gpsError = "";
+    state.gpsPending = false;
+    if (gpsWatch !== undefined) navigator.geolocation.clearWatch(gpsWatch);
+    gpsWatch = undefined;
+  },
+);
 async function refresh() {
   state.loading = true;
   state.error = "";
@@ -166,24 +185,6 @@ function enableGps() {
   );
 }
 function start() {
-  cleanups.push(
-    watch(
-      () => driverSession.state.accessToken,
-      (token) => {
-        if (!token) {
-          dismissIncoming();
-          state.profile = null;
-          state.balance = null;
-          state.active = null;
-          state.districts = [];
-          state.error = "";
-          if (gpsWatch !== undefined)
-            navigator.geolocation.clearWatch(gpsWatch);
-          gpsWatch = undefined;
-        }
-      },
-    ),
-  );
   const on = (event: string, handler: (payload: unknown) => void) =>
     cleanups.push(driverSession.on(event, handler));
   on("connect", () => void refresh());
