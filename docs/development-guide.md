@@ -16,7 +16,7 @@ The web build has `VUE_APP_API_URL=/api` and `VUE_APP_SOCKET_URL=/`. `VUE_APP_YA
 
 ## Railway configuration
 
-API source root is `/backend`, with its `Dockerfile`. The web source root is the repository root, with `deploy/Dockerfile.web`. Both services check `/health`. API pre-deploy command is `npx prisma migrate deploy`; this applies checked-in migrations, never development schema generation.
+API source root is `/backend`, with its `Dockerfile`. The web source root is the repository root, with `deploy/Dockerfile.web`. Both services check `/health`. Source watch patterns avoid rebuilding for documentation-only updates. API pre-deploy command is `npx prisma migrate deploy`; this applies checked-in migrations, never development schema generation.
 
 API variables: `NODE_ENV=production`, `PORT=4000`, `DATABASE_URL=${{Postgres.DATABASE_URL}}`, separate random JWT secrets, `CORS_ORIGIN` set to the test web origin, and fresh seed admin values. Web variables: `PORT=8080`, `API_UPSTREAM=http://api.railway.internal:4000`. Service settings currently live in Railway; the old railway.json config mechanism is deprecated by the platform. Reproduce settings from this guide if creating another project.
 
@@ -43,10 +43,18 @@ The `Publish container images` GitHub Action is manual or triggered by a `v*` ta
 
 For a release, run the publishing workflow, inspect the successful build and capture each digest. Set `WEB_IMAGE` and `API_IMAGE` in the VPS environment to their `ghcr.io/...@sha256:...` references. Use `docker compose pull` and `docker compose up -d --no-build`; these reuse built images and run migrations before API startup. The supplied Compose file binds web to `127.0.0.1:8080` and keeps database/API ports private. Add a VPS reverse proxy with HTTPS, DNS and WebSocket forwarding before public access. Do not seed with default credentials.
 
-Database data is separate from images. Use PostgreSQL native exports for transfer, verify restoration in a separate database, schedule off-host backups, and agree on acceptable downtime before migration. Railway backups cannot directly restore into a VPS. Match PostgreSQL major versions or validate a supported logical restore. The local Compose default is PostgreSQL 17.
+Database data is separate from images. Use PostgreSQL native exports for transfer, verify restoration in a separate database, schedule off-host backups, and agree on acceptable downtime before migration. Railway backups cannot directly restore into a VPS. Match PostgreSQL major versions or validate a supported logical restore. Railway currently provisions PostgreSQL 18; local Compose uses PostgreSQL 17. Before moving Railway data to the VPS, use PostgreSQL 18 there and its version-appropriate data mount. Do not attempt a direct downgrade to 17.
 
 Rolling back an image does not roll back schema or data. Review migration compatibility before each release. A single VPS needs monitoring, security updates, disk alerts and a tested restore procedure. VPS selection, domain, access, backup targets and production release approval remain future decisions.
 
 ## Review after the environment works
 
 Start with the intended users and exact test acceptance criteria, then settle which customer flow remains, dispatch rules, fares/commission, driver device approval, maps and notifications. Choose the MVP before modernizing dependencies or changing the schema. Production security and operational acceptance follow after that scope is clear.
+
+## Verification
+
+Run `node scripts/smoke.mjs` against the local containers. Set `TEST_BASE_URL=https://web-development-d17b.up.railway.app` to check Railway. It uses the ignored `.env` admin credentials, checks health, seeded districts, protected database reads, role rejection and an authenticated WebSocket connection, then revokes its refresh token. It creates no orders or drivers.
+
+The initial root lockfile audit reports 183 advisories: 22 critical, 70 high, 84 moderate and 7 low, including build dependencies. This is a dependency audit result, not a count of verified exploitable runtime flaws. Dependency modernization belongs in the review before production exposure.
+
+Verified on 2026-10-15: both images built locally; migrations applied to fresh local and Railway databases; both environments passed `scripts/smoke.mjs`; the Railway administrator dashboard opened after browser login. Railway API deployment `440a0c18-c403-41c5-9acf-8c74ba574308`, web deployment `5e9345ad-fbff-48be-a506-04a01c83587c`, and Postgres deployment `fdea2412-de84-4c9b-8ad6-51b68a97008f` all reached SUCCESS. Full driver/order lifecycle, Android builds, map credentials, restore drills and VPS deployment are not yet verified. Container publishing is configured but has not been run.
