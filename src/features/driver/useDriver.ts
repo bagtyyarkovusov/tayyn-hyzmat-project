@@ -39,10 +39,9 @@ function dismissIncoming() {
 
 // Session cleanup outlives route components, including navigation to login.
 watch(
-  () => driverSession.state.accessToken,
-  (token, previous) => {
-    if (!token || !previous) sessionGeneration++;
-    if (token) return;
+  () => driverSession.state.user?.id,
+  () => {
+    sessionGeneration++;
     refreshVersion++;
     dismissIncoming();
     state.profile = null;
@@ -50,7 +49,10 @@ watch(
     state.active = null;
     state.districts = [];
     state.error = "";
+    state.notice = "";
+    state.loading = false;
     state.position = null;
+    lastLocationSent = 0;
     state.gpsError = "";
     state.gpsPending = false;
     if (gpsWatch !== undefined) navigator.geolocation.clearWatch(gpsWatch);
@@ -152,8 +154,10 @@ function enableGps() {
   }
   if (gpsWatch !== undefined) return;
   state.gpsPending = true;
+  const generation = sessionGeneration;
   gpsWatch = navigator.geolocation.watchPosition(
     async (position) => {
+      if (generation !== sessionGeneration) return;
       state.gpsPending = false;
       state.gpsError = "";
       const {
@@ -177,20 +181,23 @@ function enableGps() {
             ...(speed !== null && speed >= 0 ? { speed } : {}),
           },
         );
+        if (generation !== sessionGeneration) return;
         lastLocationSent = Date.now();
         if (state.profile) state.profile.districtId = data.districtId;
       } catch (error) {
+        if (generation !== sessionGeneration) return;
         state.gpsError = "Координаты не отправлены. " + errorMessage(error);
       } finally {
         locationSending = false;
       }
     },
     () => {
+      if (generation !== sessionGeneration) return;
       state.gpsPending = false;
       state.gpsError =
         "Нет доступа к GPS. Разрешите геолокацию в браузере или выберите район вручную.";
-      // GPS belongs to the authenticated driver session, not the current screen.
-      // Explicit logout above releases the watch.
+      if (gpsWatch !== undefined) navigator.geolocation.clearWatch(gpsWatch);
+      gpsWatch = undefined;
     },
     { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 },
   );

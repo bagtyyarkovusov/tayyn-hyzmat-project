@@ -318,6 +318,59 @@ test("GPS reporting continues across driver routes and stops after logout", asyn
     await context.close();
   }
 });
+test("GPS can be retried after browser permission is granted", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({
+    geolocation: { latitude: 37.96, longitude: 58.32, accuracy: 10 },
+  });
+  const page = await context.newPage();
+  try {
+    await login(page, "driver");
+    await page
+      .getByRole("button", { name: "Включить GPS", exact: true })
+      .click();
+    await expect(page.getByText(/Нет доступа к GPS/)).toBeVisible();
+    await context.grantPermissions(["geolocation"]);
+    await page
+      .getByRole("button", { name: "Включить GPS", exact: true })
+      .click();
+    await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+  } finally {
+    await context.close();
+  }
+});
+test("switching driver account without logout clears the previous GPS session", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({
+    permissions: ["geolocation"],
+    geolocation: { latitude: 37.96, longitude: 58.32, accuracy: 10 },
+  });
+  const page = await context.newPage();
+  try {
+    await login(page, "driver");
+    await page
+      .getByRole("button", { name: "Включить GPS", exact: true })
+      .click();
+    await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+    // Navigate through browser history without reloading the application singleton.
+    await page.evaluate(() => {
+      history.pushState({}, "", "/driverLogin");
+      dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await page.getByLabel("Номер телефона").fill("+10000000102");
+    await page.getByLabel("Пароль", { exact: true }).fill(password);
+    await page.getByRole("button", { name: "Войти", exact: true }).click();
+    await expect(page).toHaveURL(/driverDashboard/);
+    await expect(page.getByText(/GPS · точность/)).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Включить GPS", exact: true }),
+    ).toBeEnabled();
+  } finally {
+    await context.close();
+  }
+});
 test("dispatcher needs only region and phone and an unpriced driver trip leaves 500 TMT unchanged", async ({
   browser,
 }) => {
