@@ -1,0 +1,3 @@
+# Modernize browser apps with Vue 3 and shadcn-vue
+
+Adopt Vue 3, Vite, strict TypeScript, pnpm and the official shadcn-vue registry for dispatcher and driver browser interfaces, with feature ownership and separate role sessions/sockets. The owner authorized a visual redesign and broader foundation work in issue #5, superseding the earlier frontend migration exclusion while preserving HTTP, Socket.IO, region persistence and synthetic balance rules. Retain the inherited Vue 2 customer experience in a separately built `/legacy/` compatibility workspace; this keeps old functionality reachable while preventing its framework and dependencies from entering modern actor bundles.

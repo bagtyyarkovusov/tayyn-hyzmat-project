@@ -25,5 +25,6 @@ server {
     location = /index.html { add_header Cache-Control "no-store"; }
     location = /driver.html { add_header Cache-Control "no-store"; }
     location = /service-worker.js { add_header Cache-Control "no-store"; }
+    location /legacy/ { try_files $uri $uri/ /legacy/index.html; }
     location / { try_files $uri $uri/ /index.html; }
 }

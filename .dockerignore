@@ -10,3 +10,8 @@ dist-driver
 android
 *.log
 .DS_Store
+playwright-report
+test-results
+**/.vite
+.pnpm-store
+**/*.tsbuildinfo

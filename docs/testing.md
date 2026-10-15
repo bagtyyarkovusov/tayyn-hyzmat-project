@@ -1,40 +1,13 @@
 # Testing
 
-Use Node.js 22. The initial public test interfaces are HTTP for authentication, roles and the order lifecycle, Socket.IO for regional notifications, and the exported region-matching functions. These were selected for the dispatcher-driver pilot. Follow [coding standards](coding-standards.md) when adding tests.
+Use the commands in [CONTRIBUTING](../CONTRIBUTING.md). Tests assert public outcomes through HTTP, Socket.IO, region-matching functions and browser-visible actor workflows. These browser interfaces were authorized for the modern-stack migration in issue #5. Internal services use real code and real disposable PostgreSQL, with direct fixture inserts used only for setup.
 
-## Commands
+`pnpm test:unit` covers saved-polygon matching, overlap resolution and nearest-center fallback. `pnpm test:integration` covers authentication/roles, pending-driver approval, notifications, claim competition, lifecycle and quoted-price synthetic charges/refunds, including sequential duplicate rejection and inherited unpriced orders. It does not prove all concurrent financial operations safe.
 
-```sh
-npm run typecheck
-npm run test:unit
-npm run test:integration
-```
+`pnpm test:e2e` invokes `scripts/test-browser.mjs`. Each run creates a uniquely named tmpfs PostgreSQL container, random loopback API/web ports and random signing/database secrets, applies existing migrations, and uses the canonical region geometry for the viewable preview and a deliberately labelled small rectangle for automated edge-case fixtures; all accounts and orders are synthetic. It replaces any supplied database URL. Cleanup removes only the container and processes created by that invocation. Browser-visible checks cover role guards/error recovery, theme persistence/deep links/mobile navigation, real dispatcher-to-driver notification/claim/completion with 500→490 TMT, saved-region persistence/invalid drafts, bidirectional chat, session refresh/logout races and GPS continuity across route changes. More browser checks are added as review identifies material gaps. Assertions use independent literal outcomes rather than snapshots of component internals.
 
-Typecheck builds the backend, then checks the TypeScript module and tests. Unit tests need no database. Integration tests require Docker and exercise the compiled API with real Express, Prisma and Socket.IO modules.
+The API fixture boundary is permitted for setup; successful workflows are checked through the browser and public endpoints. External Yandex maps are not mocked to claim vendor correctness: the default isolated suite deliberately has no key and tests usable list/coordinate fallbacks. Live vendor map rendering, native Android, suspended-browser delivery and every device/browser combination require separate verification. Cross-region enforcement remains issue #1, outside this migration.
 
-`scripts/test-backend.mjs` creates a uniquely named PostgreSQL 17 container with random credentials and a random loopback port. It replaces any inherited `DATABASE_URL`, applies all migrations, runs synthetic fixtures and tests, then removes only the container it created. It never attaches to the existing Compose stacks or Railway. The container uses no persistent named volume.
+`pnpm preview:isolated` uses the same guarded setup but keeps it alive for inspection. Stop the process with Ctrl-C to remove its database. Credentials and URLs are written with owner-only permissions to ignored `.local/browser-context.json`; no shared credentials or production user/order records are copied. Playwright traces/screenshots are generated under ignored `test-results/`.
 
-Fixtures insert initial accounts and regions directly. Behavior assertions use HTTP responses, socket events and the public geometry interface. No internal services are mocked. Each integration test resets order and balance fixtures; tests run sequentially within one disposable application instance.
-
-## Current coverage
-
-- Authentication and admin-role access control.
-- Pending driver registration, approval and login.
-- Order claim, waiting, start and completion, including invalid transitions.
-- One winner when two drivers claim the same order.
-- Quoted synthetic TMT charge, no second completion charge, cancellation refund and sequential duplicate rejection.
-- Dispatcher cancellation refund, exact PAYMENT/REFUND ledger signs and notes, and no ledger writes for missing or non-positive inherited quotes.
-- Region notification delivery, customer-phone redaction, and suppression for another region or an offline driver.
-- Polygon matching, overlaps, nearest-center fallback, empty configuration and a known distance example.
-
-These tests capture inherited behavior before further changes. Removing the polygon match made the unit suite fail. Removing the acceptance charge made the lifecycle and refund tests fail. Both deliberate regressions were restored. An invalid coordinate type was also used to verify compiler rejection.
-
-Before extracting the order-charge module, the dispatcher refund and missing/non-positive quote tests passed against the original implementation. Removing the dispatcher's refund call failed the new test with balance `490` instead of `500`; restoring it and extracting the module passed all tests. Zero and negative quote fixtures represent inherited database values because order creation rejects those prices over HTTP.
-
-Negative notification assertions observe a short bounded delivery window after a successful request. They cover live local sockets, not background delivery guarantees. No browser automation, phone GPS, real Yandex requests, push delivery, or load tests are included. Concurrent cancellation and multiple simultaneous orders for one driver need separate tests and review.
-
-Cross-region claiming remains a known gap in [issue #1](https://github.com/bagtyyarkovusov/tayyn-hyzmat-project/issues/1). The suite does not encode that unwanted behavior as a passing requirement. It must gain a failing public HTTP test before the rule is changed.
-
-## CI
-
-`.github/workflows/checks.yml` runs backend build, typecheck, unit and disposable-database tests, builds the API Docker image, and builds the web Docker image. CI runs on pull requests and pushes to `main` or `dev/**`. Repository branch protection must separately require these checks if merge gating is desired.
+The container CI job loads the web image as `tayyn-web-check`, builds `tayyn-api-check`, and runs `node scripts/test-container-startup.mjs`. The smoke check starts only uniquely named containers/network, validates compiled API startup through Nginx, modern and legacy deep-link HTML, and the Socket.IO handshake, then removes its own resources. Its database URL is deliberately unreachable: database behavior belongs to the disposable-database integration/browser suite, and this check verifies image startup and proxy routing.
