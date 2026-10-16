@@ -89,6 +89,7 @@ There is no second timer after expansion.
 ```mermaid
 stateDiagram-v2
   [*] --> Public
+  Public --> Cancelled: dispatcher cancellation before acceptance
   Public --> Reserved: private offer
   Public --> Accepted: first valid public claim
   Reserved --> Accepted: selected driver accepts before 20s
@@ -101,12 +102,11 @@ stateDiagram-v2
   Started --> Completed: driver completes
   Started --> Completed: dispatcher force-completes with reason
   Accepted --> Cancelled: dispatcher cancellation
-  Started --> Cancelled: current dispatcher API, refunds charge
   Completed --> [*]
   Cancelled --> [*]
 ```
 
-The approved cancellation path is shown here. The current API additionally permits dispatcher cancellation from Started, which is a known gap until the approved fix merges. Force-resolution records a completed order, not a separate status. The quoted amount is charged once at acceptance. Completion does not charge again. A driver cannot cancel after `Started`. A lost connection keeps an accepted trip assigned while new work is blocked.
+The server enforces the actor-specific cancellation path shown here. The driver can cancel only in Waiting. The dispatcher can cancel before Started, including New and Accepted. Started has no ordinary cancellation path. Force-resolution records a completed order, not a separate status. The quoted amount is charged once at acceptance. Completion does not charge again or refund it. A lost connection keeps an accepted trip assigned while new work is blocked.
 
 ## Location, address, and dispatcher map
 

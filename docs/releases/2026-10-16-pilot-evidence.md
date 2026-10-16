@@ -4,20 +4,20 @@ This record separates code review and automated checks from device and deploymen
 
 ## Confirmed integrations
 
-| Change | Repository evidence | Verification limit |
-| --- | --- | --- |
-| Offer dialog with one surface and larger price | PR #76 | Mobile/browser checks; rebuild APK for later code |
-| Funded acceptance and no negative balance | PR #77, `e3efdc5` | API/socket/browser checks; synthetic TMT only |
-| Compact monitoring roster | PR #78 | Search, filtering, mobile sheet, >100-driver loading, local GPS patching |
-| Dispatcher resolution of stuck started trips | PR #80, `e821397` | 15-minute warning, explicit force-complete with reason and audit, no timer completion |
-| Standalone driver authentication shell | Commit `7f30911`, integrated through PR #81 | Same file changes as PR #82; #82 closed as duplicate after independent review |
-| Bilingual operating guides | PR #83, `63db29d` | English/Russian explanation and Mermaid diagrams |
-| Saved regions in monitoring filters | PR #84, `9460ca6` | Independent review and all CI jobs passed; deployment verification recorded separately |
-| Canonical busy-driver availability | PR #94, `b21b4d0` | All CI jobs passed; active ACCEPTED, WAITING and STARTED trips override stale availability in API, monitoring and region counts |
-| Compact driver trip feed | PR #95, `0de8ae8` | All CI jobs passed; short portrait and landscape layouts retain price, call and next-trip controls |
-| Shared server-side address budget | PR #68, `cf8bf84` | Optional lookup, source-age-aware cache, quota controls and fallback merged; provider activation and live checks remain separate |
-| Concurrent trip force-resolution lock order | PR #90, `0ba709d` | Full CI green and two independent reviews; driver → order locking matches completion/cancellation |
-| Chat recovery and safe send retries | PR #87, `2935991` | Full CI green and independent review; composite read/page cursors, retry idempotency and tied-timestamp tests |
+| Change                                         | Repository evidence                         | Verification limit                                                                                                               |
+| ---------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Offer dialog with one surface and larger price | PR #76                                      | Mobile/browser checks; rebuild APK for later code                                                                                |
+| Funded acceptance and no negative balance      | PR #77, `e3efdc5`                           | API/socket/browser checks; synthetic TMT only                                                                                    |
+| Compact monitoring roster                      | PR #78                                      | Search, filtering, mobile sheet, >100-driver loading, local GPS patching                                                         |
+| Dispatcher resolution of stuck started trips   | PR #80, `e821397`                           | 15-minute warning, explicit force-complete with reason and audit, no timer completion                                            |
+| Standalone driver authentication shell         | Commit `7f30911`, integrated through PR #81 | Same file changes as PR #82; #82 closed as duplicate after independent review                                                    |
+| Bilingual operating guides                     | PR #83, `63db29d`                           | English/Russian explanation and Mermaid diagrams                                                                                 |
+| Saved regions in monitoring filters            | PR #84, `9460ca6`                           | Independent review and all CI jobs passed; deployment verification recorded separately                                           |
+| Canonical busy-driver availability             | PR #94, `b21b4d0`                           | All CI jobs passed; active ACCEPTED, WAITING and STARTED trips override stale availability in API, monitoring and region counts  |
+| Compact driver trip feed                       | PR #95, `0de8ae8`                           | All CI jobs passed; short portrait and landscape layouts retain price, call and next-trip controls                               |
+| Shared server-side address budget              | PR #68, `cf8bf84`                           | Optional lookup, source-age-aware cache, quota controls and fallback merged; provider activation and live checks remain separate |
+| Concurrent trip force-resolution lock order    | PR #90, `0ba709d`                           | Full CI green and two independent reviews; driver → order locking matches completion/cancellation                                |
+| Chat recovery and safe send retries            | PR #87, `2935991`                           | Full CI green and independent review; composite read/page cursors, retry idempotency and tied-timestamp tests                    |
 
 ## Integrated workflow decisions
 
@@ -62,7 +62,7 @@ Keep screenshots, APK version/hash, API commit, phone model/OS, and observed res
 
 ## Finance decisions retained for release
 
-Balance adjustment `operationId` is required. Old dispatcher tabs must refresh; a missing operation ID returns 400 rather than accepting an unguarded adjustment. Retries must not duplicate credits or withdrawals. Account removal soft-deactivates while preserving ledger and order history. PR #99 merged as `5d51e2e` after review and CI, guarding representable TMT amounts and preserving room for refunds. PR #100 merged as `41cba82` after review and CI, soft-deactivating accounts while preserving balances, ledger and orders. Required-operation-ID adjustment idempotency in PR #101 remains the financial release gate until reviewed merge and CI. These decisions must not be changed back to optional IDs during integration.
+Balance adjustment `operationId` is required. Old dispatcher tabs must refresh; a missing operation ID returns 400 rather than accepting an unguarded adjustment. Retries must not duplicate credits or withdrawals. Account removal soft-deactivates while preserving ledger and order history. PR #99 merged as `5d51e2e` after review and CI, guarding representable TMT amounts and preserving room for refunds. PR #100 merged as `41cba82` after review and CI, soft-deactivating accounts while preserving balances, ledger and orders. Required-operation-ID adjustment idempotency in PR #101 merged as `4ddd880` after review and green CI. These decisions must not be changed back to optional IDs during integration.
 
 ## Client guide exports
 
@@ -70,20 +70,20 @@ The English and Russian standalone HTML/PDF tutorials include rendered flow diag
 
 ## Requirement-to-evidence checklist
 
-| Requirement | Code and automated evidence | Release evidence still needed |
-| --- | --- | --- |
-| Saved regions survive new environments | Canonical region fixture and isolated seed; no geometry changes in this batch | Compare deployed region list with approved saved boundaries |
-| Only one driver accepts an order | Locked public/private acceptance, conditional assignment and competing-claim regressions | Two physical phones claiming at the same time |
-| One charge and one allowed refund | Charge ledger, funded-acceptance and terminal-race integration tests | Check visible balance and ledger in fresh APK against matching API |
-| Busy driver never offered second work | #94 HTTP/socket tests for ACCEPTED, WAITING, STARTED and delayed monitoring snapshot regression | Dispatcher map/roster while phone reconnects during trip |
-| Private 20-second expiry ON/OFF | #79 persisted deadline, queue/claim/inbox/socket tests | Locked-screen countdown and delivery latency on Infinix |
-| GPS and address fallback are separate | #85 readiness and #68 budget tests with external-provider fixture | Actual Android GPS permission/settings changes and live Yandex activation |
-| Live chat and reconnect | #87 composite cursors and retry identity tests | Wi-Fi/mobile loss and locked-screen chat delivery |
-| Started trip resolution is recorded | #80 reason-required completion and #90 lock-order race tests | Dispatcher resolves a real test trip, driver sees completion without another debit |
-| Compact order form and optional map | #103 desktop/mobile/landscape API-backed browser tests | Soft keyboard and real map SDK on target phone |
-| Honest daily measurements | #67 Ashgabat cohort, live waiting, missing samples, p90 and empty/failure checks | Compare dashboard with a small recorded test day |
-| No duplicate balance adjustment | Required operation ID finance follow-up | Final reviewed finance PR merge plus retry/old-tab checks |
-| Release binary matches service | Build and Android unit CI checks | Signed APK version/hash/API commit and successful physical install/update |
+| Requirement                            | Code and automated evidence                                                                                      | Release evidence still needed                                                      |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Saved regions survive new environments | Canonical region fixture and isolated seed; no geometry changes in this batch                                    | Compare deployed region list with approved saved boundaries                        |
+| Only one driver accepts an order       | Locked public/private acceptance, conditional assignment and competing-claim regressions                         | Two physical phones claiming at the same time                                      |
+| One charge and one allowed refund      | Charge ledger, funded-acceptance and terminal-race integration tests                                             | Check visible balance and ledger in fresh APK against matching API                 |
+| Busy driver never offered second work  | #94 HTTP/socket tests for ACCEPTED, WAITING, STARTED and delayed monitoring snapshot regression                  | Dispatcher map/roster while phone reconnects during trip                           |
+| Private 20-second expiry ON/OFF        | #79 persisted deadline, queue/claim/inbox/socket tests                                                           | Locked-screen countdown and delivery latency on Infinix                            |
+| GPS and address fallback are separate  | #85 readiness and #68 budget tests with external-provider fixture                                                | Actual Android GPS permission/settings changes and live Yandex activation          |
+| Live chat and reconnect                | #87 composite cursors and retry identity tests                                                                   | Wi-Fi/mobile loss and locked-screen chat delivery                                  |
+| Started trip resolution is recorded    | #80 reason-required completion, #90 lock-order races and #105 STARTED cancellation rejection                     | Dispatcher resolves a real test trip, driver sees completion without another debit |
+| Compact order form and optional map    | #103 desktop/mobile/landscape API-backed browser tests                                                           | Soft keyboard and real map SDK on target phone                                     |
+| Honest daily measurements              | #67 Ashgabat cohort, live waiting, missing samples, p90 and empty/failure checks                                 | Compare dashboard with a small recorded test day                                   |
+| No duplicate balance adjustment        | #101 merged `4ddd880`; required-ID HTTP tests cover concurrent/mismatched replay, rollback and uncertain retries | Fresh dashboard retry and old-tab refresh checks                                   |
+| Release binary matches service         | Build and Android unit CI checks                                                                                 | Signed APK version/hash/API commit and successful physical install/update          |
 
 ## Native endpoint contract
 
@@ -97,3 +97,11 @@ The isolated APK API is a direct backend, so its base URL is `https://apk-api-ap
 - Browser REST location persistence has no durable outbox for its Socket.IO publication. A saved update may not reach an already-open dispatcher screen if publication fails; roster reconciliation on reconnect, foreground return and its periodic read repairs that view. A durable publication/replay design remains an operational follow-up, not implemented proof; live recovery follow-ups remain tracked in [#25](https://github.com/bagtyyarkovusov/tayyn-hyzmat-project/issues/25).
 - Locked/background Android delivery requires the native foreground service. Browser timers, browser GPS and Socket.IO alone cannot meet that requirement. Target-phone permission, network loss, Doze, battery, locked-screen latency and shift-termination checks remain release gates.
 - Reverse address lookup is separate from GPS reporting and region matching. Its five-minute/150-metre gate, fleet cap and coordinates fallback do not slow location reporting or block trip controls.
+
+## Latest code integration
+
+PR #105 merged as `fd10bc86457fd9292565ad5a727aa2a9142e90de` after all three CI jobs passed. It removes dispatcher cancellation of STARTED trips in both UI and API, including stale-client requests. Driver cancellation remains WAITING-only, enforced by merged PR #97. A dispatcher can cancel NEW, ACCEPTED or WAITING, which refunds a recorded debit once. A STARTED trip can instead be completed manually with a required reason, preserving its charge and recording the dispatcher. Exceptional refunds are not part of ordinary cancellation.
+
+PR #103 enlarged the optional order map beside the form on wide screens and stacks it below on narrow screens. Required region, phone and TMT price, private eligibility and optional pickup/destination remain unchanged. API-backed browser evidence covers desktop, mobile and landscape; live vendor SDK behavior and phone keyboard checks remain separate.
+
+The final security audit found session and device-binding gaps tracked in #23 and #24. The focused authentication patch remains a release gate until its reviewed merge, checks and matching APK rebuild. Do not describe fd10bc8 as the final release SHA while that patch is pending.

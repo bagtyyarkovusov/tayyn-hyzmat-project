@@ -39,6 +39,8 @@ The dispatcher roster can search by driver name, phone, or plate and filter by r
 
 The dispatcher chooses a region, enters a valid customer phone, and enters a positive TMT price. Those are required. Pickup and destination points, map selection, address text, and notes are optional. The customer phone stays hidden from drivers until they accept. A driver calls the customer after acceptance to confirm practical pickup details.
 
+On wide screens, the form and a larger map appear side by side. On smaller screens, the map stays below the form. Choose pickup or destination, then place the corresponding point on the map. Clear a point if it is incorrect; a map point never replaces the required region. You can send an order without map points.
+
 The dispatcher can announce an order publicly or choose a private driver. A private driver can be selected from the map or roster. Selection does not move the order to the driver's region.
 
 ## Private offers and public claims
@@ -53,6 +55,10 @@ A public order starts in its original region for 20 seconds, then opens to all e
 
 A driver needs a positive synthetic balance to go online or receive public work. Orders above the balance remain visible, but acceptance is disabled with a clear explanation. Acceptance requires the full quoted amount and never creates a negative balance. An exact balance is sufficient. Reservations do not debit or hold funds. Completion does not charge again. Cancellation refunds the existing charge according to the order state.
 
+Every dispatcher balance adjustment has a unique operation identifier. If the response is uncertain, retry the same unchanged action; the app reuses its identifier instead of adding money twice. An old dashboard tab that asks you to refresh must reload before adjusting balances. Check the current balance and history before starting a different adjustment.
+
+Removing a driver deactivates access and preserves their balance, ledger and order history. A driver with an active trip cannot be removed. Resolve that trip first.
+
 ## Trip lifecycle
 
 The normal sequence is:
@@ -63,20 +69,24 @@ The normal sequence is:
 4. The driver starts the trip after the customer boards.
 5. The driver completes the trip.
 
-The approved rule is driver cancellation only while waiting for the customer. The current API also permits cancellation in `ACCEPTED`; that is a known gap and should not be treated as the intended rule. Once the trip has started, the driver cannot cancel. The current dispatcher API can still cancel a started order, which marks it cancelled and refunds the original charge. This is different from completing a trip, which keeps the charge. The approved product rule will reject that dispatcher action once implemented. Until the fix merges, the current refunding action remains a known gap; manual completion with a reason is the recovery path. After 15 minutes, a started trip shows a Needs completion warning. The dispatcher can force-complete a stuck started trip with a required reason. This keeps its assignment and original charge and records who resolved it. The resolution is recorded and does not silently auto-complete a trip. PR #80 (`e821397`) is merged and deployed with this behavior.
+The driver can cancel only while waiting for the customer, in `WAITING`. The driver cannot cancel in `ACCEPTED` or after the trip starts. The dispatcher can cancel `NEW`, `ACCEPTED` and `WAITING` orders, but cannot cancel a `STARTED` trip. The API enforces these rules, including requests from old screens.
+
+Cancellation means the trip did not take place. It closes the order and refunds its recorded acceptance charge once. Completion means the trip was provided. It keeps the original charge and does not debit again. Use the action that matches what happened, rather than cancelling to clear a stuck screen.
+
+After 15 minutes, a started trip shows a Needs completion warning. This warning does not complete the trip. Contact the driver first. If the completed drive is stuck in the app, the dispatcher can complete it manually with a required reason. The action keeps the same driver and charge, and records the dispatcher and reason. Exceptional refunds need a separate reviewed recovery process.
 
 If a driver loses network after acceptance, the trip remains assigned. New offers stop until the lease and GPS rules allow work again. A dispatcher sees the last location with its age; a stale point is not treated as live eligibility.
 
 ## Choosing a trip action
 
-The following is the approved dispatcher contract; STARTED cancellation protection is pending PR #105 until its merge is recorded.
+The following dispatcher contract is enforced in the release candidate. The driver has a different cancellation rule: cancellation is allowed only in `WAITING`.
 
-| Order state | Dispatcher action | What happens to the balance |
-| --- | --- | --- |
-| NEW | Cancel an unassigned order | No acceptance charge exists to refund |
-| ACCEPTED or WAITING | Cancel before the trip starts | Refund the original recorded charge once and free the driver |
-| STARTED | Complete manually after checking the trip | Keep the existing charge, record the reason and who completed it |
-| COMPLETED or CANCELLED | Review history | No repeated completion, cancellation or extra debit |
+| Order state            | Dispatcher action                         | What happens to the balance                                      |
+| ---------------------- | ----------------------------------------- | ---------------------------------------------------------------- |
+| NEW                    | Cancel an unassigned order                | No acceptance charge exists to refund                            |
+| ACCEPTED or WAITING    | Cancel before the trip starts             | Refund the original recorded charge once and free the driver     |
+| STARTED                | Complete manually after checking the trip | Keep the existing charge, record the reason and who completed it |
+| COMPLETED or CANCELLED | Review history                            | No repeated completion, cancellation or extra debit              |
 
 Manual completion confirms that the drive was provided. It is available for a started trip; the 15-minute warning only draws attention to an unfinished trip. Call the driver first. Enter a useful reason such as "Driver confirmed customer arrived; app connection failed." The reason and dispatcher identity remain in the record. Completion counts as completed work and does not refund the order price. Exceptional refunds need a separate reviewed recovery process.
 
