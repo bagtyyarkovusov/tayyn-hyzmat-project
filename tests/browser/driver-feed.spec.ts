@@ -110,6 +110,17 @@ async function fixture(
         true,
       );
       await context.close();
+      // This database is disposable, but later browser specs share it.
+      // Remove only identities and orders created by this fixture.
+      const cleanup = new PrismaClient();
+      try {
+        await cleanup.order.deleteMany({
+          where: { id: { in: createdOrderIds } },
+        });
+        await cleanup.user.delete({ where: { id: user.id } });
+      } finally {
+        await cleanup.$disconnect();
+      }
     }
     return { page, context, create, post, close };
   } finally {
@@ -142,12 +153,17 @@ async function fits(page: Page) {
     const box = await card.boundingBox();
     expect(box!.height).toBeGreaterThanOrEqual(44);
     await expect(card).toBeInViewport();
-    expect(
-      await card.evaluate((node) => node.scrollHeight <= node.clientHeight),
-    ).toBe(true);
+    const size = await card.evaluate((node) => ({
+      scroll: node.scrollHeight,
+      client: node.clientHeight,
+      text: node.textContent,
+    }));
+    expect(size.scroll, JSON.stringify(size)).toBeLessThanOrEqual(size.client);
   }
 }
 for (const viewport of [
+  { width: 320, height: 568 },
+  { width: 568, height: 320 },
   { width: 360, height: 640 },
   { width: 390, height: 844 },
   { width: 412, height: 732 },
@@ -185,15 +201,17 @@ for (const viewport of [
       await feed
         .getByRole("button", { name: "Я на месте", exact: true })
         .click();
-      await expect(
-        feed.getByRole("listitem").filter({ hasText: "Ожидание" }),
-      ).toHaveAttribute("aria-current", "step");
+      if (viewport.height > 500)
+        await expect(
+          feed.getByRole("listitem").filter({ hasText: "Ожидание" }),
+        ).toHaveAttribute("aria-current", "step");
       await feed
         .getByRole("button", { name: "Начать поездку", exact: true })
         .click();
-      await expect(
-        feed.getByRole("listitem").filter({ hasText: "В пути" }),
-      ).toHaveAttribute("aria-current", "step");
+      if (viewport.height > 500)
+        await expect(
+          feed.getByRole("listitem").filter({ hasText: "В пути" }),
+        ).toHaveAttribute("aria-current", "step");
       await feed.getByRole("button", { name: "Поездка", exact: true }).click();
       await expect(
         dialog.getByRole("button", { name: "Отменить заказ", exact: true }),

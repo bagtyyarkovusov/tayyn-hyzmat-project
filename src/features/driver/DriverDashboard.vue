@@ -562,9 +562,11 @@ watch(
 }
 .region-grid-with-trip .region-score {
   font-size: 1.125rem;
+  line-height: 1;
 }
 .region-grid-with-trip .region-name {
   font-size: 0.75rem;
+  line-height: 1.1;
 }
 @media (max-height: 650px) {
   .driver-home {
@@ -572,6 +574,12 @@ watch(
   }
   .region-name {
     font-size: 12px;
+  }
+  .region-grid-with-trip .region-name {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
   }
 }
 @media (orientation: landscape) and (max-height: 500px) {
@@ -590,6 +598,13 @@ watch(
   }
   .region-score {
     font-size: 18px;
+  }
+  .region-grid-with-trip .region-name {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
   .region-grid {
     grid-template-columns: repeat(5, minmax(0, 1fr));
