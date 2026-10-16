@@ -1711,3 +1711,120 @@ test("driver feedback shows blockers until recovery and action errors without an
   ).toHaveAttribute("aria-pressed", "true");
   await expect(toast).toHaveCount(0);
 });
+
+test("driver labels feel native while the chat composer remains editable", async ({
+  page,
+}) => {
+  await login(page, "driver");
+  const region = page
+    .getByRole("group", { name: "Регионы", exact: true })
+    .getByRole("button")
+    .first();
+  await expect(region).toHaveCSS("user-select", "none");
+  await page.goto("/driverChat");
+  const composer = page.getByRole("textbox");
+  await composer.fill("Исправить сообщение");
+  await expect(composer).toHaveCSS("user-select", "text");
+  await composer.selectText();
+  await page.keyboard.type("Новое сообщение");
+  await expect(composer).toHaveValue("Новое сообщение");
+  await page.goto("/adminLogin");
+  await expect(page.locator("html")).not.toHaveClass(/driver-app/);
+});
+
+test("GPS outside every saved region keeps its actual coordinates and ignores a stale Yandex address", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    // Only the external geocoder boundary is simulated. GPS reports and
+    // dispatch-region matching still use the real API and disposable database.
+    const pending: Array<(value: unknown) => void> = [];
+    (window as any).addressReplies = pending;
+    (window as any).ymaps = {
+      ready: (callback: () => void) => callback(),
+      geocode: () => new Promise((resolve) => pending.push(resolve)),
+    };
+  });
+  await login(page, "driver");
+  await startGps(page);
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "ТЕСТ — Центральный",
+  );
+  await expect
+    .poll(() => page.evaluate(() => (window as any).addressReplies.length))
+    .toBe(1);
+  await page.evaluate(() =>
+    (window as any).addressReplies.shift()({
+      geoObjects: {
+        get: () => ({
+          getThoroughfare: () => "Гёроглы",
+          getPremiseNumber: () => "10",
+          getAddressLine: () => "Ашхабад, Гёроглы, 10",
+        }),
+      },
+    }),
+  );
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "Гёроглы, 10",
+  );
+  // A reload starts a fresh lookup; a late answer must not overwrite a newer GPS fix.
+  await page.reload();
+  await startGps(page);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).addressReplies.length))
+    .toBe(1);
+  await page
+    .context()
+    .setGeolocation({ latitude: 30.2328, longitude: 120.0398, accuracy: 10 });
+  const location = page.getByLabel("Местоположение GPS");
+  await expect(location).toContainText("30.2328, 120.0398");
+  await page.evaluate(() =>
+    (window as any).addressReplies.shift()({
+      geoObjects: {
+        get: () => ({
+          getThoroughfare: () => "Устаревший адрес",
+          getPremiseNumber: () => "1",
+        }),
+      },
+    }),
+  );
+  await expect(location).not.toContainText("Устаревший адрес");
+  await expect(location).toContainText("30.2328, 120.0398");
+  await page.waitForTimeout(10_100); // Production GPS report rate limit.
+  const report = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/driver/location") &&
+      response.request().method() === "POST",
+  );
+  await page
+    .context()
+    .setGeolocation({ latitude: 30.2329, longitude: 120.0399, accuracy: 10 });
+  expect((await report).ok()).toBe(true);
+  await expect(location).toContainText("Вне районов");
+  await expect(location).toContainText("30.2329, 120.0399");
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeEnabled();
+});
+
+test("a rejected Yandex lookup leaves GPS readiness and actual coordinates usable", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as any).ymaps = {
+      ready: (callback: () => void) => callback(),
+      geocode: () => Promise.reject(new Error("Invalid api key")),
+    };
+  });
+  await login(page, "driver");
+  await startGps(page);
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "37.9600, 58.3200",
+  );
+  await expect(
+    page.getByRole("button", { name: "Включить GPS", exact: true }),
+  ).toHaveAttribute("data-state", "ready");
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeEnabled();
+});

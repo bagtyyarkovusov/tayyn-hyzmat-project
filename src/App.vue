@@ -63,6 +63,13 @@ const auth = computed(() =>
   ["/adminLogin", "/driverLogin", "/driverRegister"].includes(route.path),
 );
 const driver = computed(() => route.path.startsWith("/driver"));
+// Include portalled dialogs and login screens while leaving dispatcher text selectable.
+watch(
+  driver,
+  (active) => document.documentElement.classList.toggle("driver-app", active),
+  { immediate: true },
+);
+onUnmounted(() => document.documentElement.classList.remove("driver-app"));
 const session = computed(() => (driver.value ? driverSession : adminSession));
 const adminNav = [
   { to: "/adminDashboard", label: "Обзор", icon: LayoutDashboard },
