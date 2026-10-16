@@ -2885,6 +2885,13 @@ test("driver cancellation is visible only while waiting for the passenger", asyn
     await expect(
       trip.getByRole("button", { name: "Завершить поездку", exact: true }),
     ).toBeEnabled();
+    await trip
+      .getByRole("button", { name: "Завершить поездку", exact: true })
+      .click();
+    await expect(trip).toBeHidden();
+    await driver
+      .getByRole("button", { name: "Уйти с линии", exact: true })
+      .click();
   } finally {
     await adminContext.close();
     await driverContext.close();
