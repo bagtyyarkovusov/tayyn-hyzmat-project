@@ -31,6 +31,7 @@ const createOrderSchema = z.object({
     .regex(/^\+?[0-9][0-9\s-]*$/, 'Телефон может содержать цифры, пробелы, дефисы и начальный +')
     .refine(phone => { const digits = phone.replace(/\D/g, ''); return digits.length >= 6 && digits.length <= 15; }, 'Телефон должен содержать от 6 до 15 цифр'),
   districtId: z.string().uuid('Выберите район'),
+  privateOfferDriverId: z.string().uuid().optional(),
   note: z.string().trim().max(500).optional()
   });
 
@@ -43,4 +44,8 @@ const listAvailableQuerySchema = z.object({
   districtId: z.string().uuid('Некорректный идентификатор района').optional()
 });
 
-module.exports = { orderIdSchema, acceptSchema, cancelSchema, createOrderSchema, listAvailableQuerySchema };
+const privateOfferSchema = z.object({ driverId: z.string().uuid() });
+
+const privateAcceptSchema = acceptSchema.extend({ privateOfferExpiresAt: z.string().datetime() });
+
+module.exports = { privateAcceptSchema, privateOfferSchema, orderIdSchema, acceptSchema, cancelSchema, createOrderSchema, listAvailableQuerySchema };

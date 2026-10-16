@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { X } from "lucide-vue-next";
+import { Button } from "@/shared/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/shared/ui/dialog";
+import MapDriverOffer from "./components/MapDriverOffer.vue";
+import { canOfferToDriver } from "./private-offers";
 import DriverMapInfo from "./components/DriverMapInfo.vue";
 import { RouterLink } from "vue-router";
 import { adminApi, errorMessage } from "@/shared/api";
@@ -17,7 +27,15 @@ const { data, loading, error, load } = useResource(
       })
     ).data.items,
   [],
-  ["driver:status", "order:accepted", "order:completed", "order:cancelled"],
+  [
+    "driver:status",
+    "order:accepted",
+    "order:completed",
+    "order:cancelled",
+    "order:private-offer",
+    "order:updated",
+    "order:private-offer-ended",
+  ],
 );
 const mapElement = ref<HTMLElement>(),
   mapError = ref("");
@@ -26,6 +44,7 @@ let map: any,
   disposed = false;
 const markers = new Map<string, any>();
 const selected = ref("");
+const offerDriver = ref<Driver | null>(null);
 const hovered = ref("");
 const now = ref(Date.now());
 const selectedDriver = computed(() =>
@@ -182,6 +201,18 @@ function focus(d: Driver) {
           <div class="pr-5">
             <DriverMapInfo :driver="selectedDriver" :now="now" />
           </div>
+          <Button
+            class="mt-3 w-full"
+            :disabled="!canOfferToDriver(selectedDriver, now)"
+            @click="offerDriver = selectedDriver"
+            >Предложить заказ</Button
+          >
+          <p
+            v-if="!canOfferToDriver(selectedDriver, now)"
+            class="mt-2 text-xs text-muted-foreground"
+          >
+            Нужен свободный водитель на линии со свежим GPS.
+          </p>
           <RouterLink
             :to="`/adminDrivers/${selectedDriver.id}`"
             class="mt-3 inline-block text-sm text-primary underline underline-offset-4"
@@ -224,5 +255,22 @@ function focus(d: Driver) {
         </article>
       </div>
     </div>
+    <Dialog :open="!!offerDriver" @update:open="!$event && (offerDriver = null)"
+      ><DialogContent class="max-h-[90dvh] overflow-y-auto sm:max-w-2xl"
+        ><DialogHeader
+          ><DialogTitle
+            >Предложить заказ: {{ offerDriver?.user.fullName }}</DialogTitle
+          ><DialogDescription
+            >Личное предложение на 20 секунд. Район заказа останется
+            прежним.</DialogDescription
+          ></DialogHeader
+        ><MapDriverOffer
+          v-if="offerDriver"
+          :driver-id="offerDriver.id"
+          @offered="
+            offerDriver = null;
+            load();
+          " /></DialogContent
+    ></Dialog>
   </div>
 </template>

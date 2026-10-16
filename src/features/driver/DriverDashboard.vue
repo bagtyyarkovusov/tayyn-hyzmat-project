@@ -28,7 +28,18 @@ import { money, statusLabels } from "./model";
 import IncomingOrder from "./components/IncomingOrder.vue";
 import ActiveTrip from "./components/ActiveTrip.vue";
 import AvailableOrders from "./components/AvailableOrders.vue";
-const { state, setOnline, enableGps, session, dismissIncoming } = useDriver();
+const {
+  state,
+  setOnline,
+  enableGps,
+  session,
+  dismissIncoming,
+  declinePrivateOffer,
+} = useDriver();
+function closeIncoming() {
+  if (state.incoming?.privateOfferExpiresAt) void declinePrivateOffer();
+  else dismissIncoming();
+}
 const selected = ref<string | null>(null);
 const visibility = useDocumentVisibility();
 const networkOnline = useOnline();
@@ -127,6 +138,12 @@ const message = computed(
     (state.balance && Number(state.balance.amount) <= 0
       ? "Для выхода на линию пополните баланс у диспетчера."
       : ""),
+);
+watch(
+  () => state.incoming?.privateOfferExpiresAt,
+  (expiry) => {
+    if (expiry) selected.value = null;
+  },
 );
 const incomingOpen = computed(
   () => !!state.incoming && !state.active && !selected.value,
@@ -430,7 +447,7 @@ watch(
         </p>
       </DialogContent></Dialog
     >
-    <Dialog :open="incomingOpen" @update:open="!$event && dismissIncoming()"
+    <Dialog :open="incomingOpen" @update:open="!$event && closeIncoming()"
       ><DialogContent class="max-h-[85dvh] overflow-y-auto"
         ><DialogHeader class="sr-only"
           ><DialogTitle>Предложение заказа</DialogTitle

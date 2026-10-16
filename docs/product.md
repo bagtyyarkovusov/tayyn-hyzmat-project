@@ -20,6 +20,8 @@ The driver home shows every region in a fixed viewport grid. Each card shows onl
 
 Driver and dispatcher chat keep the app header, composer and navigation inside the visible viewport. Message history scrolls independently. Enter sends, Shift+Enter adds a line, and text composition never submits a message. Empty or pending messages cannot be submitted; a failed send preserves its draft. Incoming messages follow the bottom only while the reader is already near it. Theme selection uses an icon dropdown with persisted system, light and dark preferences.
 
+Private offers follow the [private-offer flow](private-offers.md): an eligible driver in any region explicitly confirms within a persisted 20-second deadline. Decline or expiry releases the order to its original regional public queue. Reservations alone do not charge balances or expose customer phones.
+
 ## Unresolved questions
 
 - Which offer strategy and driver eligibility rules should be used, and what should happen when pickup or fresh driver GPS is unavailable?
