@@ -40,11 +40,14 @@ const messageSchema = z
     driverId: z.string().uuid().optional(),
     broadcast: z.boolean().optional().default(false),
     title: z.string().trim().max(120).optional(),
-    body: z.string().trim().min(1, 'Сообщение не может быть пустым').max(2000)
+    body: z.string().trim().min(1, 'Сообщение не может быть пустым').max(2000),
+    clientMessageId: z.string().uuid().optional()
   })
   .refine((data) => data.broadcast || data.driverId, {
     message: 'Укажите driverId или broadcast: true'
   });
+
+const readMessageSchema = z.object({ throughMessageId: z.string().uuid().optional() });
 
 const listOrdersQuerySchema = z.object({
   status: z.enum(['active', 'accepted', 'completed', 'cancelled', 'all']).default('all'),
@@ -92,6 +95,7 @@ module.exports = {
   balanceAdjustSchema,
   historyQuerySchema,
   messageSchema,
+  readMessageSchema,
   listOrdersQuerySchema,
   activityQuerySchema,
   vehicleSchema,

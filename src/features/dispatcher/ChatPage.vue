@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { formatPhone } from "@/shared/phone";
-import { onUnmounted, ref, watch } from "vue";
+import { nextTick, onUnmounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import { ArrowLeft } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
@@ -54,13 +54,51 @@ const {
   [],
   ["driver:message"],
 );
+const olderLoading = ref(false);
+type Thread = { messages: Message[]; total: number; driver: Driver };
+let retryMessage: { body: string; target: string; id: string } | undefined;
+async function loadOlder() {
+  if (
+    !thread.value ||
+    olderLoading.value ||
+    thread.value.messages.length >= thread.value.total
+  )
+    return;
+  olderLoading.value = true;
+  const driverId = thread.value.driver.id;
+  const previousHeight = history.value?.scrollHeight ?? 0;
+  try {
+    const page = Math.floor(thread.value.messages.length / 100) + 1;
+    const { data } = await adminApi.get<Page<Message>>(
+      `/admin/drivers/${driverId}/messages`,
+      { params: { page, limit: 100 } },
+    );
+    if (!alive || props.driverId !== driverId || !thread.value) return;
+    const merged = [...data.items, ...thread.value.messages];
+    thread.value = {
+      ...thread.value,
+      messages: [
+        ...new Map(merged.map((message) => [message.id, message])).values(),
+      ],
+      total: data.total,
+    };
+    await nextTick();
+    if (history.value)
+      history.value.scrollTop += history.value.scrollHeight - previousHeight;
+  } catch (error) {
+    if (alive && props.driverId === driverId)
+      sendError.value = errorMessage(error);
+  } finally {
+    olderLoading.value = false;
+  }
+}
 const {
   data: thread,
   loading: threadLoading,
   error: threadError,
   load: loadThread,
-} = useResource(
-  async () => {
+} = useResource<Thread | null>(
+  async (): Promise<Thread | null> => {
     const driverId = props.driverId;
     if (!driverId) return null;
     const [messages, driver] = await Promise.all([
@@ -69,6 +107,23 @@ const {
       }),
       adminApi.get<Driver>(`/admin/drivers/${driverId}`),
     ]);
+    const anchor =
+      thread.value?.driver.id === driverId
+        ? thread.value.messages.at(-1)?.id
+        : undefined;
+    let fetchedPage = 1;
+    while (
+      anchor &&
+      !messages.data.items.some((message) => message.id === anchor) &&
+      fetchedPage * 100 < messages.data.total
+    ) {
+      const more = await adminApi.get<Page<Message>>(
+        `/admin/drivers/${driverId}/messages`,
+        { params: { page: ++fetchedPage, limit: 100 } },
+      );
+      if (!alive || props.driverId !== driverId) return null;
+      messages.data.items.unshift(...more.data.items);
+    }
     try {
       if (props.driverId !== driverId)
         return {
@@ -76,13 +131,30 @@ const {
           total: messages.data.total,
           driver: driver.data,
         };
-      await adminApi.post(`/admin/drivers/${driverId}/messages/read`);
-      unread.value = unread.value.filter((id) => id !== driverId);
+      if (!document.hidden) {
+        const lastIncoming = [...messages.data.items]
+          .reverse()
+          .find((message) => message.senderId === driver.data.userId);
+        if (lastIncoming)
+          await adminApi.post(`/admin/drivers/${driverId}/messages/read`, {
+            throughMessageId: lastIncoming.id,
+          });
+        unread.value = unread.value.filter((id) => id !== driverId);
+      }
     } catch {
       /* Keep unread state if marking read fails. */
     }
+    const existing =
+      thread.value?.driver.id === driverId ? thread.value.messages : [];
     return {
-      messages: messages.data.items,
+      messages: [
+        ...new Map(
+          [...existing, ...messages.data.items].map((message) => [
+            message.id,
+            message,
+          ]),
+        ).values(),
+      ].sort((a, b) => Date.parse(a.sentAt) - Date.parse(b.sentAt)),
       total: messages.data.total,
       driver: driver.data,
     };
@@ -108,6 +180,9 @@ async function send(all = false) {
   const text = (all ? broadcastBody.value : body.value).trim();
   if (!text || pending.value) return;
   const targetDriver = props.driverId;
+  const target = all ? "broadcast" : (targetDriver ?? "");
+  if (retryMessage?.body !== text || retryMessage.target !== target)
+    retryMessage = { body: text, target, id: crypto.randomUUID() };
   pending.value = true;
   sendError.value = "";
   sent.value = false;
@@ -115,10 +190,15 @@ async function send(all = false) {
     await adminApi.post(
       "/admin/messages",
       all
-        ? { broadcast: true, body: text }
-        : { driverId: targetDriver, body: text },
+        ? { broadcast: true, body: text, clientMessageId: retryMessage.id }
+        : {
+            driverId: targetDriver,
+            body: text,
+            clientMessageId: retryMessage.id,
+          },
     );
     if (!alive || (!all && targetDriver !== props.driverId)) return;
+    retryMessage = undefined;
     if (all) {
       broadcastBody.value = "";
       broadcast.value = false;
@@ -238,10 +318,19 @@ async function send(all = false) {
             Начните разговор с водителем.
           </p>
           <p
-            v-if="thread && thread.total > 100"
+            v-if="thread && thread.total > thread.messages.length"
             class="text-center text-xs text-muted-foreground"
           >
-            Последние 100 сообщений
+            <Button
+              variant="ghost"
+              size="sm"
+              :disabled="olderLoading"
+              @click="loadOlder"
+            >
+              {{
+                olderLoading ? "Загрузка…" : "Загрузить более ранние сообщения"
+              }}
+            </Button>
           </p>
           <div
             v-for="message in thread?.messages"

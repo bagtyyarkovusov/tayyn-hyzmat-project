@@ -18,13 +18,16 @@ const districtSchema = z.object({
 });
 
 const sendMessageSchema = z.object({
-  body: z.string().trim().min(1, 'Сообщение не может быть пустым').max(2000)
+  body: z.string().trim().min(1, 'Сообщение не может быть пустым').max(2000),
+  clientMessageId: z.string().uuid().optional()
 });
 
 const messagesQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(200).default(50)
 });
+
+const readMessageSchema = z.object({ throughMessageId: z.string().uuid().optional() });
 
 const pushTokenSchema = z.object({
   token: z.string().trim().min(10, 'Некорректный push-токен')
@@ -36,5 +39,6 @@ module.exports = {
   districtSchema,
   sendMessageSchema,
   messagesQuerySchema,
-  pushTokenSchema
+  pushTokenSchema,
+  readMessageSchema
 };

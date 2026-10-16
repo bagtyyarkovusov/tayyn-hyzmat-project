@@ -424,8 +424,10 @@ model Message {
   isBroadcast Boolean   @default(false) @map("is_broadcast")
   sentAt      DateTime  @default(now()) @map("sent_at")
   readAt      DateTime? @map("read_at")
+  clientMessageId String? @map("client_message_id")
 
   @@index([receiverId])
+  @@unique([senderId, clientMessageId])
   @@map("messages")
 }
 

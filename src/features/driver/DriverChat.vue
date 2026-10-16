@@ -34,6 +34,7 @@ const messages = ref<Message[]>([]),
 const loadFailed = ref(false);
 let alive = true;
 let refreshQueued = false;
+let retryMessage: { body: string; id: string } | undefined;
 async function load(older = false) {
   if (loading.value) {
     if (!older) refreshQueued = true;
@@ -70,8 +71,16 @@ async function load(older = false) {
     messages.value = [...new Map(combined.map((m) => [m.id, m])).values()].sort(
       (a, b) => Date.parse(a.sentAt) - Date.parse(b.sentAt),
     );
-    await driverApi.post("/driver/messages/read");
-    closeChatAlerts();
+    if (!document.hidden) {
+      const lastIncoming = [...messages.value]
+        .reverse()
+        .find((message) => message.senderId !== state.profile?.userId);
+      if (lastIncoming)
+        await driverApi.post("/driver/messages/read", {
+          throughMessageId: lastIncoming.id,
+        });
+      closeChatAlerts();
+    }
     if (older) {
       await nextTick();
       if (history.value)
@@ -93,16 +102,20 @@ async function load(older = false) {
 async function send() {
   const body = draft.value.trim();
   if (!body || sending.value) return;
+  if (retryMessage?.body !== body)
+    retryMessage = { body, id: crypto.randomUUID() };
   sending.value = true;
   error.value = "";
   try {
     const { data } = await driverApi.post<Message>("/driver/messages", {
       body,
+      clientMessageId: retryMessage.id,
     });
     if (!alive) return;
     if (!messages.value.some((m) => m.id === data.id))
       messages.value.push(data);
     draft.value = "";
+    retryMessage = undefined;
     await updated(true);
   } catch (e) {
     if (alive) error.value = errorMessage(e);

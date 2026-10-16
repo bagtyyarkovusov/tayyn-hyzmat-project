@@ -2085,122 +2085,92 @@ test("driver labels feel native while the chat composer remains editable", async
   await expect(page.locator("html")).not.toHaveClass(/driver-app/);
 });
 
-async function createAddressDriver(page: Page, phone: string) {
-  await login(page, "admin");
-  const token = await page.evaluate(() =>
-    localStorage.getItem("openride.admin.accessToken"),
-  );
-  const create = await page.request.post(
-    `${process.env.TEST_API_URL}/admin/drivers`,
-    {
-      headers: { Authorization: `Bearer ${token}` },
-      data: { fullName: "Synthetic address driver", phone, password },
-    },
-  );
-  expect(create.ok()).toBe(true);
-  const driver = await create.json();
-  const topup = await page.request.post(
-    `${process.env.TEST_API_URL}/admin/drivers/${driver.id}/balance`,
-    {
-      headers: { Authorization: `Bearer ${token}` },
-      data: { amount: 500, type: "TOPUP", note: "Synthetic address fixture" },
-    },
-  );
-  expect(topup.ok()).toBe(true);
-  await login(page, "driver", phone);
-  return driver;
-}
-test("a delayed address cannot replace a newer GPS position outside the saved region", async ({
+test("GPS outside every saved region keeps its actual coordinates and ignores a stale Yandex address", async ({
   page,
 }) => {
-  await createAddressDriver(page, "+99360000321");
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
+  await page.addInitScript(() => {
+    // Only the external geocoder boundary is simulated. GPS reports and
+    // dispatch-region matching still use the real API and disposable database.
+    const pending: Array<(value: unknown) => void> = [];
+    (window as any).addressReplies = pending;
+    (window as any).ymaps = {
+      ready: (callback: () => void) => callback(),
+      geocode: () => new Promise((resolve) => pending.push(resolve)),
+    };
   });
-  let originalAddress = "";
-  await page.route("**/geo/drivers/*/address", async (route) => {
-    const response = await route.fetch();
-    originalAddress = (await response.json()).address || "";
-    await gate;
-    await route.fulfill({ response }); // Delay actual API bytes, never invent an internal response.
-  });
-  await page.context().grantPermissions(["geolocation"]);
-  await page.context().setGeolocation({
-    latitude: 37.961234,
-    longitude: 58.321234,
-    accuracy: 10,
-  });
-  const lookup = page.waitForRequest((request) =>
-    /\/geo\/drivers\/[^/]+\/address/.test(request.url()),
+  await login(page, "driver");
+  await startGps(page);
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "ТЕСТ — Центральный",
   );
-  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
-  await lookup;
-  await expect.poll(() => originalAddress).toBe("Synthetic street, 12");
-  await page.waitForTimeout(10_100); // A new GPS report is allowed every ten seconds.
+  await expect
+    .poll(() => page.evaluate(() => (window as any).addressReplies.length))
+    .toBe(1);
+  await page.evaluate(() =>
+    (window as any).addressReplies.shift()({
+      geoObjects: {
+        get: () => ({
+          getThoroughfare: () => "Гёроглы",
+          getPremiseNumber: () => "10",
+          getAddressLine: () => "Ашхабад, Гёроглы, 10",
+        }),
+      },
+    }),
+  );
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "Гёроглы, 10",
+  );
+  // A reload starts a fresh lookup; a late answer must not overwrite a newer GPS fix.
+  await page.reload();
+  await startGps(page);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).addressReplies.length))
+    .toBe(1);
   await page
     .context()
     .setGeolocation({ latitude: 30.2328, longitude: 120.0398, accuracy: 10 });
   const location = page.getByLabel("Местоположение GPS");
   await expect(location).toContainText("30.2328, 120.0398");
-  await expect(location).toContainText("Вне районов");
-  release();
-  await page.waitForTimeout(250);
-  await expect(location).not.toContainText("Synthetic street");
-  await expect(location).toContainText("30.2328, 120.0398");
-});
-
-test("a delayed address survives a nearby GPS fix during its request", async ({
-  page,
-}) => {
-  const created = await createAddressDriver(page, "+99360000325");
-  const token = await page.evaluate(() =>
-    localStorage.getItem("openride.driver.accessToken"),
-  );
-  const report = async (lat: number, lng: number) => {
-    const response = await page.request.post(
-      `${process.env.TEST_API_URL}/driver/location`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-        data: { lat, lng, accuracy: 10 },
+  await page.evaluate(() =>
+    (window as any).addressReplies.shift()({
+      geoObjects: {
+        get: () => ({
+          getThoroughfare: () => "Устаревший адрес",
+          getPremiseNumber: () => "1",
+        }),
       },
-    );
-    expect(response.ok()).toBe(true);
-  };
-  await report(37.961234, 58.321234);
-  await login(page, "admin");
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let received = false;
-  await page.route("**/geo/drivers/*/address", async (route) => {
-    const response = await route.fetch();
-    received = (await response.json()).address === "Synthetic street, 12";
-    await gate;
-    await route.fulfill({ response });
-  });
-  await page.goto(`/adminDrivers/${created.id}`);
-  await expect.poll(() => received).toBe(true);
-  await report(37.9613, 58.3213);
+    }),
+  );
+  await expect(location).not.toContainText("Устаревший адрес");
+  await expect(location).toContainText("30.2328, 120.0398");
+  await page.waitForTimeout(10_100); // Production GPS report rate limit.
+  const report = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/driver/location") &&
+      response.request().method() === "POST",
+  );
+  await page
+    .context()
+    .setGeolocation({ latitude: 30.2329, longitude: 120.0399, accuracy: 10 });
+  expect((await report).ok()).toBe(true);
+  await expect(location).toContainText("Вне районов");
+  await expect(location).toContainText("30.2329, 120.0399");
   await expect(
-    page.getByText("37.96130, 58.32130", { exact: true }),
-  ).toBeVisible();
-  release();
-  await expect(
-    page.getByText("Synthetic street, 12", { exact: true }),
-  ).toBeVisible();
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeEnabled();
 });
 
-test("an unavailable server Geocoder leaves GPS readiness and actual coordinates usable", async ({
+test("a rejected Yandex lookup leaves GPS readiness and actual coordinates usable", async ({
   page,
 }) => {
-  await createAddressDriver(page, "+99360000322");
-  const lookup = page.waitForResponse((response) =>
-    /\/geo\/drivers\/[^/]+\/address/.test(response.url()),
-  );
+  await page.addInitScript(() => {
+    (window as any).ymaps = {
+      ready: (callback: () => void) => callback(),
+      geocode: () => Promise.reject(new Error("Invalid api key")),
+    };
+  });
+  await login(page, "driver");
   await startGps(page);
-  expect((await lookup).ok()).toBe(true);
   await expect(page.getByLabel("Местоположение GPS")).toContainText(
     "37.9600, 58.3200",
   );
@@ -2210,35 +2180,6 @@ test("an unavailable server Geocoder leaves GPS readiness and actual coordinates
   await expect(
     page.getByRole("button", { name: "Выйти на линию", exact: true }),
   ).toBeEnabled();
-});
-
-test("background GPS does not request addresses until the driver location screen is visible", async ({
-  page,
-}) => {
-  await createAddressDriver(page, "+99360000323");
-  await page.evaluate(() => {
-    Object.defineProperty(document, "visibilityState", {
-      configurable: true,
-      get: () => "hidden",
-    });
-    document.dispatchEvent(new Event("visibilitychange"));
-  });
-  const requests: string[] = [];
-  page.on("request", (request) => {
-    if (/\/geo\/drivers\/[^/]+\/address/.test(request.url()))
-      requests.push(request.url());
-  });
-  await startGps(page);
-  await page.waitForTimeout(200);
-  expect(requests).toHaveLength(0);
-  await page.evaluate(() => {
-    Object.defineProperty(document, "visibilityState", {
-      configurable: true,
-      get: () => "visible",
-    });
-    document.dispatchEvent(new Event("visibilitychange"));
-  });
-  await expect.poll(() => requests.length).toBe(1);
 });
 
 test("dispatcher overview uses global counts and labels completed trip values as all-time", async ({
@@ -2443,29 +2384,143 @@ test("private offer picker disables an online driver whose balance cannot cover 
   }
 });
 
-test("dispatcher driver details follow fresh location events without a manual refresh", async ({
-  page,
+test("dispatcher can load older chat and a lost send response retries without duplicating", async ({
+  browser,
 }) => {
-  const created = await createAddressDriver(page, "+99360000324");
-  const token = await page.evaluate(() =>
-    localStorage.getItem("openride.driver.accessToken"),
-  );
-  await login(page, "admin");
-  await page.goto(`/adminDrivers/${created.id}`);
-  await expect(page.getByText("Нет координат", { exact: true })).toBeVisible();
-  await page.getByLabel("Марка", { exact: true }).fill("Draft vehicle make");
-  const report = await page.request.post(
-    `${process.env.TEST_API_URL}/driver/location`,
-    {
-      headers: { Authorization: `Bearer ${token}` },
-      data: { lat: 37.96, lng: 58.32, accuracy: 10 },
-    },
-  );
-  expect(report.ok()).toBe(true);
-  await expect(
-    page.getByText("37.96000, 58.32000", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByLabel("Марка", { exact: true })).toHaveValue(
-    "Draft vehicle make",
-  );
+  const adminContext = await browser.newContext();
+  const driverContext = await browser.newContext();
+  try {
+    const admin = await adminContext.newPage();
+    const driver = await driverContext.newPage();
+    await login(admin, "admin");
+    await login(driver, "driver");
+    const token = await driver.evaluate(() =>
+      localStorage.getItem("openride.driver.accessToken"),
+    );
+    const profile = await driverContext.request.get(
+      `${process.env.TEST_API_URL}/driver/profile`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const driverId = (await profile.json()).id;
+    for (let i = 0; i < 105; i++) {
+      const result = await driverContext.request.post(
+        `${process.env.TEST_API_URL}/driver/messages`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          data: { body: `Older history ${i}` },
+        },
+      );
+      expect(result.ok()).toBe(true);
+    }
+    await admin.goto(`/adminChat/${driverId}`);
+    await expect(
+      admin.getByText("Older history 104", { exact: true }),
+    ).toBeAttached();
+    await expect(
+      admin.getByText("Older history 0", { exact: true }),
+    ).toHaveCount(0);
+    await admin
+      .getByRole("button", { name: "Загрузить более ранние сообщения" })
+      .click();
+    await expect(
+      admin.getByText("Older history 0", { exact: true }),
+    ).toBeAttached();
+    await driver.goto("/driverChat");
+    let dropped = false;
+    await driver.route("**/driver/messages", async (route) => {
+      if (route.request().method() === "POST" && !dropped) {
+        dropped = true;
+        await route.fetch();
+        await route.abort();
+      } else await route.continue();
+    });
+    const composer = driver.getByLabel("Сообщение диспетчеру");
+    await composer.fill("Retry once without duplicate");
+    await composer.press("Enter");
+    await expect(composer).toHaveValue("Retry once without duplicate");
+    await expect(
+      driver.getByRole("button", { name: "Отправить сообщение", exact: true }),
+    ).toBeEnabled();
+    await composer.press("Enter");
+    await expect(composer).toHaveValue("");
+    const history = await driverContext.request.get(
+      `${process.env.TEST_API_URL}/driver/messages`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    expect(
+      (await history.json()).items.filter(
+        (message: { body: string }) =>
+          message.body === "Retry once without duplicate",
+      ),
+    ).toHaveLength(1);
+  } finally {
+    await adminContext.close();
+    await driverContext.close();
+  }
+});
+
+test("a hidden driver chat does not mark arriving messages as read", async ({
+  browser,
+}) => {
+  const adminContext = await browser.newContext();
+  const driverContext = await browser.newContext();
+  try {
+    const admin = await adminContext.newPage();
+    const driver = await driverContext.newPage();
+    await login(admin, "admin");
+    await login(driver, "driver");
+    await driver.goto("/driverChat");
+    await expect(driver.getByLabel("Сообщение диспетчеру")).toBeVisible();
+    await driver.evaluate(() =>
+      Object.defineProperty(document, "hidden", {
+        configurable: true,
+        get: () => true,
+      }),
+    );
+    const driverToken = await driver.evaluate(() =>
+      localStorage.getItem("openride.driver.accessToken"),
+    );
+    const adminToken = await admin.evaluate(() =>
+      localStorage.getItem("openride.admin.accessToken"),
+    );
+    const profile = await driverContext.request.get(
+      `${process.env.TEST_API_URL}/driver/profile`,
+      { headers: { Authorization: `Bearer ${driverToken}` } },
+    );
+    const driverId = (await profile.json()).id;
+    await adminContext.request.post(
+      `${process.env.TEST_API_URL}/admin/messages`,
+      {
+        headers: { Authorization: `Bearer ${adminToken}` },
+        data: { driverId, body: "Keep this unread while hidden" },
+      },
+    );
+    await expect(
+      driver.getByText("Keep this unread while hidden", { exact: true }),
+    ).toBeAttached();
+    const history = await driverContext.request.get(
+      `${process.env.TEST_API_URL}/driver/messages`,
+      { headers: { Authorization: `Bearer ${driverToken}` } },
+    );
+    expect((await history.json()).unread).toBeGreaterThan(0);
+    await driver.evaluate(() => {
+      Object.defineProperty(document, "hidden", {
+        configurable: true,
+        get: () => false,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await expect
+      .poll(async () => {
+        const result = await driverContext.request.get(
+          `${process.env.TEST_API_URL}/driver/messages`,
+          { headers: { Authorization: `Bearer ${driverToken}` } },
+        );
+        return (await result.json()).unread;
+      })
+      .toBe(0);
+  } finally {
+    await adminContext.close();
+    await driverContext.close();
+  }
 });

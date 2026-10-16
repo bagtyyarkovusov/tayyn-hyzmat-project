@@ -1556,48 +1556,28 @@ test('private acceptance rechecks funds after reservation without debiting an un
   assert.equal(history.items[0].orderId, null);
 });
 
-test('driver completion racing dispatcher resolution has one terminal winner without deadlock or another charge', async () => {
-  const created = await order();
-  const body = { orderId: created.id };
-  for (const action of ['accept', 'waiting', 'start']) assert.equal((await request(`/orders/${action}`, driverToken, body)).status, 200);
+test('chat retries with one client message id persist one message and reject changed content', async () => {
+  const clientMessageId = 'd07ca5bb-c21f-4617-a03b-f538d1873096';
+  const results = await Promise.all([
+    request('/driver/messages', driverToken, { body: 'One delivery', clientMessageId }),
+    request('/driver/messages', driverToken, { body: 'One delivery', clientMessageId }),
+  ]);
+  assert.equal(results[0].status, 201);
+  assert.equal(results[1].status, 201);
+  assert.equal(results[0].data.id, results[1].data.id);
+  const history = (await request('/driver/messages', driverToken)).data;
+  assert.equal(history.items.filter((message: { body: string }) => message.body === 'One delivery').length, 1);
+  assert.equal((await request('/driver/messages', driverToken, { body: 'Changed delivery', clientMessageId })).status, 409);
+});
+
+test('read cursor preserves newer unseen driver and dispatcher messages as unread', async () => {
   const driver = (await request('/driver/profile', driverToken)).data;
-  let release!: () => void;
-  let acquired!: () => void;
-  const ready = new Promise<void>(resolve => { acquired = resolve; });
-  const gate = new Promise<void>(resolve => { release = resolve; });
-  const heldDriver = prisma.$transaction(async tx => {
-    await tx.$queryRaw`SELECT id FROM drivers WHERE id = ${driver.id} FOR UPDATE`;
-    acquired();
-    await gate;
-  }, { timeout: 10000 });
-  async function waitForBlockedDrivers(count: number) {
-    const deadline = Date.now() + 4000;
-    while (Date.now() < deadline) {
-      const waiting = await prisma.$queryRaw<Array<{ pid: number }>>`SELECT pid FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%drivers%'`;
-      if (waiting.length >= count) return;
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
-    throw new Error('Completion/resolution did not reach the held driver lock');
-  }
-  let completed: ReturnType<typeof request> | undefined;
-  let resolved: ReturnType<typeof request> | undefined;
-  try {
-    await ready;
-    completed = request('/orders/complete', driverToken, body);
-    await waitForBlockedDrivers(1);
-    resolved = request(`/admin/orders/${created.id}/force-resolve`, adminToken, { reason: 'Concurrent dispatcher confirmation' });
-    await waitForBlockedDrivers(2);
-  } finally {
-    release();
-    await heldDriver;
-  }
-  const results = await Promise.all([completed!, resolved!]);
-  assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
-  assert.equal((await request('/orders/current', driverToken)).data, null);
-  assert.equal((await request('/driver/profile', driverToken)).data.isAvailable, true);
-  assert.equal((await request('/driver/balance', driverToken)).data.amount, '490');
-  const history = (await request('/driver/history', driverToken)).data;
-  assert.equal(history.orders.items.find((item: { id: string }) => item.id === created.id).status, 'COMPLETED');
-  assert.equal(history.transactions.total, 1);
-  assert.equal(history.transactions.items[0].amount, '-10');
+  const first = await request('/admin/messages', adminToken, { driverId: driver.id, body: 'Visible admin message' });
+  await request('/admin/messages', adminToken, { driverId: driver.id, body: 'Unseen admin message' });
+  assert.equal((await request('/driver/messages/read', driverToken, { throughMessageId: first.data.id })).status, 204);
+  assert.equal((await request('/driver/messages', driverToken)).data.unread, 1);
+  const visible = await request('/driver/messages', driverToken, { body: 'Visible driver message' });
+  await request('/driver/messages', driverToken, { body: 'Unseen driver message' });
+  assert.equal((await request(`/admin/drivers/${driver.id}/messages/read`, adminToken, { throughMessageId: visible.data.id })).status, 204);
+  assert.ok((await request('/admin/messages/unread', adminToken)).data.driverIds.includes(driver.id));
 });

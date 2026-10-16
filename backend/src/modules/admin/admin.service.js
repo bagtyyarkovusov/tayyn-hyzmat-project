@@ -1,3 +1,4 @@
+const { persistMessage } = require('../chat/persist-message');
 const { Prisma } = require('@prisma/client');
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
@@ -120,9 +121,15 @@ async function listUnreadDriverIds() {
 // Called when an admin opens a driver's chat thread (see
 // adminDrivers.js#fetchMessages) - clears the unread badge for every admin,
 // not just the one who opened it, matching the shared-inbox model above.
-async function markMessagesRead(driverId) {
-  await findDriverOrThrow(driverId);
-  await prisma.driver.update({ where: { id: driverId }, data: { lastReadByAdminAt: new Date() } });
+async function markMessagesRead(driverId, throughMessageId) {
+  const driver = await findDriverOrThrow(driverId);
+  let readAt = new Date();
+  if (throughMessageId) {
+    const message = await prisma.message.findFirst({ where: { id: throughMessageId, senderId: driver.userId, isBroadcast: false }, select: { sentAt: true } });
+    if (!message) throw ApiError.badRequest('Некорректная отметка сообщения');
+    readAt = message.sentAt;
+  }
+  await prisma.driver.updateMany({ where: { id: driverId, OR: [{ lastReadByAdminAt: null }, { lastReadByAdminAt: { lt: readAt } }] }, data: { lastReadByAdminAt: readAt } });
 }
 
 // Single-driver detail - not just "find it in the already-fetched list" on
@@ -376,11 +383,10 @@ async function getHistory(driverId, { page, limit }) {
   };
 }
 
-async function sendMessage({ driverId, broadcast, title, body }, actorId) {
+async function sendMessage({ driverId, broadcast, title, body, clientMessageId }, actorId) {
   if (broadcast) {
-    const message = await prisma.message.create({
-      data: { senderId: actorId, body, isBroadcast: true }
-    });
+    const { message, created } = await persistMessage({ senderId: actorId, body, isBroadcast: true, clientMessageId });
+    if (!created) return message;
     safeEmit((io) => {
       const payload = { id: message.id, senderId: actorId, title, body, sentAt: message.sentAt, broadcast: true };
       io.to(rooms.drivers()).emit('admin:message', payload);
@@ -390,9 +396,8 @@ async function sendMessage({ driverId, broadcast, title, body }, actorId) {
   }
 
   const driver = await findDriverOrThrow(driverId);
-  const message = await prisma.message.create({
-    data: { senderId: actorId, receiverId: driver.userId, body, isBroadcast: false }
-  });
+  const { message, created } = await persistMessage({ senderId: actorId, receiverId: driver.userId, body, isBroadcast: false, clientMessageId });
+  if (!created) return message;
 
   safeEmit((io) => {
     const payload = { id: message.id, senderId: actorId, driverId, title, body, sentAt: message.sentAt, broadcast: false };

@@ -6,7 +6,8 @@ const {
   districtSchema,
   sendMessageSchema,
   messagesQuerySchema,
-  pushTokenSchema
+  pushTokenSchema,
+  readMessageSchema
 } = require('./driver.validation');
 const controller = require('./driver.controller');
 
@@ -41,7 +42,7 @@ router.get('/messages', validate({ query: messagesQuerySchema }), controller.get
 router.post('/messages', validate({ body: sendMessageSchema }), controller.postMessage);
 // Marks everything the admin has sent so far as seen - see
 // driver.service.js#markChatRead.
-router.post('/messages/read', controller.postMessagesRead);
+router.post('/messages/read', validate({ body: readMessageSchema }), controller.postMessagesRead);
 
 // Driver APK only - stores the FCM token @capacitor/push-notifications
 // hands back, so a future push-sending feature knows where to deliver to.

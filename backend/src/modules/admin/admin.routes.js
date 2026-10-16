@@ -11,6 +11,7 @@ const {
   balanceAdjustSchema,
   historyQuerySchema,
   messageSchema,
+  readMessageSchema,
   listOrdersQuerySchema,
   activityQuerySchema,
   vehicleSchema,
@@ -83,6 +84,7 @@ router.get(
 router.post(
   '/drivers/:id/messages/read',
   validate({ params: driverIdParamSchema }),
+  validate({ body: readMessageSchema }),
   controller.markMessagesRead
 );
 
