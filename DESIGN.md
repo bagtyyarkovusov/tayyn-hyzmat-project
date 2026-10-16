@@ -44,7 +44,7 @@ spacing:
 
 Dispatcher and driver interfaces use Operate mode. Drivers need to scan regions, confirm orders and manage a trip in a compact phone viewport. Dispatchers create and assign orders, manage drivers and monitor regions. Preserve Russian operational copy, Latin `Tayyn Hyzmat`, TMT, current business rules and the existing fixed driver grid.
 
-The user requested a replacement black-and-white identity inspired by the clarity of Uber's interfaces. The identity is original: a square T cut from solid ink, with a Latin Manrope wordmark. No Uber mark, font or artwork is used. White and near-black establish hierarchy; neutral surfaces distinguish panels without decorative cards or gradients. Primary actions reverse ink and paper between light and dark mode. Green remains only for operational readiness and regions with active orders; amber and red continue to communicate uncertainty and failure alongside icons, labels or accessible descriptions.
+The user requested a replacement black-and-white identity inspired by the clarity of Uber's interfaces. The user-supplied final identity preserves the original H-shaped uprights and rising swoosh: black/green on light surfaces, white/light green on dark surfaces, with a Latin Manrope wordmark. It replaces the mistaken temporary T interpretation. No Uber mark, font or artwork is used. White and near-black establish hierarchy; neutral surfaces distinguish panels without decorative cards or gradients. Primary actions reverse ink and paper between light and dark mode. Green is retained in the supplied brand swoosh and for operational readiness and regions with active orders; amber and red continue to communicate uncertainty and failure alongside icons, labels or accessible descriptions.
 
 ## Colors
 
@@ -64,7 +64,7 @@ Shared shadcn-vue primitives keep their behavior. Panels remain flat and ruled; 
 
 ## Components
 
-`src/shared/BrandLogo.vue` owns the theme-aware mark and live wordmark. `public/brand/mark.svg` is the standalone vector source. `scripts/generate-brand-assets.py` reproduces web and Android raster assets with source metadata; Android adaptive foregrounds retain a safe margin for system masks. The manifest, browser chrome, launcher icon and launch screen use this identity. These are build assets, not a backend or database migration.
+`src/shared/BrandLogo.vue` displays the exact user-supplied artwork using `public/brand/mark-light.png` and `mark-dark.png`, alongside the live Latin wordmark. Byte-identical uploaded sources are retained under `public/brand/source/`; the historical root `logo.png` remains unchanged. PNG preparation removes detached alpha specks and trims/centers/pads, without redrawing the H or swoosh. `scripts/generate-brand-assets.py` reproduces web and Android raster assets with source metadata; Android adaptive foregrounds retain a safe margin for system masks. The manifest, browser chrome, launcher icon and launch screen use this identity. These are build assets, not a backend or database migration.
 
 Verification covers both actors, light/dark, desktop/mobile and the driver viewport. A polished visual test does not certify financial integrity, background notification delivery or production readiness; those have separate release gates.
 
