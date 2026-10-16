@@ -1136,6 +1136,7 @@ test('credential reset cannot revive an old native shift after the new session g
   const phone = '+99361001090';
   const created = await request('/admin/drivers', adminToken, { fullName: 'Native credential fixture', phone, password });
   const id = created.data.id;
+  assert.equal((await request(`/admin/drivers/${id}/balance`, adminToken, { amount: 500, type: 'TOPUP' })).status, 200);
   const auth = await request('/auth/login', '', { phone, password, deviceId: 'native-credential-device' });
   const token = auth.data.accessToken;
   await request('/driver/location', token, { lat: 37.96, lng: 58.32 });
@@ -1237,6 +1238,7 @@ test('numeric six-character driver passwords work consistently for creation and 
   const phone = '+99361001091';
   const created = await request('/admin/drivers', adminToken, { fullName: 'Numeric password fixture', phone, password: '123456' });
   assert.equal(created.status, 201);
+  assert.equal((await request(`/admin/drivers/${created.data.id}/balance`, adminToken, { amount: 500, type: 'TOPUP' })).status, 200);
   const auth = await request('/auth/login', '', { phone, password: '123456', deviceId: 'numeric-password-device' });
   assert.equal(auth.status, 200);
   const token = auth.data.accessToken;
@@ -1421,4 +1423,105 @@ test('self-registration refreshes admin overview counts without exposing the app
     driver.disconnect();
     await prisma.user.deleteMany({ where: { phone: '+99361999888' } });
   }
+});
+
+
+test('an underfunded driver sees public work but cannot accept or create a negative balance', async () => {
+  const driver = (await request('/driver/profile', driverToken)).data;
+  await prisma.balance.update({ where: { userId: driver.userId }, data: { amount: 15 } });
+  const created = await order(30);
+  const available = await request(`/orders/available?districtId=${regionId}`, driverToken);
+  assert.ok(available.data.some((item: { id: string }) => item.id === created.id));
+  const rejected = await request('/orders/accept', driverToken, { orderId: created.id, arrivalMinutes: 5 });
+  assert.equal(rejected.status, 403);
+  assert.match(rejected.data.message, /баланс|средств/i);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '15');
+  assert.equal((await request('/orders/current', driverToken)).data, null);
+  const stillAvailable = await request(`/orders/available?districtId=${regionId}`, otherToken);
+  assert.ok(stillAvailable.data.some((item: { id: string }) => item.id === created.id));
+  assert.equal((await request('/driver/history', driverToken)).data.transactions.total, 0);
+});
+
+
+test('underfunded private creation and reoffer reject without a reservation, charge or fanout', async () => {
+  const driver = (await request('/driver/profile', otherToken)).data;
+  await prisma.balance.update({ where: { userId: driver.userId }, data: { amount: 15 } });
+  const recipient = await socket(otherToken);
+  const received: unknown[] = [];
+  recipient.on('order:private-offer', payload => received.push(payload));
+  try {
+    const created = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 30, clientPhone: '+99365000000', privateOfferDriverId: driver.id });
+    assert.equal(created.status, 409);
+    assert.equal((await request('/admin/orders', adminToken)).data.total, 0);
+    const publicOrder = await order(30);
+    const offered = await request(`/admin/orders/${publicOrder.id}/private-offer`, adminToken, { driverId: driver.id });
+    assert.equal(offered.status, 409);
+    assert.equal((await request('/orders/private-offer', otherToken)).data, null);
+    assert.ok((await request(`/orders/available?districtId=${regionId}`, driverToken)).data.some((item: { id: string }) => item.id === publicOrder.id));
+    assert.equal((await request('/driver/balance', otherToken)).data.amount, '15');
+    assert.equal((await request('/driver/history', otherToken)).data.transactions.total, 0);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.deepEqual(received, []);
+  } finally { recipient.disconnect(); }
+});
+
+
+test('zero and negative balances cannot go online while offline writes remain available', async () => {
+  const driver = (await request('/driver/profile', driverToken)).data;
+  for (const amount of [0, -1]) {
+    assert.equal((await request('/driver/status', driverToken, { isOnline: false })).status, 200);
+    await prisma.balance.update({ where: { userId: driver.userId }, data: { amount } });
+    const online = await request('/driver/status', driverToken, { isOnline: true });
+    assert.equal(online.status, 403);
+    assert.match(online.data.message, /баланс/i);
+    assert.equal((await request('/driver/profile', driverToken)).data.isOnline, false);
+    assert.equal((await request('/driver/status', driverToken, { isOnline: false })).status, 200);
+  }
+});
+
+
+test('an exact quoted balance accepts once and zero balance preserves trip controls', async () => {
+  const driver = (await request('/driver/profile', driverToken)).data;
+  await prisma.balance.update({ where: { userId: driver.userId }, data: { amount: 30 } });
+  const created = await order(30);
+  assert.equal((await request('/orders/accept', driverToken, { orderId: created.id, arrivalMinutes: 5 })).status, 200);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '0');
+  assert.equal((await request('/driver/status', driverToken, { isOnline: false })).status, 200);
+  assert.equal((await request('/driver/status', driverToken, { isOnline: true })).status, 403);
+  assert.equal((await request('/orders/current', driverToken)).data.id, created.id);
+  for (const action of ['waiting', 'start', 'complete']) {
+    assert.equal((await request(`/orders/${action}`, driverToken, { orderId: created.id })).status, 200);
+  }
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '0');
+  assert.equal((await request('/driver/history', driverToken)).data.transactions.total, 1);
+  const next = await order(30);
+  assert.equal((await request('/orders/accept', driverToken, { orderId: next.id, arrivalMinutes: 5 })).status, 403);
+});
+
+test('concurrent distinct thirty TMT claims cannot overdraw thirty-five TMT', async () => {
+  const driver = (await request('/driver/profile', driverToken)).data;
+  await prisma.balance.update({ where: { userId: driver.userId }, data: { amount: 35 } });
+  const first = await order(30), second = await order(30);
+  const results = await Promise.all([first, second].map(item => request('/orders/accept', driverToken, { orderId: item.id, arrivalMinutes: 5 })));
+  assert.deepEqual(results.map(item => item.status).sort(), [200, 409]);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '5');
+  assert.equal((await request('/driver/history', driverToken)).data.transactions.total, 1);
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, otherToken)).data.length, 1);
+});
+
+test('private acceptance rechecks funds after reservation without debiting an underfunded driver', async () => {
+  const driver = (await request('/driver/profile', otherToken)).data;
+  await prisma.balance.update({ where: { userId: driver.userId }, data: { amount: 30 } });
+  const created = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 30, clientPhone: '+99365000000', privateOfferDriverId: driver.id });
+  assert.equal(created.status, 201);
+  assert.equal((await request('/driver/balance', otherToken)).data.amount, '30');
+  assert.equal((await request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: -15, type: 'WITHDRAWAL' })).status, 200);
+  const result = await request('/orders/private-offer/accept', otherToken, { orderId: created.data.id, privateOfferExpiresAt: created.data.privateOfferExpiresAt });
+  assert.equal(result.status, 403);
+  assert.equal((await request('/driver/balance', otherToken)).data.amount, '15');
+  assert.equal((await request('/orders/current', otherToken)).data, null);
+  assert.equal((await request('/orders/private-offer', otherToken)).data.id, created.data.id);
+  const history = (await request('/driver/history', otherToken)).data.transactions;
+  assert.equal(history.total, 1);
+  assert.equal(history.items[0].orderId, null);
 });

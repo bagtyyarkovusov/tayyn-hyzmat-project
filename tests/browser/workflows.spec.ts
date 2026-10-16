@@ -2235,3 +2235,151 @@ test("authenticated actor shells show exactly one brand at mobile, tablet and de
     }
   }
 });
+
+test("underfunded public orders stay visible with disabled acceptance and a top-up explanation", async ({
+  browser,
+}) => {
+  const adminContext = await browser.newContext();
+  const driverContext = await browser.newContext();
+  try {
+    const admin = await adminContext.newPage();
+    const driver = await driverContext.newPage();
+    await login(admin, "admin");
+    const adminToken = await admin.evaluate(() =>
+      localStorage.getItem("openride.admin.accessToken"),
+    );
+    const headers = { Authorization: `Bearer ${adminToken}` };
+    const created = await admin.request.post(
+      `${process.env.TEST_API_URL}/admin/drivers`,
+      {
+        headers,
+        data: {
+          fullName: "Недостаточно средств",
+          phone: "+99360000415",
+          password,
+        },
+      },
+    );
+    expect(created.ok()).toBe(true);
+    const driverId = (await created.json()).id;
+    expect(
+      (
+        await admin.request.post(
+          `${process.env.TEST_API_URL}/admin/drivers/${driverId}/balance`,
+          { headers, data: { amount: 15, type: "TOPUP" } },
+        )
+      ).ok(),
+    ).toBe(true);
+    await login(driver, "driver", "+99360000415");
+    await startGps(driver);
+    await driver
+      .getByRole("button", { name: "Выйти на линию", exact: true })
+      .click();
+    await expect(
+      driver.getByRole("button", { name: "Уйти с линии", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+    const order = await admin.request.post(
+      `${process.env.TEST_API_URL}/admin/orders`,
+      {
+        headers,
+        data: {
+          districtId: process.env.TEST_REGION_ID,
+          priceEstimated: 30,
+          clientPhone: "+99360000999",
+          pickupAddress: "Проверка средств",
+        },
+      },
+    );
+    expect(order.ok()).toBe(true);
+    await expect(
+      driver.getByText("Проверка средств", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      driver.getByRole("button", { name: "Принять заказ", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      driver.getByText(/Недостаточно средств\. Пополните баланс до/),
+    ).toBeVisible();
+    await driver
+      .getByRole("button", { name: "Скрыть предложение", exact: true })
+      .click();
+    await driver
+      .getByRole("group", { name: "Регионы", exact: true })
+      .getByRole("button", { name: /Мой район/ })
+      .click();
+    const card = driver
+      .getByRole("article")
+      .filter({ hasText: "Проверка средств" });
+    await expect(
+      card.getByRole("button", { name: "Принять заказ", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      card.getByText(/Недостаточно средств\. Пополните баланс до/),
+    ).toBeVisible();
+  } finally {
+    await adminContext.close();
+    await driverContext.close();
+  }
+});
+
+test("private offer picker disables an online driver whose balance cannot cover the quote", async ({
+  browser,
+}) => {
+  const adminContext = await browser.newContext();
+  const driverContext = await browser.newContext();
+  try {
+    const admin = await adminContext.newPage(),
+      driver = await driverContext.newPage();
+    await login(admin, "admin");
+    const adminToken = await admin.evaluate(() =>
+      localStorage.getItem("openride.admin.accessToken"),
+    );
+    const headers = { Authorization: `Bearer ${adminToken}` };
+    const created = await admin.request.post(
+      `${process.env.TEST_API_URL}/admin/drivers`,
+      {
+        headers,
+        data: {
+          fullName: "Личное без средств",
+          phone: "+99360000416",
+          password,
+        },
+      },
+    );
+    expect(created.ok()).toBe(true);
+    const driverId = (await created.json()).id;
+    expect(
+      (
+        await admin.request.post(
+          `${process.env.TEST_API_URL}/admin/drivers/${driverId}/balance`,
+          { headers, data: { amount: 15, type: "TOPUP" } },
+        )
+      ).ok(),
+    ).toBe(true);
+    await login(driver, "driver", "+99360000416");
+    await startGps(driver);
+    await driver
+      .getByRole("button", { name: "Выйти на линию", exact: true })
+      .click();
+    await expect(
+      driver.getByRole("button", { name: "Уйти с линии", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await admin.goto("/adminOrders");
+    await admin
+      .getByRole("button", { name: "Создать заказ", exact: true })
+      .click();
+    const dialog = admin.getByRole("dialog");
+    await dialog
+      .getByRole("button", { name: "Лично водителю", exact: true })
+      .click();
+    await dialog.getByLabel("Стоимость, TMT").fill("30");
+    const option = dialog.getByRole("option", { name: /Личное без средств/ });
+    await expect(option).toBeDisabled();
+    await expect(option).toContainText("недостаточно средств");
+    await dialog.getByLabel("Стоимость, TMT").fill("15");
+    await expect(option).toBeEnabled();
+  } finally {
+    await adminContext.close();
+    await driverContext.close();
+  }
+});

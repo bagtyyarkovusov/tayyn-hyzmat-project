@@ -94,6 +94,9 @@ const { data, loading, error } = useResource(
         v-if="orderId"
         :key="orderId"
         :order-id="orderId"
+        :price-estimated="
+          data.find((order) => order.id === orderId)?.priceEstimated
+        "
         :initial-driver-id="driverId"
         @offered="emit('offered')"
       />
