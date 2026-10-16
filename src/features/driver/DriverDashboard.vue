@@ -12,7 +12,6 @@ import {
   MapPinOff,
   LoaderCircle,
   ChevronRight,
-  CircleAlert,
 } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
 import {
@@ -26,6 +25,7 @@ import { useDriver } from "./useDriver";
 import { alertState, enableOrderAlerts, syncAlertPermission } from "./alerts";
 import { money, statusLabels } from "./model";
 import IncomingOrder from "./components/IncomingOrder.vue";
+import DriverFeedback from "./components/DriverFeedback.vue";
 import ActiveTrip from "./components/ActiveTrip.vue";
 import AvailableOrders from "./components/AvailableOrders.vue";
 const {
@@ -120,8 +120,7 @@ watch(
     if (!ready) selected.value = null;
   },
 );
-const tripOpen = ref(false),
-  messageOpen = ref(false);
+const tripOpen = ref(false);
 const selectedDistrict = computed(() =>
   state.districts.find((d) => d.id === selected.value),
 );
@@ -130,15 +129,18 @@ const ownRegion = computed(
     state.districts.find((d) => d.id === state.profile?.districtId)?.name ||
     "Район не определён",
 );
-const message = computed(
-  () =>
-    state.error ||
-    state.gpsError ||
-    state.notice ||
-    (state.balance && Number(state.balance.amount) <= 0
-      ? "Для выхода на линию пополните баланс у диспетчера."
-      : ""),
-);
+const blockers = computed(() => {
+  const messages: string[] = [];
+  if (!state.gpsReady)
+    messages.push(
+      state.gpsPending
+        ? "Получаем местоположение…"
+        : state.gpsError || "Включите GPS, чтобы принимать заказы.",
+    );
+  if (state.balance && Number(state.balance.amount) <= 0)
+    messages.push("Для выхода на линию пополните баланс у диспетчера.");
+  return messages;
+});
 watch(
   () => state.incoming?.privateOfferExpiresAt,
   (expiry) => {
@@ -334,20 +336,13 @@ watch(
             ></span
           >
         </div>
-        <Button
-          v-if="message"
-          variant="ghost"
-          size="icon"
-          class="size-11 shrink-0 text-destructive"
-          aria-label="Показать сообщение"
-          @click="messageOpen = true"
-          ><CircleAlert /><span
-            class="sr-only"
-            :role="state.error ? 'alert' : 'status'"
-            >{{ message }}</span
-          ></Button
-        >
       </div>
+      <DriverFeedback
+        :blockers="blockers"
+        :error="incomingOpen || tripOpen ? '' : state.error"
+        :notice="state.notice"
+        :attempt="state.actionAttempt"
+      />
     </div>
     <button
       v-if="state.active"
@@ -471,14 +466,6 @@ watch(
         <p v-if="state.error" role="alert" class="text-sm text-destructive">
           {{ state.error }}
         </p></DialogContent
-      ></Dialog
-    >
-    <Dialog v-model:open="messageOpen"
-      ><DialogContent
-        ><DialogHeader
-          ><DialogTitle>Сообщение</DialogTitle
-          ><DialogDescription>{{ message }}</DialogDescription></DialogHeader
-        ></DialogContent
       ></Dialog
     >
   </div>
