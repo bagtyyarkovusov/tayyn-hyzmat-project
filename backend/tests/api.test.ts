@@ -1492,7 +1492,7 @@ test('dispatcher overview invalidates live counts after approval, unblock and ac
     const response = await fetch(`${base}/admin/drivers/${user.driver!.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${adminToken}` } });
     assert.equal(response.status, 204);
     await removed;
-    assert.equal((await request('/admin/overview', adminToken)).data.totalDrivers, 2);
+    assert.equal((await request('/admin/overview', adminToken)).data.totalDrivers, 3);
   } finally {
     client.disconnect();
     await prisma.user.deleteMany({ where: { id: user.id } });
@@ -1944,4 +1944,106 @@ test('driver cancellation is restricted to waiting and refunds once without aban
   for (const action of ['accept', 'waiting', 'start']) assert.equal((await request(`/orders/${action}`, driverToken, { orderId: next.id })).status, 200);
   assert.equal((await request('/orders/cancel', driverToken, { orderId: next.id })).status, 409);
   assert.equal((await request('/orders/current', driverToken)).data.status, 'STARTED');
+});
+
+test('financial commands reject sub-cent, overflow and reversed direction amounts without writes', async () => {
+  const driver = await prisma.driver.findFirstOrThrow({ where: { user: { phone: '+99360000101' } } });
+  for (const body of [
+    { amount: 0.001, type: 'TOPUP' }, { amount: 0.005, type: 'TOPUP' },
+    { amount: 10000000000, type: 'TOPUP' }, { amount: 1e100, type: 'TOPUP' },
+    { amount: -10, type: 'TOPUP' }, { amount: 10, type: 'WITHDRAWAL' },
+    { amount: -10, type: 'BONUS' }, { amount: 0, type: 'ADJUSTMENT' }
+  ]) {
+    assert.equal((await request(`/admin/drivers/${driver.id}/balance`, adminToken, body)).status, 400, JSON.stringify(body));
+  }
+  for (const priceEstimated of [0.001, 0.005, 100000000, 1e100]) {
+    assert.equal((await request('/admin/orders', adminToken, { districtId: regionId, clientPhone: '+99365000000', priceEstimated })).status, 400);
+  }
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
+  assert.equal((await request(`/admin/drivers/${driver.id}/history`, adminToken)).data.transactions.total, 0);
+});
+
+test('cent amounts match balance, history and socket and wallet overflow leaves no ledger entry', async () => {
+  const driver = await prisma.driver.findFirstOrThrow({ where: { user: { phone: '+99360000101' } } });
+  const admin = await socket(adminToken);
+  const event = nextSocketEvent<{ amount: string }>(admin, 'balance:updated');
+  const credited = await request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 0.01, type: 'TOPUP' });
+  assert.equal(credited.status, 200);
+  assert.equal(credited.data.balance.amount, '500.01');
+  assert.equal(credited.data.transaction.amount, '0.01');
+  assert.equal(credited.data.transaction.balanceAfter, '500.01');
+  assert.equal((await event).amount, '500.01');
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '500.01');
+  await prisma.balance.update({ where: { userId: driver.userId }, data: { amount: '9999999999.99' } });
+  assert.equal((await request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 0.01, type: 'TOPUP' })).status, 400);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '9999999999.99');
+  assert.equal((await request(`/admin/drivers/${driver.id}/history`, adminToken)).data.transactions.total, 1);
+  const order = await request('/admin/orders', adminToken, { districtId: regionId, clientPhone: '+99365000000', priceEstimated: 99999999.99 });
+  assert.equal(order.status, 201);
+  assert.equal(order.data.priceEstimated, '99999999.99');
+});
+
+
+test('topups preserve headroom for an active trip refund', async () => {
+  const driver = await prisma.driver.findFirstOrThrow({ where: { user: { phone: '+99360000101' } } });
+  const created = await order(30);
+  assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 200);
+  assert.equal((await request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 9999999529.99, type: 'TOPUP' })).status, 400);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '470');
+  assert.equal((await request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 9999999499.99, type: 'TOPUP' })).status, 200);
+  assert.equal((await request(`/admin/orders/${created.id}/cancel`, adminToken, { reason: 'Synthetic headroom proof' })).status, 200);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '9999999999.99');
+  const history = await request(`/admin/drivers/${driver.id}/history`, adminToken);
+  assert.equal(history.data.transactions.total, 3);
+});
+
+test('deactivating a driver preserves ledger and completed attribution while revoking access', async () => {
+  const created = await request('/admin/drivers', adminToken, { phone: '+99361999981', fullName: 'Retained driver', password });
+  assert.equal(created.status, 201);
+  const id = created.data.id;
+  const auth = await request('/auth/login', '', { phone: '+99361999981', password, deviceId: 'retained-device' });
+  const token = auth.data.accessToken;
+  const session = await socket(token);
+  assert.equal((await request(`/admin/drivers/${id}/balance`, adminToken, { amount: 30, type: 'TOPUP', note: 'Retained funding' })).status, 200);
+  await request('/driver/location', token, { lat: 37.96, lng: 58.32 });
+  await request('/driver/status', token, { isOnline: true });
+  const shift = await request('/driver/shift', token, { deviceId: 'retained-device', refreshToken: auth.data.refreshToken });
+  assert.equal(shift.status, 201);
+  const completed = await order(30);
+  await prisma.order.update({ where: { id: completed.id }, data: { driverId: id, status: 'COMPLETED', completedAt: new Date() } });
+  const disconnected = new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Deactivated session remained connected')), 3000);
+    session.once('disconnect', () => { clearTimeout(timer); resolve(); });
+  });
+  const deleted = await fetch(`${base}/admin/drivers/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${adminToken}` } });
+  assert.equal(deleted.status, 204);
+  await disconnected;
+  const retained = await request(`/admin/drivers/${id}`, adminToken);
+  assert.equal(retained.status, 200);
+  assert.equal(retained.data.id, id);
+  assert.equal(retained.data.status, 'BLOCKED');
+  assert.equal(retained.data.user.balance.amount, '30');
+  const history = await request(`/admin/drivers/${id}/history`, adminToken);
+  assert.equal(history.data.transactions.total, 1);
+  assert.equal(history.data.transactions.items[0].note, 'Retained funding');
+  assert.equal(history.data.orders.items[0].driverId, id);
+  assert.equal((await request('/driver/me', token)).status, 401);
+  assert.equal((await request('/auth/refresh', '', { refreshToken: auth.data.refreshToken })).status, 401);
+  assert.equal((await request('/native-shift/tick', shift.data.shiftToken, { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() })).status, 401);
+  assert.equal((await request('/auth/login', '', { phone: '+99361999981', password })).status, 403);
+  await request(`/admin/drivers/${id}/unblock`, adminToken, {});
+  assert.equal((await request('/auth/login', '', { phone: '+99361999981', password })).status, 403);
+});
+
+test('deactivation refuses an active trip and preserves its balance and driver linkage', async () => {
+  const driver = await prisma.driver.findFirstOrThrow({ where: { user: { phone: '+99360000101' } } });
+  const created = await order(30);
+  assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 200);
+  for (const status of ['ACCEPTED', 'WAITING', 'STARTED'] as const) {
+    await prisma.order.update({ where: { id: created.id }, data: { status } });
+    const response = await fetch(`${base}/admin/drivers/${driver.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${adminToken}` } });
+    assert.equal(response.status, 409);
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, '470');
+    assert.equal((await request('/orders/current', driverToken)).data.driverId, driver.id);
+  }
 });

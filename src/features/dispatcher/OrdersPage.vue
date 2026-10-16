@@ -185,7 +185,8 @@ async function confirmResolve() {
           " /></DialogContent
     ></Dialog>
     <Dialog v-model:open="create"
-      ><DialogContent class="max-h-[90dvh] overflow-y-auto sm:max-w-2xl"
+      ><DialogContent
+        class="order-create-dialog max-h-[calc(100dvh-1rem)] w-[min(96vw,76rem)] max-w-[76rem] overflow-y-auto p-4 sm:p-6"
         ><DialogHeader
           ><DialogTitle>Новый заказ</DialogTitle
           ><DialogDescription

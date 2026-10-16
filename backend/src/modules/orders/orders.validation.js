@@ -1,4 +1,5 @@
 const { z } = require('zod');
+const { moneySchema } = require('../../utils/money-policy');
 const { phoneSchema } = require('../../utils/phone-policy');
 
 const orderIdSchema = z.object({
@@ -27,7 +28,7 @@ const createOrderSchema = z.object({
   dropoffLat: z.number().min(-90).max(90).optional(),
   dropoffLng: z.number().min(-180).max(180).optional(),
   dropoffAddress: z.string().trim().max(300).optional(),
-  priceEstimated: z.number().finite().positive(),
+  priceEstimated: moneySchema('99999999.99').refine(value => value > 0, 'Укажите положительную цену'),
   clientPhone: phoneSchema,
   districtId: z.string().uuid('Выберите район'),
   privateOfferDriverId: z.string().uuid().optional(),

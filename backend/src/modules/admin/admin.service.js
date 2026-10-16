@@ -12,6 +12,7 @@ const driverService = require('../driver/driver.service');
 const authService = require('../auth/auth.service');
 const { hashPassword } = require('../../utils/password');
 
+const { MAX_WALLET_AMOUNT } = require('../../utils/money-policy');
 const { lockedBalance } = require('../balance/locked-balance');
 
 const D = (value) => new Prisma.Decimal(value ?? 0);
@@ -273,28 +274,34 @@ async function rejectDevice(driverId, actorId) {
   return updated;
 }
 
-// Hard-deletes a driver and everything personal to them. Most of it goes by
-// cascade from the User row (driver, balance + its transactions, devices,
-// GPS history, vehicles, refresh tokens - see schema.prisma's onDelete
-// rules); the two relations that DON'T cascade need deciding explicitly:
-//  - Orders: kept, with driverId nulled. A ride that happened, happened -
-//    deleting the record would silently rewrite dispatch history, and
-//    Order.driver is nullable precisely so an unassigned order is valid.
-//  - Messages: deleted. Chat is personal to that driver and has no meaning
-//    once the account is gone.
+// Deactivate access while preserving the financial ledger and trip attribution.
 async function deleteDriver(driverId, actorId) {
   const driver = await findDriverOrThrow(driverId);
-
   await prisma.$transaction(async (tx) => {
-    await tx.order.updateMany({ where: { driverId }, data: { driverId: null } });
-    await tx.message.deleteMany({
-      where: { OR: [{ senderId: driver.userId }, { receiverId: driver.userId }] }
+    // Credential commands lock users first; order commands lock the driver.
+    await tx.$queryRaw`SELECT id FROM users WHERE id = ${driver.userId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM drivers WHERE id = ${driverId} FOR UPDATE`;
+    const activeTrip = await tx.order.findFirst({
+      where: { driverId, status: { in: ['ACCEPTED', 'WAITING', 'STARTED'] } }, select: { id: true }
     });
-    await tx.user.delete({ where: { id: driver.userId } });
+    if (activeTrip) throw ApiError.conflict('Сначала завершите или отмените активную поездку');
+    await tx.user.update({ where: { id: driver.userId }, data: { status: 'BLOCKED', credentialVersion: { increment: 1 } } });
+    await tx.driver.update({ where: { id: driverId }, data: {
+      status: 'BLOCKED', blockedAt: new Date(), blockedBy: actorId,
+      blockReason: 'Аккаунт деактивирован', isOnline: false, isAvailable: false,
+      pendingDeviceId: null, pendingDeviceLabel: null, pendingDeviceRequestedAt: null
+    } });
+    await tx.refreshToken.updateMany({ where: { userId: driver.userId }, data: { revokedAt: new Date() } });
+    await tx.nativeShiftLease.updateMany({ where: { driverId }, data: { revokedAt: new Date() } });
   });
-
-  await districtsService.broadcastDistrictStats();
-  logger.info({ driverId, actorId }, 'Driver deleted');
+  safeEmit(io => {
+    io.to(rooms.driver(driverId)).emit('session:revoked', { message: 'Аккаунт деактивирован' });
+    io.in(rooms.driver(driverId)).disconnectSockets(true);
+    io.to(rooms.admins()).emit('driver:updated', { driverId });
+  });
+  try { await districtsService.broadcastDistrictStats(); }
+  catch (err) { logger.warn({ err, driverId }, 'Failed to broadcast driver deactivation'); }
+  logger.info({ driverId, actorId }, 'Driver deactivated; financial history retained');
   return { id: driverId };
 }
 
@@ -307,6 +314,16 @@ async function adjustBalance(driverId, { amount, type, note }, actorId) {
     const balance = await lockedBalance(tx, driver.userId);
 
     const newAmount = D(balance.amount).add(amount);
+    // Keep room to return an active trip's actual debit on cancellation.
+    // Locking the driver serializes this check with accept/cancel/complete.
+    const refundable = await tx.transaction.aggregate({
+      where: { balanceId: balance.id, type: 'PAYMENT', order: { status: { in: ['ACCEPTED', 'WAITING', 'STARTED'] } } },
+      _sum: { amount: true }
+    });
+    const reservedRefund = D(refundable._sum.amount).abs();
+    if (newAmount.add(reservedRefund).gt(MAX_WALLET_AMOUNT)) {
+      throw ApiError.badRequest('Превышен максимальный баланс с учётом возможного возврата за поездку');
+    }
     if (newAmount.isNegative()) {
       throw ApiError.badRequest('Операция приведёт к отрицательному балансу');
     }
