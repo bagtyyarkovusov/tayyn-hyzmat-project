@@ -378,19 +378,6 @@ watch(
       GPS · точность {{ Math.round(state.position.accuracy) }} м
     </p>
     <p
-      v-if="!state.gpsReady"
-      id="driver-gps-blocker"
-      role="status"
-      class="shrink-0 text-xs text-destructive"
-    >
-      {{
-        state.gpsError ||
-        (state.gpsPending
-          ? "Получаем и отправляем GPS…"
-          : "Включите GPS перед выходом на линию.")
-      }}
-    </p>
-    <p
       v-if="!connectionReady"
       role="status"
       class="shrink-0 text-xs text-destructive"

@@ -1180,3 +1180,25 @@ test('private confirmation and cancellation preserve credits with one charge and
   assert.equal(history.items.filter((entry: { type: string }) => entry.type === 'REFUND').length, 1);
   assert.equal(history.items.reduce((sum: number, entry: { amount: string }) => sum + Number(entry.amount), 0), 2);
 });
+
+test('a native renewal blocked beyond lease expiry cannot restore availability', async () => {
+  const auth = await request('/auth/login', '', { phone: '+10000000101', password, deviceId: 'native-test-device' });
+  const started = await request('/driver/shift', auth.data.accessToken, { deviceId: 'native-test-device', refreshToken: auth.data.refreshToken });
+  const profile = (await request('/driver/profile', auth.data.accessToken)).data;
+  await prisma.$executeRaw`UPDATE native_shift_leases SET expires_at = NOW() + INTERVAL '600 milliseconds' WHERE driver_id = ${profile.id}`;
+  let release!: () => void;
+  let ready!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const locked = new Promise<void>(resolve => { ready = resolve; });
+  const blocker = prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM users WHERE id = ${profile.userId} FOR UPDATE`;
+    ready(); await gate;
+  }, { timeout: 10000 });
+  await locked;
+  try {
+    const pending = request('/native-shift/tick', started.data.shiftToken, { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() });
+    await new Promise(resolve => setTimeout(resolve, 850));
+    release();
+    assert.equal((await pending).status, 401);
+  } finally { release(); await blocker; }
+});

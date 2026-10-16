@@ -83,6 +83,7 @@ export async function tick(token: string, fix: Fix) {
     // The same user lock guards password/phone changes, availability and native renewal.
     await tx.$queryRaw`SELECT u.id FROM users u JOIN drivers d ON d.user_id = u.id JOIN native_shift_leases n ON n.driver_id = d.id WHERE n.token_hash = ${digest(token)} FOR UPDATE OF u`;
     const rows = await tx.$queryRaw<Lease[]>`SELECT * FROM native_shift_leases WHERE token_hash = ${digest(token)} FOR UPDATE`;
+    const now = new Date();
     const lease = rows[0];
     if (!lease || lease.revoked_at || lease.expires_at.getTime() <= now.getTime()) throw ApiError.unauthorized('Смена завершена');
     // Lock driver status against explicit offline/admin/device changes during renewal.
@@ -100,13 +101,14 @@ export async function tick(token: string, fix: Fix) {
   } catch (err) { logger.warn({ err }, 'Failed to broadcast native driver location'); }
   await syncDriverDistrictRoom(renewed.driver.id);
   await districts.broadcastDistrictStats();
+  const responseTime = new Date();
   const events: Event[] = [];
   const active = await prisma.order.findFirst({ where: { driverId: renewed.driver.id, status: { in: ['ACCEPTED', 'WAITING', 'STARTED'] } }, select: { id: true } });
   if (!active && renewed.driver.isAvailable && renewed.balance > 0) {
     const orders = await prisma.order.findMany({
       where: { status: 'NEW', driverId: null, OR: [
         { privateOfferDriverId: null, districtId: renewed.driver.districtId },
-        { privateOfferDriverId: renewed.driver.id, privateOfferExpiresAt: { gt: now } }
+        { privateOfferDriverId: renewed.driver.id, privateOfferExpiresAt: { gt: responseTime } }
       ] },
       select: { id: true, privateOfferExpiresAt: true }, orderBy: { createdAt: 'asc' }, take: 100
     });
@@ -118,5 +120,5 @@ export async function tick(token: string, fix: Fix) {
   const after = new Date(Math.max(renewed.lease.started_at.getTime(), renewed.driver.lastChatReadAt?.getTime() ?? 0));
   const messages = await prisma.message.findMany({ where: { OR: [{ receiverId: renewed.driver.userId }, { isBroadcast: true }], NOT: { senderId: renewed.driver.userId }, sentAt: { gt: after } }, select: { id: true }, orderBy: [{ sentAt: 'desc' }, { id: 'desc' }], take: 100 });
   for (const message of messages) events.push({ id: `chat:${message.id}`, channel: 'chat', title: 'Сообщение диспетчера', body: 'Откройте чат в приложении.', messageId: message.id, expiresAt: renewed.expires.toISOString() });
-  return { serverTime: now.toISOString(), leaseExpiresAt: renewed.expires.toISOString(), events };
+  return { serverTime: responseTime.toISOString(), leaseExpiresAt: renewed.expires.toISOString(), events };
 }

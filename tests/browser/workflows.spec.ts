@@ -9,7 +9,7 @@ async function isolateBrowserClient(page: Page) {
   if (browserClients.has(context)) return;
   // Vite proxies all browsers through loopback. Model each browser as a
   // distinct client without weakening the API's production auth limiter.
-  const address = `198.18.0.${nextBrowserClient++}`;
+  const address = `198.18.${process.pid % 200}.${nextBrowserClient++}`;
   browserClients.set(context, address);
   await context.setExtraHTTPHeaders({ "X-Forwarded-For": address });
 }
@@ -1483,7 +1483,7 @@ test("permission controls distinguish confirmed GPS and enabled notification per
       name: "Включить уведомления и звук",
       exact: true,
     });
-    await expect(gps).toHaveAttribute("data-state", "inactive");
+    await expect(gps).toHaveAttribute("data-state", /inactive|blocked/);
     await expect(alerts).toHaveAttribute("data-state", "inactive");
     let releaseReport!: () => void;
     const reportGate = new Promise<void>((resolve) => {

@@ -185,8 +185,8 @@ public final class ShiftService extends Service {
     Notification notification =
         new NotificationCompat.Builder(this, SHIFT_CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_driver)
-            .setContentTitle("На линии")
-            .setContentText("GPS и связь с диспетчером работают во время смены")
+            .setContentTitle("Смена Tayyn Hyzmat")
+            .setContentText("Откройте приложение, чтобы проверить GPS и связь")
             .setOngoing(true)
             .setContentIntent(open)
             .setOnlyAlertOnce(true)
