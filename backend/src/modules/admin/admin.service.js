@@ -1,3 +1,5 @@
+const { beforeCursor, markRead } = require('../chat/cursors');
+const { persistMessage } = require('../chat/persist-message');
 const { Prisma } = require('@prisma/client');
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
@@ -91,16 +93,18 @@ async function listDrivers({ status, page, limit }) {
 async function withUnreadFlag(drivers) {
   if (drivers.length === 0) return drivers;
   const userIds = drivers.map((d) => d.userId);
-  const lastMessages = await prisma.message.groupBy({
-    by: ['senderId'],
+  const lastMessages = await prisma.message.findMany({
     where: { senderId: { in: userIds }, isBroadcast: false },
-    _max: { sentAt: true }
+    orderBy: [{ sentAt: 'desc' }, { id: 'desc' }],
+    distinct: ['senderId'],
+    select: { id: true, senderId: true, sentAt: true }
   });
-  const lastMessageAtByUserId = new Map(lastMessages.map((m) => [m.senderId, m._max.sentAt]));
-  return drivers.map((d) => {
-    const lastMessageAt = lastMessageAtByUserId.get(d.userId) || null;
-    const hasUnreadMessage = Boolean(lastMessageAt && (!d.lastReadByAdminAt || lastMessageAt > d.lastReadByAdminAt));
-    return { ...d, hasUnreadMessage };
+  const latestByUserId = new Map(lastMessages.map(message => [message.senderId, message]));
+  return drivers.map(driver => {
+    const latest = latestByUserId.get(driver.userId);
+    const hasUnreadMessage = Boolean(latest && (!driver.lastReadByAdminAt || latest.sentAt > driver.lastReadByAdminAt ||
+      (latest.sentAt.getTime() === driver.lastReadByAdminAt.getTime() && driver.lastReadByAdminMessageId && latest.id > driver.lastReadByAdminMessageId)));
+    return { ...driver, hasUnreadMessage };
   });
 }
 
@@ -111,7 +115,7 @@ async function withUnreadFlag(drivers) {
 async function listUnreadDriverIds() {
   const drivers = await prisma.driver.findMany({
     where: { status: 'APPROVED' },
-    select: { id: true, userId: true, lastReadByAdminAt: true }
+    select: { id: true, userId: true, lastReadByAdminAt: true, lastReadByAdminMessageId: true }
   });
   const withFlags = await withUnreadFlag(drivers);
   return withFlags.filter((d) => d.hasUnreadMessage).map((d) => d.id);
@@ -120,9 +124,9 @@ async function listUnreadDriverIds() {
 // Called when an admin opens a driver's chat thread (see
 // adminDrivers.js#fetchMessages) - clears the unread badge for every admin,
 // not just the one who opened it, matching the shared-inbox model above.
-async function markMessagesRead(driverId) {
-  await findDriverOrThrow(driverId);
-  await prisma.driver.update({ where: { id: driverId }, data: { lastReadByAdminAt: new Date() } });
+async function markMessagesRead(driverId, throughMessageId) {
+  const driver = await findDriverOrThrow(driverId);
+  await markRead(driverId, { senderId: driver.userId, isBroadcast: false }, throughMessageId, 'lastReadByAdminAt', 'lastReadByAdminMessageId');
 }
 
 // Single-driver detail - not just "find it in the already-fetched list" on
@@ -376,11 +380,10 @@ async function getHistory(driverId, { page, limit }) {
   };
 }
 
-async function sendMessage({ driverId, broadcast, title, body }, actorId) {
+async function sendMessage({ driverId, broadcast, title, body, clientMessageId }, actorId) {
   if (broadcast) {
-    const message = await prisma.message.create({
-      data: { senderId: actorId, body, isBroadcast: true }
-    });
+    const { message, created } = await persistMessage({ senderId: actorId, body, isBroadcast: true, clientMessageId });
+    if (!created) return message;
     safeEmit((io) => {
       const payload = { id: message.id, senderId: actorId, title, body, sentAt: message.sentAt, broadcast: true };
       io.to(rooms.drivers()).emit('admin:message', payload);
@@ -390,9 +393,8 @@ async function sendMessage({ driverId, broadcast, title, body }, actorId) {
   }
 
   const driver = await findDriverOrThrow(driverId);
-  const message = await prisma.message.create({
-    data: { senderId: actorId, receiverId: driver.userId, body, isBroadcast: false }
-  });
+  const { message, created } = await persistMessage({ senderId: actorId, receiverId: driver.userId, body, isBroadcast: false, clientMessageId });
+  if (!created) return message;
 
   safeEmit((io) => {
     const payload = { id: message.id, senderId: actorId, driverId, title, body, sentAt: message.sentAt, broadcast: false };
@@ -406,15 +408,16 @@ async function sendMessage({ driverId, broadcast, title, body }, actorId) {
 // sender or the receiver (an admin-broadcast message never targets a single
 // driver by receiverId, so it doesn't show up here - that's intentional,
 // broadcasts aren't part of a 1:1 conversation view).
-async function getDriverMessages(driverId, { page, limit }) {
+async function getDriverMessages(driverId, { page, limit, beforeMessageId }) {
   const driver = await findDriverOrThrow(driverId);
   const where = { OR: [{ senderId: driver.userId }, { receiverId: driver.userId }] };
 
+  const older = await beforeCursor(where, beforeMessageId);
   const [items, total] = await Promise.all([
     prisma.message.findMany({
-      where,
-      orderBy: { sentAt: 'desc' },
-      skip: (page - 1) * limit,
+      where: { AND: [where, older] },
+      orderBy: [{ sentAt: 'desc' }, { id: 'desc' }],
+      skip: beforeMessageId ? 0 : (page - 1) * limit,
       take: limit
     }),
     prisma.message.count({ where })

@@ -47,12 +47,12 @@ const getMessages = asyncHandler(async (req, res) => {
 });
 
 const postMessagesRead = asyncHandler(async (req, res) => {
-  await service.markChatRead(req.driver);
+  await service.markChatRead(req.driver, req.body.throughMessageId);
   res.status(204).send();
 });
 
 const postMessage = asyncHandler(async (req, res) => {
-  const message = await service.sendMessage(req.driver, req.body.body);
+  const message = await service.sendMessage(req.driver, req.body.body, req.body.clientMessageId);
   res.status(201).json(message);
 });
 

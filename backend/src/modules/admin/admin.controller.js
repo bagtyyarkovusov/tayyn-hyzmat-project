@@ -98,7 +98,7 @@ const deleteDriver = asyncHandler(async (req, res) => {
 });
 
 const markMessagesRead = asyncHandler(async (req, res) => {
-  await service.markMessagesRead(req.params.id);
+  await service.markMessagesRead(req.params.id, req.body.throughMessageId);
   res.status(204).end();
 });
 
