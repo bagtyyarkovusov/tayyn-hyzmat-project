@@ -6,6 +6,7 @@ These guides explain the current dispatcher and driver workflows in plain langua
 - [Русское руководство](operations.ru.md)
 - [English flow diagrams](flows.en.md)
 - [Диаграммы потоков на русском](flows.ru.md)
+- [Release evidence and remaining device checks](../releases/2026-10-16-pilot-evidence.md)
 - [Client release brief](client-brief.en.md)
 - [Краткая записка для клиента](client-brief.ru.md)
 

@@ -1,11 +1,7 @@
 # Tayyn Hyzmat progress brief
 
-The team moved the pilot from a rough browser prototype to a testable dispatcher and driver service.
+The dispatcher and driver apps now have a clearer, simpler design. Dispatchers create orders with a phone number, region and TMT price, choose a driver on the map, and send a private offer or publish to the regional queue. After 20 seconds, an unanswered order can open to all regions. Drivers always choose whether to accept.
 
-Dispatchers can create orders with a phone number, region, and TMT price, then send an order to everyone or to one selected driver. Drivers see live region counts, receive offers, and accept them explicitly. The system prevents underfunded acceptance and prevents negative balances. We also added a safer way for a dispatcher to resolve a trip that was left open after it started.
+We added driver account management, live region counts, balance checks, chat recovery and a recorded way for dispatchers to close a trip left unfinished. GPS determines the region; an unavailable street address never blocks work. Existing region boundaries are preserved.
 
-The map and driver roster now work together. A dispatcher can find a driver, see the last reported position, and open driver actions without a full-screen list reload. GPS decides region eligibility. Address lookup is optional and will fall back to coordinates when its provider or quota is unavailable.
-
-The test APK and browser workflows cover the main order, private-offer, balance, refund, chat, and recovery paths. The shared Railway deployment contains the merged work. GitHub cleanup removed superseded work while leaving active follow-ups visible.
-
-Before release, the remaining checks are the new online readiness states, the standalone driver login page, private-offer expansion after 20 seconds, production address-quota configuration, Today analytics, and a physical Infinix Android 14 test with the screen locked and battery saving enabled. No real payments are enabled in this test phase.
+The main workflows have automated checks. Final work covers driver availability, the compact trip controls, daily figures and financial safeguards. Before release, we must verify the fresh APK on the Infinix Android 14 phone, including locked-screen alerts and interrupted connections. Balances remain for testing; real payments are disabled.

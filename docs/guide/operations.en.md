@@ -27,7 +27,7 @@ The Online action must confirm a fresh location with the server before it turns 
 
 On Android, location and notification permissions are requested while the app is visible. During a shift the native service renews a 60-second server lease and polls the canonical order/chat inbox. Force-closing, swiping the task away, logout, or lease expiry ends availability. Doze and manufacturer battery rules can delay a notification, so physical-phone checks remain a release gate.
 
-The current browser and APK work separates local GPS from server availability only partly. The readiness contract that makes these states explicit is pending.
+The merged readiness contract separates local GPS, dispatcher connection and shift availability. Canonical busy-driver availability (#94, `b21b4d0`) now overrides stale flags in status responses, monitoring lists and region counts. Offline stops recurring location uploads and keeps a timestamped last position. Foreground return checks Android permission and system GPS again. Hardware and background reliability still require the target-phone checks.
 
 ## Regions and order counts
 
@@ -45,9 +45,9 @@ The dispatcher can announce an order publicly or choose a private driver. A priv
 
 A private offer is a reservation for one eligible online, idle driver with fresh GPS and enough balance for the quoted price. The server persists a fixed 20-second deadline. The driver must explicitly accept; opening the offer, waiting, or declining does not charge money.
 
-Acceptance is a race. The server accepts only the first valid claim and broadcasts removal to other drivers. It charges the quoted TMT amount once, then reveals the customer phone. A declined or expired private offer currently returns to the order's original regional public queue.
+Acceptance is a race. The server accepts only the first valid claim and broadcasts removal to other drivers. It charges the quoted TMT amount once, then reveals the customer phone. An early decline returns a private offer to its original region until the original deadline.
 
-**Pending.** PR [#79](https://github.com/bagtyyarkovusov/tayyn-hyzmat-project/pull/79) implements the approved alternative: the dispatcher chooses per order whether a private offer should stop after 20 seconds or become public in every region at the same time. It must pass the decline, expiry, and first-claim race review before merge. Until then, use the current original-region behavior.
+A public order starts in its original region for 20 seconds, then opens to all eligible drivers at once. For a private offer, the dispatcher chooses whether its fixed 20-second expiry opens the order globally or stops it unassigned. There is no second acceptance timer. PR #79 (`715b648`) is merged.
 
 ## Balance rules
 
@@ -71,15 +71,15 @@ If a driver loses network after acceptance, the trip remains assigned. New offer
 
 The browser uses Socket.IO while the app is open and reconnects or reconciles state when it returns to the foreground. A closed browser cannot guarantee delivery. The Android test service polls a stable inbox every 10 seconds and uses separate order and chat notification channels. It hides customer phones and chat bodies on the lock screen. Notification taps open the relevant screen and the server remains the source of truth.
 
-Chat has independent scrolling, draft preservation on a failed send, and automatic bottom-following only when the reader is already near the bottom. Routine refresh buttons are being removed or reduced to deliberate retry actions as live recovery work lands.
+Chat has independent scrolling, draft preservation on a failed send, and automatic bottom-following only when the reader is already near the bottom. It recovers missed messages after reconnect, loads older history without gaps, and preserves unread messages when timestamps match. A retry reuses the same message identity to avoid sending a duplicate. Read acknowledgement runs only while the chat is visible. Routine refresh controls are replaced by live recovery and deliberate retry after failure (PR #87, `2935991`).
 
 ## Driver addresses and the Yandex quota
 
-GPS and polygon matching decide eligibility. Address lookup only adds a street or building label. The server policy in PR [#68](https://github.com/bagtyyarkovusov/tayyn-hyzmat-project/pull/68) is tested but pending merge and production configuration. It looks up a visible driver location no more than once per five minutes after meaningful movement, shares a daily cap across devices and restarts, keeps 20% in reserve, backs off on provider errors, and falls back to coordinates. A stale address is hidden when the driver moves. A provider failure or exhausted quota never blocks GPS or going online.
+GPS and polygon matching decide eligibility. Address lookup only adds a street or building label. The server policy is merged in PR [#68](https://github.com/bagtyyarkovusov/tayyn-hyzmat-project/pull/68) (`cf8bf84`); provider activation and live configuration checks remain separate. It looks up a visible driver location no more than once per five minutes after meaningful movement, shares a daily cap across devices and restarts, keeps 20% in reserve, backs off on provider errors, and falls back to coordinates. A stale address is hidden when the driver moves. A provider failure or exhausted quota never blocks GPS or going online.
 
 ## Analytics
 
-The planned compact Today view uses Asia/Ashgabat time for orders created today. It keeps all currently waiting orders in a separate live section, including orders created earlier. The first measures are waiting count, oldest waiting age, median and p90 acceptance time, completed count/rate, and cancelled count/rate. The address and analytics PRs are tested but pending merge. Private-offer conversion and shift utilisation need more history and are later work.
+The compact Today view uses Asia/Ashgabat time for orders created today. It keeps all currently waiting orders in a separate live section, including orders created earlier. The first measures are waiting count, oldest waiting age, median and p90 acceptance time, completed count/rate, and cancelled count/rate. The analytics PR remains pending merge and integration checks. Private-offer conversion and shift utilisation need more history and are later work.
 
 ## Recovery and safety
 
@@ -89,4 +89,10 @@ Every action is server-authoritative. Reload restores the active trip and balanc
 
 Merged to `main` and deployed: offer modal polish (#76), map GPS eligibility (#74), monitoring roster (#78), funded acceptance and no-negative-balance (#77), and stuck-trip resolution (#80, `e821397`). GitHub hygiene closed superseded work and left active issues and open PRs in place.
 
-Pending: readiness-state separation and the standalone driver login shell; public-offer expansion (#79); server address budget (#68); Today analytics (#67); physical Infinix Android 14 background/Doze verification; removal of routine refresh controls; and release signing/update policy. PR #81 contains the separate client-facing progress brief.
+The standalone driver login shell is merged through PR #81. Monitoring region filters now include all saved active regions through PR #84. Superseded PRs #50, #55, and #82 are closed.
+
+Chat recovery (#87), shared address budgeting (#68), and consistent locking for concurrent trip resolution (#90) are also merged.
+
+Readiness-state separation (#85, `2095f56`) and audience expansion (#79, `715b648`) are merged.
+
+Pending: Today analytics (#67); provider activation checks; physical Infinix Android 14 background/Doze verification; and release signing/update policy. The compact driver feed (#95) and canonical busy-driver availability (#94) are merged. The separate client-facing progress brief is linked from the guide index.
