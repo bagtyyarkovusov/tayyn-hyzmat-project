@@ -24,6 +24,9 @@ Driver and dispatcher chat keep the app header, composer and navigation inside t
 
 - Should a pickup outside every polygon be refused, or assigned by nearest center?
 - What does the quoted price represent, and how much should acceptance debit from a driver's balance?
-- What delivery guarantee is required when a browser is suspended or closed?
+
+## Android shifts
+
+Drivers remain available and receive orders while on shift with the app backgrounded or the phone locked. Explicit Offline/logout ends availability; force-close ends it, with a server lease timeout when Android provides no callback. The native implementation uses a 60-second renewable lease and requires precise GPS and enabled order/chat notification channels before Online. See [Android testing](android.md) for current implementation, limits and required device verification. Browser-only execution does not provide this background guarantee.
 
 Record answers here when settled, and use ADRs for resulting architectural choices. Track implementation gaps in GitHub Issues. [Architecture](architecture.md) distinguishes current behavior from this agreed scope.

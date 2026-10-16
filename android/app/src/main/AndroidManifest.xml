@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -24,6 +24,8 @@
             </intent-filter>
 
         </activity>
+
+        <service android:name=".ShiftService" android:exported="false" android:foregroundServiceType="location" />
 
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -50,24 +52,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- GPS: foreground location only, for the "Карта" screen and the
-         driver's live position while the app is open - position stops
-         updating once backgrounded/screen off. This used to also run as an
-         Android foreground service (@capacitor-community/background-
-         geolocation, ACCESS_BACKGROUND_LOCATION/FOREGROUND_SERVICE*) to
-         keep tracking while backgrounded, removed after it was the likely
-         cause of a repeatable native crash on login (see services/geo.js's
-         own comment for the full story) - swapped for the simpler, first-
-         party @capacitor/geolocation, which has no background/foreground-
-         service capability at all. -->
+    <!-- Started only by a visible, explicit Online action; no background start/reboot restart. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-
-    <!-- Android 13+ (API 33) requires this at runtime to show ANY
-         notification - incoming order/chat alerts (see
-         src/services/localNotify.js), shown only while the app is
-         foregrounded/backgrounded-but-alive, not truly killed (that needs
-         real push, not wired up yet - see backend/README.md). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Declared, not required: a driver's device without real GPS hardware

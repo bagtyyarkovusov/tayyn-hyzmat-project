@@ -16,8 +16,10 @@ const router = Router();
 router.get('/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
 router.use('/auth', authRoutes);
+router.use('/native-shift', require('../modules/native-shift/native-shift.routes').nativeRoutes);
 
 // Every /driver/* and /orders/* route requires a logged-in, currently-approved driver.
+router.use('/driver/shift', authenticate, requireRole('DRIVER'), requireApprovedDriver, require('../modules/native-shift/native-shift.routes').authenticatedRoutes);
 router.use('/driver', authenticate, requireRole('DRIVER'), requireApprovedDriver, driverRoutes);
 router.use('/orders', authenticate, requireRole('DRIVER'), requireApprovedDriver, ordersRoutes);
 

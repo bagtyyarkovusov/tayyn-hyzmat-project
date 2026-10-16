@@ -100,6 +100,7 @@ async function updateLocation(driver, data) {
 }
 
 async function setStatus(driver, data) {
+  if (data.isOnline === false) await require('../native-shift/native-shift.service').revokeDriverShift(driver.id);
   if (data.isOnline === true) assertFreshGps(driver);
   const updated = await prisma.driver.update({
     where: { id: driver.id },

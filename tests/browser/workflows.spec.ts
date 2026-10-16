@@ -1058,3 +1058,78 @@ test("regional queues and counts recover through updates, reconnect and reload",
     await b.close();
   }
 });
+
+test("a transient GPS timeout keeps its blocker visible until an explicit retry receives a fresh server-acknowledged fix", async ({
+  page,
+}) => {
+  // A separate synthetic client exercises recovery without exhausting the login limiter used by earlier workflows.
+  await page.setExtraHTTPHeaders({ "X-Forwarded-For": "127.0.0.79" });
+  await page.context().grantPermissions(["geolocation"]);
+  await page.addInitScript(() => {
+    let watch: PositionCallback | undefined;
+    let failure: PositionErrorCallback | null | undefined;
+    const position = () =>
+      ({
+        coords: {
+          latitude: 37.96,
+          longitude: 58.32,
+          accuracy: 10,
+          heading: null,
+          speed: null,
+          altitude: null,
+          altitudeAccuracy: null,
+        },
+        timestamp: Date.now(),
+      }) as GeolocationPosition;
+    Object.defineProperty(navigator, "geolocation", {
+      configurable: true,
+      value: {
+        watchPosition(
+          success: PositionCallback,
+          failed?: PositionErrorCallback,
+        ) {
+          watch = success;
+          failure = failed;
+          setTimeout(() => watch?.(position()), 0);
+          return 1;
+        },
+        clearWatch() {
+          watch = undefined;
+        },
+        getCurrentPosition(success: PositionCallback) {
+          setTimeout(() => success(position()), 1500);
+        },
+      },
+    });
+    window.addEventListener("synthetic-gps-timeout", () =>
+      failure?.({
+        code: 3,
+        message: "Synthetic hardware timeout",
+        PERMISSION_DENIED: 1,
+        POSITION_UNAVAILABLE: 2,
+        TIMEOUT: 3,
+      }),
+    );
+  });
+  await login(page, "driver");
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  const power = page.getByRole("button", {
+    name: "Выйти на линию",
+    exact: true,
+  });
+  await expect(power).toBeEnabled();
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("synthetic-gps-timeout")),
+  );
+  await expect(power).toBeDisabled();
+  await expect(
+    page.getByText(/GPS.*(?:временно недоступен|не ответил)/).first(),
+  ).toBeAttached();
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect(
+    page.getByText(/GPS.*(?:временно недоступен|не ответил)/).first(),
+  ).toBeAttached();
+  await expect(power).toBeDisabled();
+  await expect(power).toBeEnabled({ timeout: 5000 });
+  await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+});

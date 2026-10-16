@@ -19,7 +19,12 @@ import {
   DialogDescription,
 } from "@/shared/ui/dialog";
 import { useDriver } from "./useDriver";
-import { enableOrderAlerts } from "./alerts";
+import {
+  enableOrderAlerts,
+  alertPermission,
+  openNotificationSettings,
+} from "./alerts";
+import { nativeAndroid } from "./nativeShift";
 import { money, statusLabels } from "./model";
 import IncomingOrder from "./components/IncomingOrder.vue";
 import ActiveTrip from "./components/ActiveTrip.vue";
@@ -29,7 +34,9 @@ const selected = ref<string | null>(null);
 const visibility = useDocumentVisibility();
 const networkOnline = useOnline();
 const connectionReady = computed(
-  () => networkOnline.value && session.state.connected,
+  () =>
+    networkOnline.value &&
+    (nativeAndroid ? state.nativeConnected : session.state.connected),
 );
 const liveOnline = computed(
   () => !!state.profile?.isOnline && state.gpsReady && connectionReady.value,
@@ -65,6 +72,7 @@ const ownRegion = computed(
 const message = computed(
   () =>
     state.error ||
+    alertPermission.message ||
     state.gpsError ||
     state.notice ||
     (state.balance && Number(state.balance.amount) <= 0
@@ -117,6 +125,9 @@ watch(
             class="size-11"
             aria-label="Включить уведомления и звук"
             @click="enableOrderAlerts"
+            :aria-pressed="
+              !alertPermission.blocked && !!alertPermission.message
+            "
             ><Bell class="size-5"
           /></Button>
           <Button
@@ -140,6 +151,9 @@ watch(
                     : 'На линии. Связь с диспетчером установлена.'
             "
             :aria-pressed="!!state.profile?.isOnline"
+            :aria-describedby="
+              !state.gpsReady ? 'driver-gps-blocker' : undefined
+            "
             :aria-busy="state.busy"
             :disabled="
               state.busy ||
@@ -180,7 +194,12 @@ watch(
         >
           <MapPin class="size-4 shrink-0 text-primary" />
           <span class="min-w-0 truncate"
-            >{{ state.position ? ownRegion : "Ожидаем GPS"
+            >{{
+              state.gpsReady
+                ? ownRegion
+                : state.position
+                  ? "Последнее положение"
+                  : "Ожидаем GPS"
             }}<span
               v-if="state.position"
               class="ml-2 text-xs text-muted-foreground"
@@ -199,6 +218,7 @@ watch(
           ><CircleAlert /><span
             class="sr-only"
             :role="state.error ? 'alert' : 'status'"
+            v-if="state.gpsReady || message !== state.gpsError"
             >{{ message }}</span
           ></Button
         >
@@ -223,8 +243,21 @@ watch(
       }}</span>
       <ChevronRight class="size-4 shrink-0" aria-hidden="true" />
     </button>
-    <p v-if="state.position" class="sr-only" role="status">
+    <p v-if="state.position && state.gpsReady" class="sr-only" role="status">
       GPS · точность {{ Math.round(state.position.accuracy) }} м
+    </p>
+    <p
+      v-if="!state.gpsReady"
+      id="driver-gps-blocker"
+      role="status"
+      class="shrink-0 text-xs text-destructive"
+    >
+      {{
+        state.gpsError ||
+        (state.gpsPending
+          ? "Получаем и отправляем GPS…"
+          : "Включите GPS перед выходом на линию.")
+      }}
     </p>
     <p
       v-if="!connectionReady"
@@ -332,7 +365,12 @@ watch(
       ><DialogContent
         ><DialogHeader
           ><DialogTitle>Сообщение</DialogTitle
-          ><DialogDescription>{{ message }}</DialogDescription></DialogHeader
+          ><DialogDescription>{{ message }}</DialogDescription>
+          <Button
+            v-if="nativeAndroid && alertPermission.blocked"
+            @click="openNotificationSettings"
+            >Открыть настройки уведомлений</Button
+          ></DialogHeader
         ></DialogContent
       ></Dialog
     >

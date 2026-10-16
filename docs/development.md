@@ -35,8 +35,13 @@ Production will use Docker images on a VPS. The existing `container-images.yml` 
 Use `pnpm preview:isolated` in the modernization worktree. It creates a new tmpfs PostgreSQL container and real API/frontend on random loopback ports, without reading the original worktree environment. It seeds canonical saved regions plus synthetic accounts; existing preview instances are disposable. Inspect ignored `.local/browser-context.json` for current actor URLs and synthetic credentials. Leave the command running while reviewing and stop it with Ctrl-C afterward. This preview is independent of the older zone-test stack above and shared Railway.
 
 The modern app uses `VITE_API_URL`, `VITE_SOCKET_URL` and `VITE_YANDEX_MAPS_API_KEY`; existing `VUE_APP_*` names remain supported for Docker/Railway build compatibility. Configure a development-restricted map key separately if live vendor rendering is needed. With no key, lists, region selection and explicit coordinate editing remain available. The disposable suite intentionally supplies no map key.
+
 ## Default region geometry
 
 New environments use the finalized versioned [canonical regions](regions.md). The shared Railway editor already stores them. The old isolated rectangle remains only an explicit edge-case fixture.
 
 To keep an already selected loopback URL after restarting your own preview, set `TAYYN_PREVIEW_API_PORT` and `TAYYN_PREVIEW_WEB_PORT` when using `--serve`. Occupied ports fail rather than replacing another service.
+
+## Android driver
+
+See [Android testing](android.md) for the native shift service, explicit HTTPS build endpoints, isolated backend/CORS setup and device release gates. Browser GPS remains foreground-only.

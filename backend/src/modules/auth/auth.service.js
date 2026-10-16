@@ -81,6 +81,7 @@ async function issueTokenPair(user) {
 // until its own short expiry - there's no way to invalidate that
 // instantly, only the refresh that would normally keep the session alive).
 async function revokeAllRefreshTokens(userId) {
+  await require('../native-shift/native-shift.service').revokeUserShift(userId);
   // Backdated deliberately, past ROTATION_GRACE_MS. refresh() lets a
   // just-rotated token through for a minute to survive concurrent refreshes
   // - but a force-logout must be immediate, otherwise the device being
@@ -228,6 +229,8 @@ async function refresh(refreshToken) {
 
 async function logout(refreshToken) {
   const tokenHash = hashRefreshToken(refreshToken);
+  const session = await prisma.refreshToken.findUnique({ where: { tokenHash } });
+  if (session) await require('../native-shift/native-shift.service').revokeUserShift(session.userId);
   await prisma.refreshToken.updateMany({
     where: { tokenHash, revokedAt: null },
     data: { revokedAt: new Date() }

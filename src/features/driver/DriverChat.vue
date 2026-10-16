@@ -14,6 +14,7 @@ import { useChatScroll } from "@/shared/useChatScroll";
 import { driverApi, errorMessage } from "@/shared/api";
 import { driverSession } from "@/features/auth/session";
 import { useDriver } from "./useDriver";
+import { closeChatAlerts } from "./alerts";
 import { date, type Message, type Page } from "./model";
 const { state, dismissIncoming } = useDriver();
 const offerOpen = computed({
@@ -53,6 +54,7 @@ async function load(older = false) {
       (a, b) => Date.parse(a.sentAt) - Date.parse(b.sentAt),
     );
     await driverApi.post("/driver/messages/read");
+    closeChatAlerts();
     if (older) {
       await nextTick();
       if (history.value)
@@ -92,9 +94,16 @@ const off = [
   driverSession.on("admin:message", () => void load()),
   driverSession.on("connect", () => void load()),
 ];
+const resumed = () => {
+  if (!document.hidden) void load();
+};
+document.addEventListener("visibilitychange", resumed);
+window.addEventListener("native:notification", resumed);
 onMounted(() => void load());
 onUnmounted(() => {
   alive = false;
+  document.removeEventListener("visibilitychange", resumed);
+  window.removeEventListener("native:notification", resumed);
   off.forEach((fn) => fn());
 });
 </script>

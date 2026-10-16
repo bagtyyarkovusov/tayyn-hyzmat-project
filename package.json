@@ -19,10 +19,10 @@
     "test:integration": "pnpm --filter openride-backend test:integration",
     "test:e2e": "node scripts/test-browser.mjs",
     "test": "pnpm test:unit && pnpm test:integration && pnpm test:e2e",
-    "build:driver": "pnpm build:modern && node scripts/prepare-driver-dist.cjs",
+    "build:driver": "node scripts/check-native-endpoints.mjs && pnpm build:modern && node scripts/prepare-driver-dist.cjs",
     "cap:sync": "pnpm build:driver && cap sync android",
-    "android:assembleDebug": "pnpm cap:sync && cd android && ./gradlew assembleDebug",
-    "android:assembleRelease": "pnpm cap:sync && cd android && ./gradlew assembleRelease",
+    "android:assembleDebug": "pnpm cap:sync && cd android && sh ./gradlew :app:assembleDebug",
+    "android:assembleRelease": "pnpm cap:sync && cd android && sh ./gradlew :app:assembleRelease",
     "preview:isolated": "node scripts/test-browser.mjs --serve",
     "format:check": "prettier --check src tests *.ts scripts/test-browser.mjs scripts/test-container-startup.mjs"
   },

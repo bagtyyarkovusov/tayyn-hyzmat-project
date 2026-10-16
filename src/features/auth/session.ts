@@ -1,6 +1,8 @@
 import { reactive } from "vue";
+import { stopNativeShift } from "@/features/driver/nativeShift";
 import { io, type Socket } from "socket.io-client";
 import {
+  apiBase,
   adminApi,
   driverApi,
   publicRequest,
@@ -110,6 +112,19 @@ function createSession(role: Role) {
   }
   async function logout() {
     const refreshToken = tokens.refresh(role);
+    if (role === "driver") {
+      void stopNativeShift();
+      // Logout must not wait for a refresh belonging to a normal request.
+      void fetch(`${apiBase}/driver/status`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${tokens.access(role)}`,
+        },
+        body: JSON.stringify({ isOnline: false }),
+        signal: AbortSignal.timeout(3000),
+      }).catch(() => {});
+    }
     disconnect();
     tokens.clear(role);
     if (refreshToken)

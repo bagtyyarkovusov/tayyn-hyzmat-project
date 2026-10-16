@@ -1,8 +1,14 @@
 import { onMounted, onUnmounted, reactive, readonly, watch } from "vue";
 import { driverApi, errorMessage } from "@/shared/api";
 import { driverSession } from "@/features/auth/session";
-import { closeOrderAlerts, notifyOrder } from "./alerts";
+import { closeOrderAlerts, notifyOrder, notifyChat } from "./alerts";
 import type { Balance, District, DriverProfile, Order } from "./model";
+import {
+  nativeAndroid,
+  nativeShift,
+  startNativeShift,
+  stopNativeShift,
+} from "./nativeShift";
 
 const state = reactive({
   profile: null as DriverProfile | null,
@@ -17,6 +23,8 @@ const state = reactive({
   gpsError: "",
   gpsPending: false,
   gpsReady: false,
+  nativeRunning: false,
+  nativeConnected: false,
   position: null as { lat: number; lng: number; accuracy: number } | null,
 });
 export const driverState = readonly(state);
@@ -53,6 +61,7 @@ async function loseGps(message: string) {
   gpsEpoch++;
   state.gpsReady = false;
   state.gpsError = message;
+  lastLocationSent = 0;
   hideAvailableOrders();
   if (!state.profile?.isOnline || offlinePending) return;
   state.profile.isOnline = false;
@@ -88,6 +97,8 @@ watch(
     state.loading = false;
     state.position = null;
     state.gpsReady = false;
+    state.nativeRunning = false;
+    state.nativeConnected = false;
     lastFixAt = 0;
     locationSending = false;
     offlinePending = false;
@@ -124,9 +135,11 @@ async function refresh() {
       state.districts = districts.data;
     state.active = active.data;
     if (state.active) dismissIncoming();
+    if (nativeAndroid) await synchronizeNative();
+    if (!current()) return;
     if (!state.gpsReady) {
       hideAvailableOrders();
-      if (state.profile.isOnline)
+      if (state.profile.isOnline && !state.nativeRunning)
         void loseGps("Включите GPS перед выходом на линию.");
     }
   } catch (error) {
@@ -164,6 +177,7 @@ async function accept(orderId: string, etaMinutes: number) {
       orderId,
       etaMinutes,
     });
+    closeOrderAlerts();
     state.active = data;
     await refresh();
   });
@@ -192,7 +206,18 @@ async function setOnline() {
     return;
   }
   await act(async () => {
+    if (!isOnline) await stopNativeShift();
     await driverApi.post("/driver/status", { isOnline, isAvailable: isOnline });
+    if (isOnline && nativeAndroid) {
+      try {
+        await startNativeShift();
+      } catch (error) {
+        await driverApi
+          .post("/driver/status", { isOnline: false })
+          .catch(() => {});
+        throw error;
+      }
+    }
     await refresh();
   });
 }
@@ -202,13 +227,73 @@ async function setDistrict(districtId: string) {
     await refresh();
   });
 }
+async function synchronizeNative() {
+  if (!nativeAndroid) return;
+  const generation = sessionGeneration;
+  const native = await nativeShift.status();
+  if (generation !== sessionGeneration) return;
+  if (native.running && native.userId !== driverSession.state.user?.id) {
+    await stopNativeShift();
+    return;
+  }
+  state.nativeRunning = native.running;
+  state.nativeConnected =
+    native.phase === "online" && Date.now() - native.lastReportAt < 30000;
+  if (native.running) {
+    state.gpsReady =
+      native.phase === "online" &&
+      Date.now() - native.lastReportAt < GPS_MAX_AGE_MS;
+    if (state.gpsReady) {
+      lastFixAt = lastLocationSent = native.lastReportAt;
+      state.position = {
+        lat: native.lat,
+        lng: native.lng,
+        accuracy: native.accuracy,
+      };
+      state.gpsError = "";
+    } else
+      state.gpsError = native.detail || "Ожидаем GPS и связь с диспетчером…";
+  } else if (native.detail) {
+    state.gpsReady = false;
+    hideAvailableOrders();
+    state.gpsError = native.detail;
+    if (state.profile) state.profile.isOnline = false;
+  }
+}
+async function enableNativeGps() {
+  const generation = sessionGeneration;
+  state.gpsPending = true;
+  try {
+    const permissions = await nativeShift.permissions();
+    if (!permissions.locationGranted)
+      throw new Error("Разрешите точный GPS в настройках приложения.");
+    const position = await nativeShift.location();
+    const { data } = await driverApi.post<{ districtId: string | null }>(
+      "/driver/location",
+      position,
+    );
+    if (generation !== sessionGeneration) return;
+    state.position = position;
+    lastLocationSent = Date.now();
+    lastFixAt = position.timestamp;
+    state.gpsReady = true;
+    state.gpsError = "";
+    if (state.profile) state.profile.districtId = data.districtId;
+  } catch (error) {
+    if (generation === sessionGeneration) await loseGps(errorMessage(error));
+  } finally {
+    if (generation === sessionGeneration) state.gpsPending = false;
+  }
+}
 function enableGps() {
-  state.gpsError = "";
+  if (nativeAndroid) {
+    void enableNativeGps();
+    return;
+  }
   if (!navigator.geolocation) {
     void loseGps("Браузер не поддерживает геолокацию.");
     return;
   }
-  if (gpsWatch !== undefined) return;
   state.gpsPending = true;
   const generation = sessionGeneration;
   const options = {
@@ -230,8 +315,6 @@ function enableGps() {
       void loseGps("GPS устарел. Ожидаем новые координаты.");
       return;
     }
-    lastFixAt = position.timestamp;
-    state.position = { lat, lng, accuracy };
     if (locationSending || Date.now() - lastLocationSent < 10000) return;
     locationSending = true;
     const epoch = gpsEpoch;
@@ -248,6 +331,8 @@ function enableGps() {
       );
       if (generation !== sessionGeneration) return;
       if (epoch !== gpsEpoch) return;
+      state.position = { lat, lng, accuracy };
+      lastFixAt = position.timestamp;
       lastLocationSent = Date.now();
       state.gpsPending = false;
       state.gpsReady = true;
@@ -267,7 +352,9 @@ function enableGps() {
     void loseGps(
       error.code === error.PERMISSION_DENIED
         ? "Нет доступа к GPS. Разрешите геолокацию в браузере."
-        : "GPS временно недоступен. Ожидаем координаты.",
+        : error.code === error.TIMEOUT
+          ? "GPS не ответил вовремя. Нажмите GPS, чтобы повторить."
+          : "GPS временно недоступен. Нажмите GPS, чтобы повторить.",
     );
     if (error.code === error.PERMISSION_DENIED) {
       if (gpsWatch !== undefined) navigator.geolocation.clearWatch(gpsWatch);
@@ -276,7 +363,14 @@ function enableGps() {
       gpsTimer = undefined;
     }
   };
-  gpsWatch = navigator.geolocation.watchPosition(report, failed, options);
+  if (gpsWatch === undefined)
+    gpsWatch = navigator.geolocation.watchPosition(report, failed, options);
+  // Permission and an existing watch do not prove a fresh fix was accepted by the server.
+  navigator.geolocation.getCurrentPosition(report, failed, {
+    ...options,
+    maximumAge: 0,
+  });
+  if (gpsTimer !== undefined) return;
   // A stationary driver may get no watch updates. Request a new fix rather
   // than reporting an old coordinate as fresh to keep availability alive.
   gpsTimer = setInterval(() => {
@@ -290,10 +384,17 @@ function enableGps() {
   }, 20000);
 }
 function start() {
+  if (nativeAndroid) {
+    const timer = setInterval(() => {
+      if (!document.hidden) void synchronizeNative();
+    }, 2000);
+    cleanups.push(() => clearInterval(timer));
+  }
   const on = (event: string, handler: (payload: unknown) => void) =>
     cleanups.push(driverSession.on(event, handler));
   on("connect", () => void refresh());
   on("balance:updated", () => void refresh());
+  on("admin:message", () => notifyChat());
   on("driver:status", (payload) => {
     const status = payload as {
       driverId: string;
