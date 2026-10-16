@@ -153,7 +153,7 @@ test("dispatcher creates a private offer and driver explicitly accepts into the 
     await expect(
       trip.getByText("Прибытие: 5 мин", { exact: true }),
     ).toBeVisible();
-    await expect(driver.getByLabel("Тестовый баланс")).toHaveText("490 TMT");
+    await expect(driver.getByLabel("Баланс")).toHaveText("490 TMT");
     await driver.screenshot({
       path: test.info().outputPath("private-offer-accepted-mobile.png"),
     });
@@ -247,7 +247,7 @@ test("map-selected driver recovers a missed private offer on reconnect and decli
       privateOfferDriverId: null,
       privateOfferExpiresAt: null,
     });
-    await expect(driver.getByLabel("Тестовый баланс")).toHaveText("500 TMT");
+    await expect(driver.getByLabel("Баланс")).toHaveText("500 TMT");
   } finally {
     if (createdOrderId && adminHeaders) {
       const cleanup = await dispatcher.request.post(
