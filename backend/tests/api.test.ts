@@ -1556,6 +1556,52 @@ test('private acceptance rechecks funds after reservation without debiting an un
   assert.equal(history.items[0].orderId, null);
 });
 
+test('driver completion racing dispatcher resolution has one terminal winner without deadlock or another charge', async () => {
+  const created = await order();
+  const body = { orderId: created.id };
+  for (const action of ['accept', 'waiting', 'start']) assert.equal((await request(`/orders/${action}`, driverToken, body)).status, 200);
+  const driver = (await request('/driver/profile', driverToken)).data;
+  let release!: () => void;
+  let acquired!: () => void;
+  const ready = new Promise<void>(resolve => { acquired = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const heldDriver = prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM drivers WHERE id = ${driver.id} FOR UPDATE`;
+    acquired();
+    await gate;
+  }, { timeout: 10000 });
+  async function waitForBlockedDrivers(count: number) {
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline) {
+      const waiting = await prisma.$queryRaw<Array<{ pid: number }>>`SELECT pid FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%drivers%'`;
+      if (waiting.length >= count) return;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    throw new Error('Completion/resolution did not reach the held driver lock');
+  }
+  let completed: ReturnType<typeof request> | undefined;
+  let resolved: ReturnType<typeof request> | undefined;
+  try {
+    await ready;
+    completed = request('/orders/complete', driverToken, body);
+    await waitForBlockedDrivers(1);
+    resolved = request(`/admin/orders/${created.id}/force-resolve`, adminToken, { reason: 'Concurrent dispatcher confirmation' });
+    await waitForBlockedDrivers(2);
+  } finally {
+    release();
+    await heldDriver;
+  }
+  const results = await Promise.all([completed!, resolved!]);
+  assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
+  assert.equal((await request('/orders/current', driverToken)).data, null);
+  assert.equal((await request('/driver/profile', driverToken)).data.isAvailable, true);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '490');
+  const history = (await request('/driver/history', driverToken)).data;
+  assert.equal(history.orders.items.find((item: { id: string }) => item.id === created.id).status, 'COMPLETED');
+  assert.equal(history.transactions.total, 1);
+  assert.equal(history.transactions.items[0].amount, '-10');
+});
+
 test('chat retries with one client message id persist one message and reject changed content', async () => {
   await prisma.message.deleteMany();
   await prisma.driver.updateMany({ data: { lastChatReadAt: null, lastChatReadMessageId: null, lastReadByAdminAt: null, lastReadByAdminMessageId: null } });
