@@ -655,13 +655,17 @@ function enableGps() {
     if (generation !== sessionGeneration || trackingEpoch !== gpsEpoch) return;
     if (requestId && requestId < latestGpsRequestResolved) return;
     state.gpsPending = false;
-    void loseGps(
-      error.code === error.PERMISSION_DENIED
-        ? "Нет доступа к GPS. Разрешите геолокацию в браузере."
-        : error.code === error.TIMEOUT
-          ? "GPS не ответил вовремя. Нажмите GPS, чтобы повторить."
-          : "GPS временно недоступен. Нажмите GPS, чтобы повторить.",
-    );
+    if (error.code === error.POSITION_UNAVAILABLE) {
+      // A transient provider gap must not tear down the shift. Keep the
+      // server acknowledgement invalid until the next fresh fix arrives.
+      markLocationSyncFailure("GPS временно недоступен. Ожидаем новый сигнал.");
+    } else {
+      void loseGps(
+        error.code === error.PERMISSION_DENIED
+          ? "Нет доступа к GPS. Разрешите геолокацию в браузере."
+          : "GPS не ответил вовремя. Нажмите GPS, чтобы повторить.",
+      );
+    }
     if (error.code === error.PERMISSION_DENIED) {
       if (gpsWatch !== undefined) navigator.geolocation.clearWatch(gpsWatch);
       gpsWatch = undefined;
