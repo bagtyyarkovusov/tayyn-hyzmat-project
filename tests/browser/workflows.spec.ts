@@ -1375,6 +1375,17 @@ test("regional queues and counts recover through updates, reconnect and reload",
         });
         expect(response.ok()).toBe(true);
         const order = await response.json();
+        // The driver's own-region order opens the normal incoming-offer modal.
+        // Dismiss it so the background region card is observable for the
+        // stale-HTTP-snapshot assertion below.
+        const incoming = driver.getByRole("dialog", {
+          name: "Предложение заказа",
+          exact: true,
+        });
+        await expect(incoming).toBeVisible();
+        await incoming
+          .getByRole("button", { name: "Скрыть предложение", exact: true })
+          .click();
         await expect(card.getByText("0:1", { exact: true })).toBeVisible();
         const refreshed = driver.waitForResponse("**/api/districts");
         release();
