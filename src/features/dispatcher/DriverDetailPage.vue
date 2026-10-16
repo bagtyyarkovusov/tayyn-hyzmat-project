@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { formatPhone } from "@/shared/phone";
 import { ref, watch, onUnmounted } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import { ArrowLeft } from "lucide-vue-next";
@@ -215,7 +216,7 @@ function adjust(withdraw: boolean) {
           <a
             :href="`tel:${driver.user.phone}`"
             class="mt-2 inline-block text-muted-foreground"
-            >{{ driver.user.phone }}</a
+            >{{ formatPhone(driver.user.phone) }}</a
           >
         </div>
         <Badge

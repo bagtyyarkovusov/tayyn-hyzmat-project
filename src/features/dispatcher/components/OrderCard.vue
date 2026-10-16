@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { formatPhone } from "@/shared/phone";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { MapPin, ArrowDown, Phone } from "lucide-vue-next";
@@ -48,7 +49,7 @@ defineEmits<{ cancel: [Order]; offer: [Order] }>();
           v-if="order.clientPhone"
           :href="`tel:${order.clientPhone}`"
           class="flex items-center gap-1 text-foreground"
-          ><Phone class="size-3" />{{ order.clientPhone }}</a
+          ><Phone class="size-3" />{{ formatPhone(order.clientPhone) }}</a
         >
         <p v-if="order.note">{{ order.note }}</p>
       </div>

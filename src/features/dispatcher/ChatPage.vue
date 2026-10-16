@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { formatPhone } from "@/shared/phone";
 import { onUnmounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import { ArrowLeft } from "lucide-vue-next";
@@ -173,7 +174,7 @@ async function send(all = false) {
                 {{ driver.user.fullName }}
               </p>
               <p class="mt-1 text-xs text-muted-foreground">
-                {{ driver.user.phone }}
+                {{ formatPhone(driver.user.phone) }}
               </p>
             </div>
             <span

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { formatPhone } from "@/shared/phone";
 import IncomingOrder from "./components/IncomingOrder.vue";
 import { onMounted, ref } from "vue";
 import { Car, Wallet, ChevronLeft, ChevronRight } from "lucide-vue-next";
@@ -61,7 +62,7 @@ onMounted(() => void load());
             :href="`tel:${state.profile.user.phone}`"
             class="mt-1 inline-block text-sm text-muted-foreground"
           >
-            {{ state.profile.user.phone }}
+            {{ formatPhone(state.profile.user.phone) }}
           </a>
         </div>
         <Badge

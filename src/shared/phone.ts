@@ -20,3 +20,10 @@ export function formatLocalPhone(value: string): string {
 export function isTurkmenPhone(value: string): boolean {
   return /^\+993[0-9]{8}$/.test(value);
 }
+
+/** Readable phone labels; API payloads and tel links retain canonical digits. */
+export function formatPhone(value: string): string {
+  return isTurkmenPhone(value)
+    ? `+993 ${formatLocalPhone(value.slice(4))}`
+    : value;
+}
