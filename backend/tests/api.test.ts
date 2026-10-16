@@ -881,6 +881,27 @@ test('declining a private offer releases it publicly and an old response cannot 
   assert.equal((await request('/orders/private-offer', otherToken)).data.privateOfferExpiresAt, renewed.data.privateOfferExpiresAt);
 });
 
+test('declining a private offer releases only to its original region', async () => {
+  const selected = (await request('/driver/profile', otherToken)).data;
+  const created = await order();
+  const offered = await request(`/admin/orders/${created.id}/private-offer`, adminToken, { driverId: selected.id });
+  assert.equal(offered.status, 200);
+  const originalRegion = await socket(driverToken);
+  const selectedSocket = await socket(otherToken);
+  const originalEvent = nextSocketEvent<{ id: string }>(originalRegion, 'order:new');
+  let expanded = false;
+  selectedSocket.on('order:new', () => { expanded = true; });
+  assert.equal((await request('/orders/private-offer/decline', otherToken, {
+    orderId: created.id,
+    privateOfferExpiresAt: offered.data.privateOfferExpiresAt,
+  })).status, 200);
+  assert.equal((await originalEvent).id, created.id);
+  await new Promise(resolve => setTimeout(resolve, 350));
+  assert.equal(expanded, false);
+  originalRegion.disconnect();
+  selectedSocket.disconnect();
+});
+
 test('private offer deadline survives recovery and expires to its regional queue without a debit', async () => {
   const driver = (await request('/driver/profile', otherToken)).data;
   const target = await socket(otherToken);

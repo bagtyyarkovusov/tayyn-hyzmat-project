@@ -159,25 +159,30 @@ async function expirePrivateOffers() {
   for (const order of expired) {
     const privateOfferStoppedAt = order.broadcastAfterPrivateExpiry ? null : new Date();
     const changed = await prisma.order.updateMany({ where: { id: order.id, status: 'NEW', privateOfferDriverId: order.privateOfferDriverId, privateOfferExpiresAt: { lte: new Date() } }, data: { privateOfferDriverId: null, privateOfferExpiresAt: null, privateOfferStoppedAt } });
-    if (changed.count) await publishPrivateRelease({ ...order, privateOfferStoppedAt });
+    if (changed.count) await publishPrivateRelease({ ...order, privateOfferStoppedAt }, order.broadcastAfterPrivateExpiry ? 'global' : 'none');
   }
 }
 
-async function publishPrivateRelease(order) {
+async function publishPrivateRelease(order, audience = 'regional') {
   await refreshOrderRecipients();
-  const activeDistricts = order.broadcastAfterPrivateExpiry
+  const activeDistricts = audience === 'global'
     ? await prisma.district.findMany({ where: { isActive: true }, select: { id: true } })
     : [];
   safeEmit(io => {
     io.to(rooms.driver(order.privateOfferDriverId)).emit('order:private-offer-ended', { orderId: order.id, privateOfferExpiresAt: order.privateOfferExpiresAt });
-    // Room membership is refreshed above, so this global event reaches only
-    // connected, fresh-GPS, positive-balance drivers. Release is simultaneous
-    // across regions; no second timer or region cascade is involved.
-    if (order.broadcastAfterPrivateExpiry) {
+    // Room membership is refreshed above, so public events reach only
+    // connected, fresh-GPS, positive-balance drivers. Expiry may expand
+    // simultaneously across regions; a decline stays in the original one.
+    if (audience === 'global') {
       const publicOrder = { ...safePrivateOffer(order), privateOfferExpiresAt: null };
       for (const district of activeDistricts) {
         io.to(rooms.district(district.id)).emit('order:new', publicOrder);
       }
+    } else if (audience === 'regional' && order.districtId) {
+      io.to(rooms.district(order.districtId)).emit('order:new', {
+        ...safePrivateOffer(order),
+        privateOfferExpiresAt: null,
+      });
     }
     io.to(rooms.admins()).emit('order:updated', { ...order, privateOfferDriverId: null, privateOfferExpiresAt: null });
   });
