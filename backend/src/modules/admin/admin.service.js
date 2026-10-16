@@ -35,9 +35,9 @@ async function findDriverOrThrow(driverId) {
 // they're stripped rather than echoed into list/detail responses.
 function omitPushToken(driver) {
   if (!driver) return driver;
-  const { pushToken, ...rest } = driver;
+  const { pushToken, orders, ...rest } = driver;
   void pushToken;
-  return rest;
+  return { ...rest, isAvailable: rest.isAvailable && !orders?.length };
 }
 
 async function createDriver({ phone, fullName, password }, actorId) {
@@ -64,6 +64,7 @@ async function listDrivers({ status, page, limit }) {
       take: limit,
       orderBy: { createdAt: 'desc' },
       include: {
+        orders: { where: { status: { in: ['ACCEPTED', 'WAITING', 'STARTED'] } }, select: { id: true }, take: 1 },
         user: {
           select: {
             id: true,
@@ -136,6 +137,7 @@ async function getDriver(driverId) {
   const driver = await prisma.driver.findUnique({
     where: { id: driverId },
     include: {
+      orders: { where: { status: { in: ['ACCEPTED', 'WAITING', 'STARTED'] } }, select: { id: true }, take: 1 },
       user: {
         select: {
           id: true,

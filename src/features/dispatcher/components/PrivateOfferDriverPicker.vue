@@ -1,44 +1,21 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, watch } from "vue";
 import { canFundOrder } from "@/shared/order-funding";
 import { money } from "../domain";
-import { adminApi } from "@/shared/api";
 import { Label } from "@/shared/ui/label";
 import { canOfferToDriver } from "../private-offers";
-import { useResource } from "../useResource";
-import type { Driver, Page } from "../domain";
+import { useMonitoringFleet } from "../useMonitoringFleet";
 const selected = defineModel<string>({ required: true });
 const props = defineProps<{
   id: string;
   disabled?: boolean;
   priceEstimated?: number | string | null;
 }>();
-const now = ref(Date.now());
-let timer: ReturnType<typeof setInterval> | undefined;
-const { data, loading, error, load } = useResource(
-  async () =>
-    (
-      await adminApi.get<Page<Driver>>("/admin/drivers", {
-        params: { status: "APPROVED", limit: 100 },
-      })
-    ).data.items,
-  [] as Driver[],
-  [
-    "driver:status",
-    "balance:updated",
-    "driver:location",
-    "order:accepted",
-    "order:completed",
-    "order:cancelled",
-    "order:private-offer",
-    "order:updated",
-    "order:private-offer-ended",
-  ],
-);
+const { drivers: data, loading, error, now, load } = useMonitoringFleet();
 const eligible = computed(() =>
   data.value.filter((driver) => canOfferToDriver(driver, now.value)),
 );
-watch([selected, data, loading, () => props.priceEstimated], () => {
+watch([selected, eligible, loading, () => props.priceEstimated], () => {
   if (
     !loading.value &&
     selected.value &&
@@ -49,14 +26,6 @@ watch([selected, data, loading, () => props.priceEstimated], () => {
     )
   )
     selected.value = "";
-});
-onMounted(() => {
-  timer = setInterval(() => {
-    now.value = Date.now();
-  }, 1000);
-});
-onUnmounted(() => {
-  if (timer !== undefined) clearInterval(timer);
 });
 </script>
 <template>
