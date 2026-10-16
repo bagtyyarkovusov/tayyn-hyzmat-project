@@ -1,4 +1,5 @@
 const { Router } = require('express');
+const { phoneSchema } = require('../../utils/phone-policy');
 const validate = require('../../utils/validate');
 const {
   createDriverSchema,
@@ -19,8 +20,9 @@ const controller = require('./admin.controller');
 const credentials = require('./driver-credentials');
 const asyncHandler = require('../../utils/asyncHandler');
 const { z } = require('zod');
-const passwordSchema = z.object({ password: z.string().min(8).max(72).refine(value => Buffer.byteLength(value, 'utf8') <= 72, 'Пароль должен занимать не более 72 байт'), passwordConfirmation: z.string().min(8).max(128) }).strict().refine(value => value.password === value.passwordConfirmation, { message: 'Пароли не совпадают', path: ['passwordConfirmation'] });
-const profileSchema = z.object({ fullName: z.string().trim().min(2).max(120), phone: z.string().trim().regex(/^\+[1-9]\d{7,14}$/) }).strict();
+const { newPasswordSchema } = require('../../utils/password-policy');
+const passwordSchema = z.object({ password: newPasswordSchema, passwordConfirmation: newPasswordSchema }).strict().refine(value => value.password === value.passwordConfirmation, { message: 'Пароли не совпадают', path: ['passwordConfirmation'] });
+const profileSchema = z.object({ fullName: z.string().trim().min(2).max(120), phone: phoneSchema }).strict();
 const { createOrderSchema, privateOfferSchema } = require('../orders/orders.validation');
 
 // Mounted in routes/index.js behind: authenticate, requireRole('ADMIN')

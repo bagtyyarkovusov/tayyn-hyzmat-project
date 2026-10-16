@@ -4,6 +4,8 @@ import { RouterLink, useRouter } from "vue-router";
 import { ArrowLeft } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
+import PhoneInput from "@/shared/ui/phone-input/PhoneInput.vue";
+import { passwordError, passwordHint } from "@/shared/password";
 import { Label } from "@/shared/ui/label";
 import { Badge } from "@/shared/ui/badge";
 import {
@@ -71,6 +73,13 @@ async function saveCredentials() {
     newPassword.value !== passwordConfirmation.value
   ) {
     credentialError.value = "Пароли не совпадают";
+    return;
+  }
+  if (
+    credentialDialog.value === "password" &&
+    passwordError(newPassword.value)
+  ) {
+    credentialError.value = passwordError(newPassword.value);
     return;
   }
   const generation = credentialGeneration;
@@ -572,19 +581,17 @@ function adjust(withdraw: boolean) {
               />
             </div>
             <div class="space-y-2">
-              <Label for="driver-phone">Телефон для входа</Label
-              ><Input
+              <Label for="driver-phone">Номер телефона</Label
+              ><PhoneInput
                 id="driver-phone"
                 v-model="identity.phone"
-                type="tel"
                 required
-                pattern="\+[1-9][0-9]{7,14}"
-                autocomplete="tel"
                 :disabled="credentialPending"
               />
             </div>
           </template>
           <template v-else>
+            <p class="text-xs text-muted-foreground">{{ passwordHint }}</p>
             <div class="space-y-2">
               <Label for="driver-password">Новый пароль</Label
               ><Input
@@ -593,8 +600,8 @@ function adjust(withdraw: boolean) {
                 type="password"
                 autocomplete="new-password"
                 required
-                minlength="8"
-                maxlength="128"
+                minlength="6"
+                maxlength="72"
                 :disabled="credentialPending"
               />
             </div>
@@ -606,8 +613,8 @@ function adjust(withdraw: boolean) {
                 type="password"
                 autocomplete="new-password"
                 required
-                minlength="8"
-                maxlength="128"
+                minlength="6"
+                maxlength="72"
                 :disabled="credentialPending"
               />
             </div>

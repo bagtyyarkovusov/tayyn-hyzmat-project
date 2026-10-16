@@ -3,6 +3,8 @@ import { onUnmounted, reactive, ref } from "vue";
 import { adminApi, errorMessage } from "@/shared/api";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
+import PhoneInput from "@/shared/ui/phone-input/PhoneInput.vue";
+import { passwordError, passwordHint } from "@/shared/password";
 import { Label } from "@/shared/ui/label";
 import type { Driver } from "../domain";
 const emit = defineEmits<{ created: [driver: Driver] }>();
@@ -19,6 +21,10 @@ onUnmounted(() => {
 });
 async function submit() {
   if (pending.value) return;
+  if (passwordError(form.password)) {
+    error.value = passwordError(form.password);
+    return;
+  }
   pending.value = true;
   error.value = "";
   try {
@@ -47,15 +53,7 @@ async function submit() {
       </div>
       <div class="field">
         <Label for="driver-phone">Телефон</Label>
-        <Input
-          id="driver-phone"
-          v-model="form.phone"
-          type="tel"
-          required
-          minlength="6"
-          maxlength="20"
-          autocomplete="tel"
-        />
+        <PhoneInput id="driver-phone" v-model="form.phone" required />
       </div>
       <div class="field">
         <Label for="driver-password">Пароль</Label>
@@ -65,11 +63,11 @@ async function submit() {
           type="password"
           required
           minlength="6"
-          maxlength="128"
+          maxlength="72"
           autocomplete="new-password"
         />
         <p class="muted text-xs">
-          Не менее 6 символов. Передайте пароль водителю.
+          {{ passwordHint }} Передайте пароль водителю.
         </p>
       </div>
     </fieldset>

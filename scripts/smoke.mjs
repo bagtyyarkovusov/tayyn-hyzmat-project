@@ -14,7 +14,7 @@ await request('/health');
 await request('/admin/drivers', {}, 401);
 const session = await request('/auth/login', {
   method: 'POST', headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ phone: process.env.SEED_ADMIN_PHONE || '+10000000000', password })
+  body: JSON.stringify({ phone: process.env.SEED_ADMIN_PHONE || '+99360000000', password })
 });
 if (session.user.role !== 'ADMIN') throw new Error('Expected administrator role');
 const options = { headers: { Authorization: `Bearer ${session.accessToken}` } };
