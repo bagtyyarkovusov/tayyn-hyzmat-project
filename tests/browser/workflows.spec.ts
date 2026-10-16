@@ -777,9 +777,7 @@ test("dispatcher adds an approved driver and opens their zero TMT balance", asyn
   await dialog
     .getByLabel("Пароль", { exact: true })
     .fill("SyntheticBrowser123!");
-  await dialog
-    .getByLabel("Район", { exact: true })
-    .selectOption(process.env.TEST_REGION_ID!);
+  await expect(dialog.getByLabel("Район", { exact: true })).toHaveCount(0);
   await dialog
     .getByRole("button", { name: "Добавить водителя", exact: true })
     .click();
