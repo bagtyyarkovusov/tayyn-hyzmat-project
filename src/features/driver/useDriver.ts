@@ -46,6 +46,8 @@ let locationSyncFailureAt = 0;
 let locationSending = false;
 let gpsTimer: ReturnType<typeof setInterval> | undefined;
 let lastFixAt = 0;
+let gpsRequestSequence = 0;
+let latestGpsRequestResolved = 0;
 let offlinePending = false;
 let gpsEpoch = 0;
 let handledNativeStop = -1;
@@ -589,8 +591,10 @@ function enableGps() {
     maximumAge: 10000,
     timeout: 20000,
   };
-  const report = async (position: GeolocationPosition) => {
+  const report = async (position: GeolocationPosition, requestId = 0) => {
     if (generation !== sessionGeneration || trackingEpoch !== gpsEpoch) return;
+    if (requestId && requestId < latestGpsRequestResolved) return;
+    if (requestId) latestGpsRequestResolved = requestId;
     const {
       latitude: lat,
       longitude: lng,
@@ -648,9 +652,10 @@ function enableGps() {
       }
     }
   };
-  const failed = (error: GeolocationPositionError) => {
+  const failed = (error: GeolocationPositionError, requestId = 0) => {
     console.debug("[driver-gps] geolocationFailure", error.code, error.message);
     if (generation !== sessionGeneration || trackingEpoch !== gpsEpoch) return;
+    if (requestId && requestId < latestGpsRequestResolved) return;
     state.gpsPending = false;
     void loseGps(
       error.code === error.PERMISSION_DENIED
@@ -669,10 +674,12 @@ function enableGps() {
   if (state.profile?.isOnline && gpsWatch === undefined)
     gpsWatch = navigator.geolocation.watchPosition(report, failed, options);
   // Permission and an existing watch do not prove a fresh fix was accepted by the server.
-  navigator.geolocation.getCurrentPosition(report, failed, {
-    ...options,
-    maximumAge: 0,
-  });
+  const initialRequest = ++gpsRequestSequence;
+  navigator.geolocation.getCurrentPosition(
+    (position) => void report(position, initialRequest),
+    (error) => failed(error, initialRequest),
+    { ...options, maximumAge: 0 },
+  );
   if (!state.profile?.isOnline || gpsTimer !== undefined) return;
   // A stationary driver may get no watch updates. Request a new fix rather
   // than reporting an old coordinate as fresh to keep availability alive.
@@ -685,7 +692,12 @@ function enableGps() {
       Date.now() - lastLocationSent > GPS_MAX_AGE_MS
     )
       markLocationSyncFailure("Ожидаем подтверждение связи с диспетчером…");
-    navigator.geolocation.getCurrentPosition(report, failed, options);
+    const request = ++gpsRequestSequence;
+    navigator.geolocation.getCurrentPosition(
+      (position) => void report(position, request),
+      (error) => failed(error, request),
+      options,
+    );
   }, 10000);
 }
 function start() {
