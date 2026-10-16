@@ -21,24 +21,28 @@ const open = ref(false);
 const text = ref("");
 const destructive = ref(false);
 const notification = ref(0);
-let lastMessage = "";
+const seenMessages = new Set<string>();
 let lastAttempt = -1;
 watch(
   () => [props.error, props.notice, props.attempt] as const,
   ([error, notice, attempt]) => {
+    const newAttempt = attempt !== lastAttempt;
+    if (newAttempt) {
+      seenMessages.clear();
+      lastAttempt = attempt;
+    }
     const message = error || notice;
     if (!message) {
       // Background refreshes clear their previous error before requesting.
       // Preserve reading time; an explicit next action may dismiss it early.
-      if (attempt !== lastAttempt) open.value = false;
+      if (newAttempt) open.value = false;
       return;
     }
     const key = `${error ? "error" : "notice"}:${message}`;
     // Background refreshes can clear and repeat the same failure. Only a new
     // message or an explicit driver retry should create another notification.
-    if (key === lastMessage && attempt === lastAttempt) return;
-    lastMessage = key;
-    lastAttempt = attempt;
+    if (seenMessages.has(key)) return;
+    seenMessages.add(key);
     text.value = message;
     destructive.value = Boolean(error);
     notification.value++;
