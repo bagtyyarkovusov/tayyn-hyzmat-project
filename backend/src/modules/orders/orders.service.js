@@ -102,8 +102,8 @@ const AVAILABLE_ORDER_SELECT = {
 // the one they're physically in (tapping a district square in the app -
 // see DistrictCard.vue) - defaults to the driver's own district when
 // omitted, same behavior as before this parameter existed. This is a
-// read-only view: public acceptance is checked independently in a transaction
-// and may claim an order from any region once it has been released globally.
+// read-only view. Every public order is immediately claimable from any
+// region; its region only determines who receives the initial popup.
 async function listAvailable(driver, districtId) {
   assertOrderEligibility(driver);
   await expirePrivateOffers();
@@ -118,7 +118,6 @@ async function listAvailable(driver, districtId) {
       status: 'NEW',
       privateOfferDriverId: null,
       privateOfferStoppedAt: null,
-      OR: [{ districtId: driver.districtId }, { publicReleasedGloballyAt: { not: null } }],
       ...(targetDistrictId ? { districtId: targetDistrictId } : {})
     },
     orderBy: { createdAt: 'asc' },
@@ -160,43 +159,31 @@ async function assertPrivateOfferDriver(tx, driverId, priceEstimated) {
 // The persisted deadline, rather than a process timer, decides validity.
 async function expirePrivateOffers() {
   const now = new Date();
-  const expired = await prisma.order.findMany({ where: { status: 'NEW', privateOfferStoppedAt: null, OR: [
-    { privateOfferDriverId: { not: null }, privateOfferExpiresAt: { lte: now } },
-    { privateOfferDriverId: null, publicRegionOnlyUntil: { lte: now } }
+  const expired = await prisma.order.findMany({ where: { status: 'NEW', OR: [
+    { privateOfferExpiresAt: { lte: now } },
+    { privateOfferDriverId: null, privateOfferStoppedAt: null, publicReleasedGloballyAt: null, publicRegionOnlyUntil: { lte: now } }
   ] }, include: { district: true } });
   for (const order of expired) {
+    // Legacy public rows are already globally claimable, regardless of the
+    // historical private fallback flag. Only a real private offer can stop.
+    const releasePublicly = !order.privateOfferExpiresAt || order.broadcastAfterPrivateExpiry;
     const data = { privateOfferDriverId: null, privateOfferExpiresAt: null, publicRegionOnlyUntil: null,
-      privateOfferStoppedAt: order.broadcastAfterPrivateExpiry ? null : now,
-      publicReleasedGloballyAt: order.broadcastAfterPrivateExpiry ? now : null };
-    const changed = await prisma.order.updateMany({ where: { id: order.id, status: 'NEW', privateOfferStoppedAt: null,
+      privateOfferStoppedAt: releasePublicly ? null : now,
+      publicReleasedGloballyAt: releasePublicly ? now : null };
+    const changed = await prisma.order.updateMany({ where: { id: order.id, status: 'NEW', privateOfferStoppedAt: order.privateOfferStoppedAt,
       privateOfferDriverId: order.privateOfferDriverId,
-      ...(order.privateOfferDriverId ? { privateOfferExpiresAt: { equals: order.privateOfferExpiresAt, lte: now } } : { publicRegionOnlyUntil: { equals: order.publicRegionOnlyUntil, lte: now } })
+      ...(order.privateOfferExpiresAt ? { privateOfferExpiresAt: { equals: order.privateOfferExpiresAt, lte: now } } : { publicRegionOnlyUntil: { equals: order.publicRegionOnlyUntil, lte: now } })
     }, data });
-    if (changed.count) await publishPrivateRelease({ ...order, ...data, privateOfferDriverId: order.privateOfferDriverId, privateOfferExpiresAt: order.privateOfferExpiresAt }, order.broadcastAfterPrivateExpiry ? 'global' : 'none');
+    if (changed.count) await publishPrivateRelease({ ...order, ...data, privateOfferDriverId: order.privateOfferDriverId, privateOfferExpiresAt: order.privateOfferExpiresAt }, releasePublicly ? 'global' : 'none');
   }
 }
 
-async function publishPrivateRelease(order, audience = 'regional') {
+// Queue invalidation is separate from the region-only incoming popup.
+async function publishPrivateRelease(order, audience = 'global') {
   await refreshOrderRecipients();
-  const activeDistricts = audience === 'global'
-    ? await prisma.district.findMany({ where: { isActive: true }, select: { id: true } })
-    : [];
   safeEmit(io => {
     if (order.privateOfferDriverId) io.to(rooms.driver(order.privateOfferDriverId)).emit('order:private-offer-ended', { orderId: order.id, privateOfferExpiresAt: order.privateOfferExpiresAt });
-    // Room membership is refreshed above, so public events reach only
-    // connected, fresh-GPS, positive-balance drivers. Expiry may expand
-    // simultaneously across regions; a decline stays in the original one.
-    if (audience === 'global') {
-      const publicOrder = { ...safePrivateOffer(order), privateOfferExpiresAt: null };
-      for (const district of activeDistricts) {
-        io.to(rooms.district(district.id)).emit('order:new', publicOrder);
-      }
-    } else if (audience === 'regional' && order.districtId) {
-      io.to(rooms.district(order.districtId)).emit('order:new', {
-        ...safePrivateOffer(order),
-        privateOfferExpiresAt: null,
-      });
-    }
+    if (audience === 'global') io.to(rooms.publicOrders()).emit('order:available', { orderId: order.id, districtId: order.districtId });
     io.to(rooms.admins()).emit('order:updated', { ...order, privateOfferDriverId: null, privateOfferExpiresAt: null });
   });
   await districtsService.broadcastDistrictStats();
@@ -206,7 +193,7 @@ async function getPrivateOffer(driver) {
   await expirePrivateOffers();
   // Offline/GPS expiry must not expose any new work, even via recovery.
   assertOrderEligibility(driver);
-  const offer = await prisma.order.findFirst({ where: { status: 'NEW', privateOfferDriverId: driver.id, privateOfferExpiresAt: { gt: new Date() } }, select: AVAILABLE_ORDER_SELECT });
+  const offer = await prisma.order.findFirst({ where: { status: 'NEW', privateOfferDriverId: driver.id, privateOfferStoppedAt: null, privateOfferExpiresAt: { gt: new Date() } }, select: AVAILABLE_ORDER_SELECT });
   return offer ? safePrivateOffer(offer) : null;
 }
 
@@ -238,11 +225,17 @@ async function declinePrivateOffer(orderId, driver, privateOfferExpiresAt) {
     assertShiftControl(await tx.driver.findUniqueOrThrow({ where: { id: driver.id } }), driver.sessionDeviceId);
     const order = await tx.order.findUnique({ where: { id: orderId }, include: { district: true } });
     if (!order || order.privateOfferDriverId !== driver.id || order.privateOfferExpiresAt?.toISOString() !== privateOfferExpiresAt) throw ApiError.conflict('Предложение больше недоступно');
-    const changed = await tx.order.updateMany({ where: { id: orderId, status: 'NEW', privateOfferDriverId: driver.id, privateOfferExpiresAt: { equals: new Date(privateOfferExpiresAt), gt: new Date() } }, data: { privateOfferDriverId: null, privateOfferExpiresAt: null, publicRegionOnlyUntil: order.privateOfferExpiresAt, publicReleasedGloballyAt: null } });
+    const changed = await tx.order.updateMany({ where: { id: orderId, status: 'NEW', privateOfferDriverId: driver.id, privateOfferStoppedAt: null, privateOfferExpiresAt: { equals: new Date(privateOfferExpiresAt), gt: new Date() } }, data: { privateOfferDriverId: null, privateOfferStoppedAt: new Date() } });
     if (!changed.count) throw ApiError.conflict('Предложение больше недоступно');
-    return order;
+    return tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { district: true } });
   });
-  await publishPrivateRelease(order);
+  // Decline frees the driver but does not shorten the order's exclusive deadline.
+  // The expiry sweep applies the dispatcher's public fallback setting.
+  safeEmit(io => {
+    io.to(rooms.driver(driver.id)).emit('order:private-offer-ended', { orderId, privateOfferExpiresAt });
+    io.to(rooms.admins()).emit('order:updated', order);
+  });
+  await districtsService.broadcastDistrictStats();
   return { orderId };
 }
 
@@ -298,15 +291,9 @@ async function accept(orderId, driver, etaMinutes, privateOfferExpiresAt) {
       throw ApiError.conflict('У вас уже есть активный заказ');
     }
 
-    // Was district-restricted (districtId: driver.districtId in this
-    // where clause) - a driver could only accept an order in their own
-    // GPS-derived district, per explicit earlier request. Reversed by
-    // later explicit request: any driver can now accept any open order in
-    // any district, same as DistrictOrdersSheet.vue's "Принять" button
-    // being shown for every district, not just the driver's own (see
-    // there - isOwnDistrict/canAccept no longer gate it).
+    // Public visibility is global; private delivery remains exclusive until expiry.
     const updateResult = await tx.order.updateMany({
-      where: { id: orderId, driverId: null, status: 'NEW', privateOfferStoppedAt: null, ...(privateOfferExpiresAt ? { privateOfferDriverId: driver.id, privateOfferExpiresAt: { equals: new Date(privateOfferExpiresAt), gt: new Date() } } : { privateOfferDriverId: null, OR: [{ districtId: currentDriver.districtId }, { publicReleasedGloballyAt: { not: null } }] }) },
+      where: { id: orderId, driverId: null, status: 'NEW', privateOfferStoppedAt: null, ...(privateOfferExpiresAt ? { privateOfferDriverId: driver.id, privateOfferExpiresAt: { equals: new Date(privateOfferExpiresAt), gt: new Date() } } : { privateOfferDriverId: null }) },
       data: { driverId: driver.id, status: 'ACCEPTED', acceptedAt: new Date(), etaMinutes, privateOfferDriverId: null, privateOfferExpiresAt: null }
     });
 
@@ -335,12 +322,7 @@ async function accept(orderId, driver, etaMinutes, privateOfferExpiresAt) {
     io.to(rooms.driver(driver.id)).emit('order:private-offer-ended', { orderId: order.order.id, privateOfferExpiresAt });
     io.to(rooms.admins()).emit('order:accepted', order.order);
     io.to(rooms.order(order.order.id)).emit('order:accepted', order.order);
-    // Tell every other driver watching this district that the order is gone.
-    if (order.order.publicReleasedGloballyAt) {
-      io.to(rooms.drivers()).emit('order:taken', { orderId: order.order.id });
-    } else if (order.order.districtId) {
-      io.to(rooms.district(order.order.districtId)).emit('order:taken', { orderId: order.order.id });
-    }
+    io.to(rooms.drivers()).emit('order:taken', { orderId: order.order.id });
     if (order.balanceAfter !== null) {
       io.to(rooms.driver(driver.id)).to(rooms.admins()).emit('balance:updated', {
         driverId: driver.id,
@@ -532,7 +514,7 @@ async function createOrder(data) {
       await assertPrivateOfferDriver(tx, privateOfferDriverId, publicData.priceEstimated);
     }
     return tx.order.create({
-      data: { ...publicData, pickupLat, pickupLng, districtId, status: 'NEW', broadcastAfterPrivateExpiry: privateOfferDriverId ? publicData.broadcastAfterPrivateExpiry : true, publicRegionOnlyUntil: privateOfferDriverId ? null : new Date(Date.now() + 20_000), ...(privateOfferDriverId ? { privateOfferDriverId, privateOfferExpiresAt: new Date(Date.now() + 20_000) } : {}) },
+      data: { ...publicData, pickupLat, pickupLng, districtId, status: 'NEW', broadcastAfterPrivateExpiry: privateOfferDriverId ? publicData.broadcastAfterPrivateExpiry : true, publicRegionOnlyUntil: privateOfferDriverId ? null : new Date(Date.now() + 20_000), publicReleasedGloballyAt: privateOfferDriverId ? null : new Date(), ...(privateOfferDriverId ? { privateOfferDriverId, privateOfferExpiresAt: new Date(Date.now() + 20_000) } : {}) },
       include: { district: true }
     });
   });
@@ -551,9 +533,14 @@ async function createOrder(data) {
     await districtsService.broadcastDistrictStats();
     return order;
   }
+  const deliverable = await prisma.order.findUnique({ where: { id: order.id } });
   safeEmit((io) => {
+    if (!deliverable || deliverable.status !== 'NEW' || deliverable.driverId || deliverable.privateOfferStoppedAt || deliverable.privateOfferDriverId !== order.privateOfferDriverId || deliverable.privateOfferExpiresAt?.getTime() !== order.privateOfferExpiresAt?.getTime()) return;
     if (order.privateOfferDriverId) io.to(rooms.driver(order.privateOfferDriverId)).emit('order:private-offer', safePrivateOffer(order));
-    else if (order.districtId) io.to(rooms.district(order.districtId)).emit('order:new', orderWithoutPhone);
+    else {
+      io.to(rooms.publicOrders()).emit('order:available', { orderId: order.id, districtId: order.districtId });
+      if (order.districtId) io.to(rooms.district(order.districtId)).emit('order:new', { ...orderWithoutPhone, publicOfferRemainingMs: Math.max(0, order.publicRegionOnlyUntil.getTime() - Date.now()) });
+    }
     io.to(rooms.admins()).emit('order:new', order);
   });
 

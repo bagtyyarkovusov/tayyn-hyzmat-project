@@ -12,6 +12,6 @@ These guides explain the current dispatcher and driver workflows in plain langua
 - [English client tutorial, HTML](export/tayyn-guide.en.html) and [PDF](export/tayyn-guide.en.pdf)
 - [Руководство для клиента, HTML](export/tayyn-guide.ru.html) и [PDF](export/tayyn-guide.ru.pdf)
 
-The guides describe the code on `main` as of 16 October 2026. A section named **Pending** means the behavior is planned or under review and is not a promise about the deployed build. The canonical region polygons live in [`docs/regions.md`](../regions.md). Development and release checks live in [`docs/development.md`](../development.md), [`docs/testing.md`](../testing.md), and [`docs/android.md`](../android.md).
+The guides track the workflows in this repository. Deployed behavior depends on the installed APK and deployed backend release. A section named **Pending** means the behavior is planned or under review and is not a promise about the deployed build. The canonical region polygons live in [`docs/regions.md`](../regions.md). Development and release checks live in [`docs/development.md`](../development.md), [`docs/testing.md`](../testing.md), and [`docs/android.md`](../android.md).
 
 The client HTML/PDF editions contain eight pages per language, including a separate explanation of cancellation and completion. Keep both exports synchronized when operating rules change. Their diagrams are rendered inside the document and do not need an external diagram service.

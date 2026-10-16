@@ -32,7 +32,7 @@ flowchart TD
   A[Dispatcher opens new order] --> B{Region + phone + positive TMT price valid?}
   B -- no --> B1[Show field error]
   B -- yes --> C{Offer mode}
-  C -- Public --> D[Publish to regional queue]
+  C -- Public --> D[Publish globally; popup only in original region]
   C -- Private --> E[Choose online idle driver]
   E --> F{Fresh GPS and enough balance?}
   F -- no --> F1[Explain why private offer cannot start]
@@ -58,9 +58,9 @@ sequenceDiagram
     S-->>V: Accepted, reveal customer phone
     S-->>O: order:taken, remove offer
   else Decline before deadline
-    S->>S: Release reservation
+    S->>S: Stop private delivery; preserve deadline
     S-->>V: Offer ended
-    S-->>O: Open original region until original deadline
+    Note over S,O: No public visibility before original deadline
   else Deadline expires
     S->>S: Release reservation
     alt Expansion enabled
@@ -71,7 +71,7 @@ sequenceDiagram
   end
 ```
 
-After a private offer expires, the dispatcher choice controls the next state. This behavior is merged in #79 (`715b648`):
+After a private offer expires, the dispatcher choice controls the next state:
 
 ```mermaid
 flowchart LR
@@ -82,7 +82,7 @@ flowchart LR
   Q --> R[Broadcast order:taken to everyone]
 ```
 
-There is no second timer after expansion.
+There is no second timer or incoming popup after expansion. Public announcements are immediately claimable globally; the original region alone receives the 20-second popup.
 
 ## Balance and trip lifecycle
 
@@ -93,7 +93,7 @@ stateDiagram-v2
   Public --> Reserved: private offer
   Public --> Accepted: first valid public claim
   Reserved --> Accepted: selected driver accepts before 20s
-  Reserved --> Public: early decline, original region only
+  Reserved --> Reserved: early decline; stop delivery until deadline
   Reserved --> Public: expiry with expansion
   Reserved --> Stopped: expiry without expansion
   Accepted --> Waiting: driver arrives

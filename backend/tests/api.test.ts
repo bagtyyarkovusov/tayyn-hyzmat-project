@@ -66,9 +66,6 @@ async function socketEvent(client: Socket, event: string): Promise<any[]> {
 async function order(priceEstimated: number | null = 10) {
   const response = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: priceEstimated ?? 10, pickupAddress: 'Synthetic pickup', clientPhone: '+99360000999' });
   assert.equal(response.status, 201);
-  // Legacy lifecycle fixtures start after the regional offer window; timing
-  // behavior has dedicated HTTP/socket cases below.
-  await prisma.order.update({ where: { id: response.data.id }, data: { publicRegionOnlyUntil: null, publicReleasedGloballyAt: new Date() } });
   if (priceEstimated === null) {
     await prisma.order.update({ where: { id: response.data.id }, data: { priceEstimated: null } });
   }
@@ -511,6 +508,28 @@ test('native inbox safely replays notifications and removes consumed orders and 
   assert.deepEqual(consumed.data.events, []);
 });
 
+test('native public alerts stay in the original region for 20 seconds while queues remain global', async () => {
+  const auth = await request('/auth/login', '', { phone: '+99360000102', password, deviceId: 'synthetic-approved-browser' });
+  const started = await request('/driver/shift', auth.data.accessToken, { deviceId: 'synthetic-approved-browser', refreshToken: auth.data.refreshToken });
+  assert.equal(started.status, 201);
+  const outside = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99360000999' });
+  const own = await request('/admin/orders', adminToken, { districtId: otherRegionId, priceEstimated: 10, clientPhone: '+99360000999' });
+  const tick = () => request('/native-shift/tick', started.data.shiftToken, { lat: 37.96, lng: 58.42, recordedAt: new Date().toISOString() });
+  const first = await tick();
+  assert.deepEqual(first.data.events.filter((event: { channel: string }) => event.channel === 'orders').map((event: { orderId: string }) => event.orderId), [own.data.id]);
+  const ownEvent = first.data.events.find((event: { orderId: string }) => event.orderId === own.data.id);
+  assert.equal(ownEvent.expiresAt, own.data.publicRegionOnlyUntil);
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, auth.data.accessToken)).data[0].id, outside.data.id);
+  await prisma.order.update({ where: { id: own.data.id }, data: { publicRegionOnlyUntil: new Date(Date.now() - 1) } });
+  assert.deepEqual((await tick()).data.events, []);
+  assert.equal((await request(`/orders/available?districtId=${otherRegionId}`, auth.data.accessToken)).data[0].id, own.data.id);
+  const selected = (await request('/driver/profile', auth.data.accessToken)).data;
+  const privateOrder = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99360000999', privateOfferDriverId: selected.id });
+  assert.equal((await tick()).data.events[0].orderId, privateOrder.data.id);
+  await prisma.order.update({ where: { id: privateOrder.data.id }, data: { privateOfferExpiresAt: new Date(Date.now() - 1) } });
+  assert.deepEqual((await tick()).data.events, [], 'private fallback is public availability without a second alert');
+});
+
 test('native chat inbox includes the newest unread message when more than one hundred are pending', async () => {
   const auth = await request('/auth/login', '', { phone: '+99360000101', password, deviceId: 'synthetic-approved-browser' });
   await request('/driver/location', auth.data.accessToken, { lat: 37.96, lng: 58.32 });
@@ -885,7 +904,7 @@ test('private offers reserve cross-region orders without disclosing phone or cha
   assert.equal((await request('/driver/balance', otherToken)).data.amount, '490');
 });
 
-test('declining a private offer releases it publicly and an old response cannot decline a newer reservation', async () => {
+test('a declined private offer stays exclusive until expiry and an old response cannot decline a newer reservation', async () => {
   const driver = (await request('/driver/profile', otherToken)).data;
   const created = await order();
   const offered = await request(`/admin/orders/${created.id}/private-offer`, adminToken, { driverId: driver.id });
@@ -893,8 +912,10 @@ test('declining a private offer releases it publicly and an old response cannot 
   const deadline = offered.data.privateOfferExpiresAt;
   assert.equal((await request('/orders/private-offer/decline', driverToken, { orderId: created.id, privateOfferExpiresAt: deadline })).status, 409);
   assert.equal((await request('/orders/private-offer/decline', otherToken, { orderId: created.id, privateOfferExpiresAt: deadline })).status, 200);
-  assert.equal((await request(`/orders/available?districtId=${regionId}`, driverToken)).data[0].id, created.id);
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, driverToken)).data.length, 0);
   assert.equal((await request('/driver/balance', otherToken)).data.amount, '500');
+  await prisma.order.update({ where: { id: created.id }, data: { privateOfferExpiresAt: new Date(Date.now() - 1) } });
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, driverToken)).data[0].id, created.id);
   const renewed = await request(`/admin/orders/${created.id}/private-offer`, adminToken, { driverId: driver.id });
   assert.equal(renewed.status, 200);
   assert.notEqual(renewed.data.privateOfferExpiresAt, deadline);
@@ -902,28 +923,40 @@ test('declining a private offer releases it publicly and an old response cannot 
   assert.equal((await request('/orders/private-offer', otherToken)).data.privateOfferExpiresAt, renewed.data.privateOfferExpiresAt);
 });
 
-test('declining a private offer releases only to its original region', async () => {
+for (const fallback of [true, false]) {
+  test(`declining a private offer keeps its fixed exclusive deadline before applying fallback=${fallback}`, async () => {
+    const selected = (await request('/driver/profile', otherToken)).data;
+    const originalRegion = await socket(driverToken);
+    const publicPopups: unknown[] = [];
+    originalRegion.on('order:new', event => publicPopups.push(event));
+    const created = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: selected.id, broadcastAfterPrivateExpiry: fallback });
+    assert.equal(created.status, 201);
+    assert.equal((await request('/orders/private-offer/decline', otherToken, { orderId: created.data.id, privateOfferExpiresAt: created.data.privateOfferExpiresAt })).status, 200);
+    assert.equal((await request('/orders/private-offer', otherToken)).data, null);
+    assert.equal((await request(`/orders/available?districtId=${regionId}`, driverToken)).data.length, 0);
+    assert.equal((await request('/orders/accept', driverToken, { orderId: created.data.id })).status, 409);
+    assert.equal((await request('/orders/private-offer/accept', otherToken, { orderId: created.data.id, privateOfferExpiresAt: created.data.privateOfferExpiresAt })).status, 409);
+    await prisma.order.update({ where: { id: created.data.id }, data: { privateOfferExpiresAt: new Date(Date.now() - 1) } });
+    const released = (await request(`/orders/available?districtId=${regionId}`, otherToken)).data;
+    assert.equal(released.some((item: { id: string }) => item.id === created.data.id), fallback);
+    const result = await request('/orders/accept', driverToken, { orderId: created.data.id });
+    assert.equal(result.status, fallback ? 200 : 409);
+    assert.deepEqual(publicPopups, []);
+    originalRegion.disconnect();
+  });
+}
+
+test('declining frees the driver to claim other work while the declined order stays exclusive until its deadline', async () => {
   const selected = (await request('/driver/profile', otherToken)).data;
-  const created = await order();
-  const offered = await request(`/admin/orders/${created.id}/private-offer`, adminToken, { driverId: selected.id });
-  assert.equal(offered.status, 200);
-  const originalRegion = await socket(driverToken);
-  const selectedSocket = await socket(otherToken);
-  const originalEvent = nextSocketEvent<{ id: string }>(originalRegion, 'order:new');
-  let expanded = false;
-  selectedSocket.on('order:new', () => { expanded = true; });
-  assert.equal((await request('/orders/private-offer/decline', otherToken, {
-    orderId: created.id,
-    privateOfferExpiresAt: offered.data.privateOfferExpiresAt,
-  })).status, 200);
-  assert.equal((await originalEvent).id, created.id);
-  await new Promise(resolve => setTimeout(resolve, 350));
-  assert.equal(expanded, false);
-  originalRegion.disconnect();
-  selectedSocket.disconnect();
+  const reserved = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: selected.id });
+  assert.equal((await request('/orders/private-offer/decline', otherToken, { orderId: reserved.data.id, privateOfferExpiresAt: reserved.data.privateOfferExpiresAt })).status, 200);
+  const another = await order();
+  assert.equal((await request('/orders/accept', otherToken, { orderId: another.id })).status, 200);
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, driverToken)).data.some((item: { id: string }) => item.id === reserved.data.id), false);
+  assert.equal((await request('/orders/accept', driverToken, { orderId: reserved.data.id })).status, 409);
 });
 
-test('private offer deadline survives recovery and expires to its regional queue without a debit', async () => {
+test('private offer deadline survives recovery and expires to the global queue without a debit', async () => {
   const driver = (await request('/driver/profile', otherToken)).data;
   const target = await socket(otherToken);
   const received = nextSocketEvent<{ id: string; privateOfferExpiresAt: string; privateOfferRemainingMs: number; clientPhone?: string }>(target, 'order:private-offer');
@@ -954,7 +987,10 @@ test('private expiry expansion is simultaneous across regions and any driver can
   const selected = (await request('/driver/profile', driverToken)).data;
   const regionalDriver = await socket(driverToken);
   const outsideDriver = await socket(otherToken);
-  const publicEvent = nextSocketEvent<{ id: string }>(outsideDriver, 'order:new');
+  const publicEvent = nextSocketEvent<{ orderId: string; districtId: string }>(outsideDriver, 'order:available');
+  const unexpectedPopups: unknown[] = [];
+  outsideDriver.on('order:new', event => unexpectedPopups.push(event));
+  regionalDriver.on('order:new', event => unexpectedPopups.push(event));
   const created = await request('/admin/orders', adminToken, {
     districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: selected.id
   });
@@ -962,7 +998,8 @@ test('private expiry expansion is simultaneous across regions and any driver can
   await prisma.order.update({ where: { id: created.data.id }, data: { privateOfferExpiresAt: new Date(Date.now() - 1) } });
   const sweep = request(`/orders/available?districtId=${regionId}`, otherToken);
   const event = await publicEvent;
-  assert.equal(event.id, created.data.id);
+  assert.equal(event.orderId, created.data.id);
+  assert.deepEqual(unexpectedPopups, []);
   const available = await sweep;
   assert.equal(available.data[0].id, created.data.id);
   const accepted = await request('/orders/accept', otherToken, { orderId: created.data.id });
@@ -1771,25 +1808,62 @@ test('GPS capture time stays identical in profile, location event and history', 
   assert.equal(history.recordedAt.toISOString(), expected);
 });
 
-test('public orders stay regional until their persisted deadline then disappear for all drivers after a claim', async () => {
+test('public orders reach all regions immediately while only the original region gets a popup and the first claim closes every queue', async () => {
   const regional = await socket(driverToken);
   const outside = await socket(otherToken);
+  const outsidePopups: unknown[] = [];
+  outside.on('order:new', event => outsidePopups.push(event));
+  const regionalPopup = nextSocketEvent<{ id: string; clientPhone?: string }>(regional, 'order:new');
+  const globalUpdate = nextSocketEvent<{ orderId: string; districtId: string }>(outside, 'order:available');
   const created = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000' });
   assert.equal(created.status, 201);
-  assert.ok(Date.parse(created.data.publicRegionOnlyUntil) - Date.now() > 18_000);
-  assert.equal((await request(`/orders/available?districtId=${regionId}`, otherToken)).data.some((item: { id: string }) => item.id === created.data.id), false);
-  assert.equal((await request('/orders/accept', otherToken, { orderId: created.data.id })).status, 409);
-  const expanded = nextSocketEvent<{ id: string; clientPhone?: string }>(outside, 'order:new');
-  await prisma.order.update({ where: { id: created.data.id }, data: { publicRegionOnlyUntil: new Date(Date.now() - 1) } });
   const available = await request(`/orders/available?districtId=${regionId}`, otherToken);
-  assert.equal((await expanded).id, created.data.id);
-  assert.equal(available.data[0].id, created.data.id);
+  assert.equal(available.data[0]?.id, created.data.id, 'another region sees a newly created public order before 20 seconds');
   assert.equal(available.data[0].clientPhone, undefined);
-  const removed = nextSocketEvent<{ orderId: string }>(outside, 'order:taken');
-  assert.equal((await request('/orders/accept', driverToken, { orderId: created.data.id })).status, 200);
-  assert.equal((await removed).orderId, created.data.id);
+  const popup = await regionalPopup;
+  assert.equal(popup.id, created.data.id);
+  assert.equal(popup.clientPhone, undefined);
+  assert.deepEqual(await globalUpdate, { orderId: created.data.id, districtId: regionId });
+  const removedRegional = nextSocketEvent<{ orderId: string }>(regional, 'order:taken');
+  const removedOutside = nextSocketEvent<{ orderId: string }>(outside, 'order:taken');
+  const claims = await Promise.all([driverToken, otherToken].map(token => request('/orders/accept', token, { orderId: created.data.id })));
+  assert.deepEqual(claims.map(result => result.status).sort(), [200, 409]);
+  assert.equal((await removedRegional).orderId, created.data.id);
+  assert.equal((await removedOutside).orderId, created.data.id);
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, driverToken)).data.length, 0);
   assert.equal((await request(`/orders/available?districtId=${regionId}`, otherToken)).data.length, 0);
+  assert.deepEqual(outsidePopups, []);
   regional.disconnect(); outside.disconnect();
+});
+
+for (const deadlineOffset of [-1, 20_000]) {
+test(`existing public rows remain globally claimable with a regional deadline offset=${deadlineOffset} and stale private fallback disabled`, async () => {
+  const created = await order();
+  // Fixture: a public order persisted by the previous regional-first release.
+  await prisma.order.update({ where: { id: created.id }, data: { publicReleasedGloballyAt: null, publicRegionOnlyUntil: new Date(Date.now() + deadlineOffset), broadcastAfterPrivateExpiry: false } });
+  const available = await request(`/orders/available?districtId=${regionId}`, otherToken);
+  assert.equal(available.data[0].id, created.id);
+  assert.equal((await request('/orders/accept', otherToken, { orderId: created.id })).status, 200);
+});
+}
+
+test('dispatcher cancellation closes a fresh public order in every region without a manual refresh', async () => {
+  const original = await socket(driverToken);
+  const outside = await socket(otherToken);
+  const originalStats = nextSocketEvent<Array<{ id: string; activeOrders: number }>>(original, 'districts:stats');
+  const outsideStats = nextSocketEvent<Array<{ id: string; activeOrders: number }>>(outside, 'districts:stats');
+  const created = await order();
+  for (const stats of await Promise.all([originalStats, outsideStats])) assert.equal(stats.find(row => row.id === regionId)?.activeOrders, 1);
+  const removedOriginal = nextSocketEvent<{ orderId: string }>(original, 'order:taken');
+  const removedOutside = nextSocketEvent<{ orderId: string }>(outside, 'order:taken');
+  const updatedStats = nextSocketEvent<Array<{ id: string; activeOrders: number }>>(outside, 'districts:stats');
+  assert.equal((await request(`/admin/orders/${created.id}/cancel`, adminToken, { reason: 'Customer cancelled' })).status, 200);
+  assert.equal((await removedOriginal).orderId, created.id);
+  assert.equal((await removedOutside).orderId, created.id);
+  assert.equal((await updatedStats).find(row => row.id === regionId)?.activeOrders, 0);
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, otherToken)).data.length, 0);
+  assert.equal((await request('/orders/accept', otherToken, { orderId: created.id })).status, 409);
+  original.disconnect(); outside.disconnect();
 });
 
 test('dispatcher lifecycle filters separate unclaimed waiting from in-progress orders and preserve legacy active queries', async () => {
@@ -1886,7 +1960,7 @@ test('live waiting includes overnight public orders and expired reservations but
   const baseOrder = { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32 };
   await prisma.order.createMany({ data: [
     { ...baseOrder, status: 'NEW', createdAt: new Date(start - 60_000) },
-    // A fresh regional-only order is public; public is not globally claimable.
+    // A fresh unreserved order is public and globally claimable.
     { ...baseOrder, status: 'NEW', createdAt: new Date(now) },
     { ...baseOrder, status: 'NEW', createdAt: new Date(now), privateOfferDriverId: drivers[0].id, privateOfferExpiresAt: new Date(now - 1) },
     { ...baseOrder, status: 'NEW', createdAt: new Date(start - 120_000), privateOfferDriverId: drivers[1].id, privateOfferExpiresAt: new Date(now + 60_000) },

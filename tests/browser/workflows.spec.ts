@@ -1372,7 +1372,7 @@ test("regional queues and counts recover through updates, reconnect and reload",
     await test.step("an older HTTP snapshot cannot replace newer live counts", async () => {
       let release = () => {};
       try {
-        await expect(card.getByText("1:0", { exact: true })).toBeVisible();
+        await expect(card.getByText("0:1", { exact: true })).toBeVisible();
         let captured = () => {};
         const ready = new Promise<void>((r) => {
           captured = r;
@@ -1440,7 +1440,7 @@ test("regional queues and counts recover through updates, reconnect and reload",
             )
           ).ok(),
         ).toBe(true);
-        await expect(card.getByText("1:0", { exact: true })).toBeVisible();
+        await expect(card.getByText("0:1", { exact: true })).toBeVisible();
       } finally {
         release();
       }

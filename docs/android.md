@@ -80,3 +80,7 @@ an otherwise healthy shift and restores availability for new work.
 Test both installed-Yandex and browser-fallback paths on the release phone.
 Browser automation verifies route coordinates and the missing-destination rule;
 it cannot certify an installed third-party application's routing behavior.
+
+## Agreed next notification update, not implemented here
+
+See [Firebase setup and integration](research/firebase-notification-setup.md) and [issue #112](https://github.com/bagtyyarkovusov/tayyn-hyzmat-project/issues/112). Independent chat delivery, swiping without ending a shift, one Profile notification control that does not gate a shift, and separate GPS/system-location and connection indicators are agreed requirements. The current shift polling still has the limitations described above; creating a Firebase project does not enable those behaviors by itself.

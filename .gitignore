@@ -101,6 +101,10 @@ android/keystore/
 android/local.properties
 android/app/src/main/assets/public
 
+# Supply environment-specific Firebase Android configuration locally or in CI.
+android/app/google-services.json
+android/app/src/**/google-services.json
+
 # Local credentials and infrastructure state
 .env.*
 !.env.example

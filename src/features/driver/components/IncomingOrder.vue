@@ -24,7 +24,7 @@ const eta = ref(10);
         }}
       </h2>
       <p
-        v-if="state.incoming.privateOfferExpiresAt"
+        v-if="state.offerSeconds > 0"
         class="shrink-0 pt-0.5 text-sm font-semibold tabular-nums"
         role="timer"
         aria-label="Осталось времени на принятие"
