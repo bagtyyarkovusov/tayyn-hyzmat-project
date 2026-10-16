@@ -6,13 +6,15 @@ This guide describes the driver app, dispatcher dashboard, and the rules they sh
 
 A dispatcher signs in with the fixed `+993` phone format and password. A driver uses the same format. The dispatcher creates or edits driver credentials; drivers do not receive or display an existing password. A phone or password reset revokes the old access and takes that driver offline. The driver keeps their approved device, balance, and active trip, then signs in again.
 
+Driver login identifies the device. A new device requires dispatcher approval; switching to another approved device signs out the previous session. Logout ends the account's current sessions, including native shift availability. It does not sign out another account or remove an accepted trip.
+
 The pilot has one dispatcher and synthetic driver accounts. It uses TMT only and no real payments. The development seed is not a production credential store. Keep production secrets outside the repository and Railway logs.
 
 ## What the driver sees
 
 The home screen shows all saved dispatch regions as a compact grid. Each region card shows the number of online cars and active orders. The driver cannot choose a region manually. The server assigns the current region from the driver's fresh GPS point and the saved polygon. A point outside every polygon shows **Outside region** and the real coordinates. A region centre is only a fallback coordinate, never proof of the driver's exact pickup.
 
-The driver can open orders, map, chat, and profile from the bottom navigation. Orders and trip controls open in dialogs, so the region grid stays compact. Message history scrolls inside the chat; Enter sends a message and Shift+Enter adds a line.
+The driver can open orders, map, chat, and profile from the bottom navigation. The current trip shows its price, call action and next step above the grid. Open its details dialog for route information and permitted cancellation. Region order lists use dialogs. Message history scrolls inside the chat; Enter sends a message and Shift+Enter adds a line.
 
 ## Readiness and going online
 
@@ -105,6 +107,8 @@ GPS and polygon matching decide eligibility. Address lookup only adds a street o
 The compact Today view uses Asia/Ashgabat time for orders created today. It keeps all currently waiting orders in a separate live section, including orders created earlier. The first measures are waiting count, oldest waiting age, median and p90 acceptance time, completed count/rate, and cancelled count/rate. PR #67 is merged after all CI checks passed. Private-offer conversion and shift utilisation need more history and are later work.
 
 ## Recovery and safety
+
+If the app cannot verify the session during a connection failure, it keeps the sign-in details and shows a retry screen. Restore internet and choose Повторить подключение, or return to the app after the network recovers. Do not create another account to bypass this screen. An expired or revoked session requires signing in again.
 
 Every action is server-authoritative. Reload restores the active trip and balance. Reconnect replays missed state through HTTP and Socket.IO. A response from an old screen must not overwrite newer location or order data. A driver who is offline may retain a timestamped last location, but that point cannot receive an offer or count as online.
 
