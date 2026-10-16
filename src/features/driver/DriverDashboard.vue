@@ -11,7 +11,6 @@ import {
   Check,
   MapPinOff,
   LoaderCircle,
-  ChevronRight,
 } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
 import {
@@ -25,9 +24,10 @@ import { useDriver } from "./useDriver";
 import { useDriverAddress } from "./useDriverAddress";
 import { alertState, enableOrderAlerts, syncAlertPermission } from "./alerts";
 import { nativeAndroid } from "./nativeShift";
-import { money, statusLabels } from "./model";
+import { money } from "./model";
 import IncomingOrder from "./components/IncomingOrder.vue";
 import DriverFeedback from "./components/DriverFeedback.vue";
+import ActiveTripFeed from "./components/ActiveTripFeed.vue";
 import ActiveTrip from "./components/ActiveTrip.vue";
 import AvailableOrders from "./components/AvailableOrders.vue";
 const {
@@ -398,31 +398,13 @@ watch(
         </div>
       </div>
       <DriverFeedback
-        :blockers="blockers"
+        :blockers="state.active ? [] : blockers"
         :error="incomingOpen || tripOpen ? '' : state.error"
         :notice="state.notice"
         :attempt="state.actionAttempt"
       />
     </div>
-    <button
-      v-if="state.active"
-      class="trip-strip flex min-h-11 shrink-0 items-center gap-3 rounded-lg bg-secondary px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      aria-label="Поездка"
-      @click="tripOpen = true"
-    >
-      <span
-        class="size-2 shrink-0 rounded-full bg-success"
-        aria-hidden="true"
-      />
-      <span class="min-w-0 flex-1 truncate text-sm font-semibold"
-        >{{ statusLabels[state.active.status] }} ·
-        {{ state.active.pickupAddress || "Поездка" }}</span
-      >
-      <span class="shrink-0 text-sm font-semibold tabular-nums">{{
-        money(state.active.priceEstimated)
-      }}</span>
-      <ChevronRight class="size-4 shrink-0" aria-hidden="true" />
-    </button>
+    <ActiveTripFeed @details="tripOpen = true" />
     <p v-if="state.position && locationReady" class="sr-only" role="status">
       GPS · точность {{ Math.round(state.position.accuracy) }} м
     </p>
@@ -448,6 +430,7 @@ watch(
       role="group"
       aria-label="Регионы"
       class="region-grid grid min-h-0 flex-1 grid-cols-3 gap-2"
+      :class="{ 'region-grid-with-trip': state.active }"
       :style="{
         '--region-rows': Math.ceil(state.districts.length / 3),
         '--region-wide-rows': Math.ceil(state.districts.length / 5),
@@ -485,8 +468,9 @@ watch(
       </button>
     </div>
     <Dialog :open="!!selected" @update:open="!$event && (selected = null)"
-      ><DialogContent class="max-h-[85dvh] overflow-y-auto"
-        ><DialogHeader
+      ><DialogContent
+        class="queue-dialog flex max-h-[85dvh] flex-col overflow-hidden"
+        ><DialogHeader class="shrink-0 pr-8"
           ><DialogTitle>Заказы района</DialogTitle
           ><DialogDescription
             >Выберите заказ и время прибытия.</DialogDescription
@@ -571,12 +555,31 @@ watch(
   max-height: 24rem;
   grid-template-rows: repeat(var(--region-rows), minmax(0, 1fr));
 }
+.region-grid-with-trip > button {
+  min-height: 44px;
+  padding: 4px;
+  gap: 2px;
+}
+.region-grid-with-trip .region-score {
+  font-size: 1.125rem;
+  line-height: 1;
+}
+.region-grid-with-trip .region-name {
+  font-size: 0.75rem;
+  line-height: 1.1;
+}
 @media (max-height: 650px) {
   .driver-home {
     gap: 0.375rem;
   }
   .region-name {
     font-size: 12px;
+  }
+  .region-grid-with-trip .region-name {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
   }
 }
 @media (orientation: landscape) and (max-height: 500px) {
@@ -595,6 +598,13 @@ watch(
   }
   .region-score {
     font-size: 18px;
+  }
+  .region-grid-with-trip .region-name {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
   .region-grid {
     grid-template-columns: repeat(5, minmax(0, 1fr));

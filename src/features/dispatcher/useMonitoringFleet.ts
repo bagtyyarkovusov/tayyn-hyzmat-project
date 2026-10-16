@@ -24,6 +24,11 @@ export function useMonitoringFleet() {
   let clock: ReturnType<typeof setInterval> | undefined;
   let reconcile: ReturnType<typeof setInterval> | undefined;
   const locations = new Map<string, LocationUpdate>();
+  let revision = 0;
+  const availability = new Map<
+    string,
+    { revision: number; isAvailable: boolean; isOnline?: boolean }
+  >();
   const off: (() => void)[] = [];
   function patch(driver: Driver, update?: LocationUpdate): Driver {
     if (
@@ -48,6 +53,7 @@ export function useMonitoringFleet() {
     running = true;
     loading.value = drivers.value.length === 0;
     lastRead = Date.now();
+    const readRevision = revision;
     try {
       const fleet = new Map<string, Driver>();
       let page = 1;
@@ -59,8 +65,20 @@ export function useMonitoringFleet() {
         if (!alive) return;
         total = response.data.total;
         const previousSize = fleet.size;
-        for (const driver of response.data.items)
-          fleet.set(driver.id, patch(driver, locations.get(driver.id)));
+        for (const driver of response.data.items) {
+          const update = availability.get(driver.id);
+          const current =
+            update && update.revision > readRevision
+              ? {
+                  ...driver,
+                  isAvailable: update.isAvailable,
+                  ...(update.isOnline !== undefined
+                    ? { isOnline: update.isOnline }
+                    : {}),
+                }
+              : driver;
+          fleet.set(driver.id, patch(current, locations.get(driver.id)));
+        }
         if (!response.data.items.length || fleet.size === previousSize) break;
         page++;
       } while (fleet.size < total);
@@ -133,20 +151,56 @@ export function useMonitoringFleet() {
       driver.id === update.driverId ? patch(driver, update) : driver,
     );
   }
+  function status(update: {
+    driverId: string;
+    isAvailable: boolean;
+    isOnline?: boolean;
+  }) {
+    availability.set(update.driverId, { ...update, revision: ++revision });
+    drivers.value = drivers.value.map((driver) =>
+      driver.id === update.driverId
+        ? {
+            ...driver,
+            isAvailable: update.isAvailable,
+            ...(update.isOnline !== undefined
+              ? { isOnline: update.isOnline }
+              : {}),
+          }
+        : driver,
+    );
+    schedule();
+  }
+  function order(update: { driverId?: string; status?: string }) {
+    if (
+      update.driverId &&
+      update.status &&
+      ["ACCEPTED", "WAITING", "STARTED", "COMPLETED", "CANCELLED"].includes(
+        update.status,
+      )
+    )
+      status({
+        driverId: update.driverId,
+        isAvailable: ["COMPLETED", "CANCELLED"].includes(update.status),
+      });
+    else schedule();
+  }
   function visible() {
     if (document.visibilityState === "visible") schedule();
   }
   onMounted(() => {
     void load();
     off.push(adminSession.on("driver:location", location));
+    off.push(adminSession.on("driver:status", status));
     for (const event of [
-      "connect",
-      "driver:status",
-      "driver:registered",
       "order:accepted",
       "order:completed",
       "order:cancelled",
       "order:updated",
+    ])
+      off.push(adminSession.on(event, order));
+    for (const event of [
+      "connect",
+      "driver:registered",
       "order:private-offer-ended",
       "balance:updated",
     ])

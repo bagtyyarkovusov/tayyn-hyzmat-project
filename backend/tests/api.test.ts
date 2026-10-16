@@ -1798,3 +1798,32 @@ test('dispatcher lifecycle filters separate unclaimed waiting from in-progress o
   assert.equal((await request('/admin/orders', adminToken)).data.total, 6);
   assert.equal((await request('/admin/orders?status=unknown', adminToken)).status, 400);
 });
+
+for (const status of ['ACCEPTED', 'WAITING', 'STARTED'] as const) {
+  test(`active ${status} trip stays busy across Online and legacy availability snapshots`, async () => {
+    const driver = (await request('/driver/profile', driverToken)).data;
+    const active = await order(25);
+    assert.equal((await request('/orders/accept', driverToken, { orderId: active.id, arrivalMinutes: 5 })).status, 200);
+    if (status !== 'ACCEPTED') assert.equal((await request('/orders/waiting', driverToken, { orderId: active.id })).status, 200);
+    if (status === 'STARTED') assert.equal((await request('/orders/start', driverToken, { orderId: active.id })).status, 200);
+    const adminSocket = await socket(adminToken);
+    const statusEvent = nextSocketEvent<{ driverId: string; isAvailable: boolean }>(adminSocket, 'driver:status');
+    const online = await request('/driver/status', driverToken, { isOnline: true, isAvailable: true });
+    assert.equal(online.status, 200);
+    assert.equal(online.data.isAvailable, false);
+    assert.equal((await statusEvent).isAvailable, false);
+    // Imported rows/old clients must not make the monitoring UI claim a busy driver is free.
+    await prisma.driver.update({ where: { id: driver.id }, data: { isAvailable: true } });
+    const list = await request('/admin/drivers?status=APPROVED&limit=100', adminToken);
+    assert.equal(list.data.items.find((item: { id: string }) => item.id === driver.id).isAvailable, false);
+    assert.equal((await request(`/admin/drivers/${driver.id}`, adminToken)).data.isAvailable, false);
+    const regions = await request('/districts', driverToken);
+    assert.equal(regions.data.find((item: { id: string }) => item.id === regionId).freeDrivers, 0);
+    const offer = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: driver.id });
+    assert.equal(offer.status, 409);
+    const next = await order(10);
+    assert.equal((await request('/orders/accept', driverToken, { orderId: next.id, arrivalMinutes: 5 })).status, 409);
+    assert.equal((await request('/orders/current', driverToken)).data.id, active.id);
+    adminSocket.disconnect();
+  });
+}

@@ -29,6 +29,11 @@ export async function updateCredentialedStatus(
       if (!balance.amount.greaterThan(0))
         throw ApiError.forbidden("Пополните баланс, чтобы выйти на линию");
     }
-    return tx.driver.update({ where: { id: driverId }, data });
+    const active = await tx.order.findFirst({
+      where: { driverId, status: { in: ["ACCEPTED", "WAITING", "STARTED"] } },
+      select: { id: true },
+    });
+    // An active trip always overrides caller-provided availability.
+    return tx.driver.update({ where: { id: driverId }, data: { ...data, isAvailable: active ? false : (data.isAvailable ?? driver.isAvailable) } });
   });
 }
