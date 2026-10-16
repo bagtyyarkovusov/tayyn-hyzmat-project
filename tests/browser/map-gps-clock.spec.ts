@@ -48,21 +48,35 @@ test.afterAll(async () => {
 async function mapStub(page: Page) {
   await page.addInitScript(() => {
     class Objects {
-      add() {}
-      remove() {}
+      constructor(private node: HTMLElement) {}
+      add(marker: { element: HTMLElement }) {
+        this.node.append(marker.element);
+      }
+      remove(marker: { element: HTMLElement }) {
+        marker.element.remove();
+      }
     }
     class MapStub {
-      geoObjects = new Objects();
+      geoObjects: Objects;
       setCenter() {}
       destroy() {}
       constructor(node: HTMLElement) {
-        node.textContent = "Synthetic map — external SDK boundary";
+        this.geoObjects = new Objects(node);
       }
     }
     class Marker {
-      geometry = { setCoordinates() {} };
+      element = document.createElement("span");
+      geometry = {
+        setCoordinates: (coords: number[]) => {
+          this.element.textContent = coords.join(",");
+        },
+      };
       options = { set() {} };
       events = { add() {} };
+      constructor(coords: number[]) {
+        this.element.style.display = "inline-block";
+        this.geometry.setCoordinates(coords);
+      }
     }
     (window as any).ymaps = {
       ready: (callback: () => void) => callback(),
@@ -104,15 +118,12 @@ test("new GPS fixes keep the selected map driver offerable between timer ticks",
   );
   expect(loginResponse.ok()).toBeTruthy();
   driverToken = (await loginResponse.json()).accessToken;
-  for (let i = 0; i < 3; i++) {
+  for (const lat of [37.96, 37.96001, 37.96002]) {
     await page.waitForTimeout(1100);
-    const loaded = page.waitForResponse(
-      (response) => response.url().includes("/admin/drivers?") && response.ok(),
-    );
     const response = await page.request.post(
       `${process.env.TEST_API_URL}/driver/location`,
       {
-        data: { lat: 37.96 + i * 0.00001, lng: 58.32 },
+        data: { lat, lng: 58.32 },
         headers: {
           Authorization: `Bearer ${driverToken}`,
           "X-Forwarded-For": "198.18.44.78",
@@ -120,7 +131,7 @@ test("new GPS fixes keep the selected map driver offerable between timer ticks",
       },
     );
     expect(response.ok()).toBeTruthy();
-    await loaded;
+    await expect(page.getByText(`${lat},58.32`, { exact: true })).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Предложить заказ", exact: true }),
     ).toBeEnabled({ timeout: 1000 });
