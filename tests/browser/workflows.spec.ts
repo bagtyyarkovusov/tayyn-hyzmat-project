@@ -796,6 +796,11 @@ test("dispatcher adds an approved driver and opens their zero TMT balance", asyn
 });
 
 async function openCredentialFixture(page: Page, phone: string) {
+  // Model a separate dispatcher device rather than exhausting the shared
+  // loopback IP's production auth limit across unrelated browser scenarios.
+  await page.context().setExtraHTTPHeaders({
+    "X-Forwarded-For": `192.0.2.${phone.slice(-2)}`,
+  });
   const session = await page.request.post(
     `${process.env.TEST_API_URL}/auth/login`,
     {
