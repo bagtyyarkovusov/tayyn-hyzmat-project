@@ -171,3 +171,20 @@
     background-image: none;
   }
 }
+
+/* Native app labels do not start text-selection handles on a long press.
+   Editing, explicit copyable content and browser zoom/scroll remain available. */
+.driver-app,
+.driver-app * {
+  -webkit-user-select: none;
+  user-select: none;
+}
+.driver-app input,
+.driver-app textarea,
+.driver-app [contenteditable="true"],
+.driver-app [contenteditable="true"] *,
+.driver-app .select-text,
+.driver-app .select-text * {
+  -webkit-user-select: text;
+  user-select: text;
+}

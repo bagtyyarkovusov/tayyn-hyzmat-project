@@ -22,6 +22,7 @@ import {
   DialogDescription,
 } from "@/shared/ui/dialog";
 import { useDriver } from "./useDriver";
+import { useDriverAddress } from "./useDriverAddress";
 import { alertState, enableOrderAlerts, syncAlertPermission } from "./alerts";
 import { money, statusLabels } from "./model";
 import IncomingOrder from "./components/IncomingOrder.vue";
@@ -36,6 +37,10 @@ const {
   dismissIncoming,
   declinePrivateOffer,
 } = useDriver();
+const address = useDriverAddress(
+  () => state.position,
+  () => state.profile?.id,
+);
 function closeIncoming() {
   if (state.incoming?.privateOfferExpiresAt) void declinePrivateOffer();
   else dismissIncoming();
@@ -127,7 +132,7 @@ const selectedDistrict = computed(() =>
 const ownRegion = computed(
   () =>
     state.districts.find((d) => d.id === state.profile?.districtId)?.name ||
-    "Район не определён",
+    "Вне районов",
 );
 const blockers = computed(() => {
   const messages: string[] = [];
@@ -326,15 +331,21 @@ watch(
           aria-label="Местоположение GPS"
         >
           <MapPin class="size-4 shrink-0 text-primary" />
-          <span class="min-w-0 truncate"
-            >{{ state.position ? ownRegion : "Ожидаем GPS"
-            }}<span
+          <span class="flex min-w-0 flex-col leading-snug">
+            <span class="truncate">{{
+              state.position ? ownRegion : "Ожидаем GPS"
+            }}</span>
+            <span
               v-if="state.position"
-              class="ml-2 text-xs text-muted-foreground"
-              >{{ state.position.lat.toFixed(4) }},
-              {{ state.position.lng.toFixed(4) }}</span
-            ></span
-          >
+              class="truncate text-xs text-muted-foreground"
+              :title="address || undefined"
+            >
+              {{
+                address ||
+                `${state.position.lat.toFixed(4)}, ${state.position.lng.toFixed(4)}`
+              }}
+            </span>
+          </span>
         </div>
       </div>
       <DriverFeedback
