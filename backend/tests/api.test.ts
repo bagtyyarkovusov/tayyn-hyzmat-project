@@ -1667,6 +1667,20 @@ test('driver completion racing dispatcher resolution has one terminal winner wit
   assert.equal(history.transactions.items[0].amount, '-10');
 });
 
+
+
+test('browser location timestamps reject stale and future fixes without replacing saved GPS', async () => {
+  const original = (await request('/driver/profile', driverToken)).data;
+  for (const capturedAt of [Date.now() - 61000, Date.now() + 10000]) {
+    assert.equal((await request('/driver/location', driverToken, { lat: 30, lng: 120, capturedAt })).status, 400);
+  }
+  const unchanged = (await request('/driver/profile', driverToken)).data;
+  assert.equal(unchanged.lastLocationAt, original.lastLocationAt);
+  assert.equal(unchanged.lastLat, original.lastLat);
+  assert.equal((await request('/driver/location', driverToken, { lat: 37.96, lng: 58.32, capturedAt: Date.now() })).status, 200);
+});
+
+
 test('chat retries with one client message id persist one message and reject changed content', async () => {
   await prisma.message.deleteMany();
   await prisma.driver.updateMany({ data: { lastChatReadAt: null, lastChatReadMessageId: null, lastReadByAdminAt: null, lastReadByAdminMessageId: null } });
@@ -1721,6 +1735,22 @@ test('tied chat timestamps keep unseen messages unread and keyset pages complete
   assert.ok((await request('/admin/messages/unread', adminToken)).data.driverIds.includes(driver.id));
   const adminOlder = (await request(`/admin/drivers/${driver.id}/messages?limit=2&beforeMessageId=${replies[0]}`, adminToken)).data;
   assert.deepEqual(adminOlder.items.map((item: { id: string }) => item.id), [ids[1], ids[2]]);
+
+});
+
+test('GPS capture time stays identical in profile, location event and history', async () => {
+  const admin = await socket(adminToken);
+  const capturedAt = Date.now() - 50000;
+  const event = nextSocketEvent<{ recordedAt: string }>(admin, 'driver:location');
+  const report = await request('/driver/location', driverToken, { lat: 37.96, lng: 58.32, accuracy: 10, capturedAt });
+  assert.equal(report.status, 200);
+  const expected = new Date(capturedAt).toISOString();
+  assert.equal(report.data.recordedAt, expected);
+  assert.equal((await event).recordedAt, expected);
+  const profile = (await request('/driver/profile', driverToken)).data;
+  assert.equal(profile.lastLocationAt, expected);
+  const history = await prisma.driverLocation.findFirstOrThrow({ where: { driverId: profile.id, recordedAt: new Date(capturedAt) } });
+  assert.equal(history.recordedAt.toISOString(), expected);
 });
 
 test('public orders stay regional until their persisted deadline then disappear for all drivers after a claim', async () => {

@@ -57,8 +57,21 @@ const connectionReady = computed(
       ? state.nativeConnected
       : session.state.connected),
 );
+const localFixFresh = computed(
+  () => state.gpsFixReady && state.clock - state.locationUpdatedAt < 60_000,
+);
+const locationReady = computed(
+  () => localFixFresh.value && state.gpsReady && connectionReady.value,
+);
+const locationState = computed(() => {
+  if (state.gpsPending) return "pending";
+  if (!state.gpsFixReady && state.gpsError) return "blocked";
+  if (locationReady.value) return "ready";
+  if (state.gpsFixReady || state.locationSyncPending) return "connecting";
+  return "inactive";
+});
 const liveOnline = computed(
-  () => !!state.profile?.isOnline && state.gpsReady && connectionReady.value,
+  () => !!state.profile?.isOnline && locationReady.value,
 );
 const availabilityDescription = computed(() =>
   !state.profile?.isOnline
@@ -89,9 +102,22 @@ const alertDescription = computed(() => {
 const gpsDescription = computed(() =>
   state.gpsPending
     ? "Получаем местоположение…"
-    : state.gpsReady
-      ? "GPS работает. Местоположение передано диспетчеру."
-      : state.gpsError || "GPS не включён. Нажмите, чтобы включить.",
+    : locationReady.value
+      ? "GPS и связь с диспетчером подтверждены."
+      : state.gpsFixReady
+        ? !localFixFresh.value
+          ? "Последнее положение устарело. Нажмите GPS, чтобы обновить."
+          : state.locationSyncError ||
+            "GPS работает. Ожидаем связь с диспетчером…"
+        : state.gpsError || "GPS не включён. Нажмите, чтобы включить.",
+);
+const lastLocationDescription = computed(() =>
+  state.locationUpdatedAt
+    ? new Date(state.locationUpdatedAt).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "",
 );
 let permissionStatus: PermissionStatus | undefined;
 let disposed = false;
@@ -128,9 +154,12 @@ watch(
   },
 );
 watch(
-  () => state.gpsReady,
-  (ready) => {
-    if (!ready) selected.value = null;
+  () => state.profile?.isOnline,
+  (online) => {
+    // Keep the selected queue through a transient connection/GPS sync loss so
+    // it can recover live when readiness returns. Close it only after the
+    // driver actually leaves the line.
+    if (!online) selected.value = null;
   },
 );
 const tripOpen = ref(false);
@@ -144,13 +173,15 @@ const ownRegion = computed(
 );
 const blockers = computed(() => {
   const messages: string[] = [];
-  if (!state.gpsReady)
+  if (!state.gpsFixReady)
     messages.push(
       state.gpsError ||
         (state.gpsPending
           ? "Получаем местоположение…"
           : "Включите GPS, чтобы принимать заказы."),
     );
+  else if (state.profile?.isOnline && !locationReady.value)
+    messages.push(gpsDescription.value);
   if (state.balance && Number(state.balance.amount) <= 0)
     messages.push("Для выхода на линию пополните баланс у диспетчера.");
   return messages;
@@ -195,21 +226,16 @@ watch(
               size="icon"
               class="relative size-11 rounded-full"
               :class="
-                state.gpsReady
+                locationState === 'ready'
                   ? 'bg-success/10 text-success'
-                  : state.gpsError
+                  : locationState === 'blocked'
                     ? 'text-destructive'
-                    : 'text-muted-foreground'
+                    : locationState === 'connecting' ||
+                        locationState === 'pending'
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                      : 'text-muted-foreground'
               "
-              :data-state="
-                state.gpsPending
-                  ? 'pending'
-                  : state.gpsReady
-                    ? 'ready'
-                    : state.gpsError
-                      ? 'blocked'
-                      : 'inactive'
-              "
+              :data-state="locationState"
               :aria-description="gpsDescription"
               :title="gpsDescription"
               :disabled="state.gpsPending"
@@ -222,13 +248,13 @@ watch(
                 aria-hidden="true"
               />
               <MapPinOff
-                v-else-if="state.gpsError && !state.gpsReady"
+                v-else-if="locationState === 'blocked'"
                 class="size-5"
                 aria-hidden="true"
               />
               <LocateFixed v-else class="size-5" aria-hidden="true" />
               <Check
-                v-if="state.gpsReady"
+                v-if="locationState === 'ready'"
                 class="absolute bottom-1 right-1 size-3 rounded-full bg-background"
                 aria-hidden="true"
               />
@@ -304,14 +330,15 @@ watch(
             :title="availabilityDescription"
             :aria-pressed="!!state.profile?.isOnline"
             :aria-describedby="
-              !state.gpsReady ? 'driver-gps-blocker' : undefined
+              !state.gpsFixReady ? 'driver-gps-blocker' : undefined
             "
             :aria-busy="state.busy"
             :disabled="
               state.busy ||
+              state.locationSyncPending ||
               !state.profile ||
               (!state.profile.isOnline &&
-                (Number(state.balance?.amount ?? 0) <= 0 || !state.gpsReady))
+                (Number(state.balance?.amount ?? 0) <= 0 || !localFixFresh))
             "
             @click="setOnline"
           >
@@ -345,7 +372,7 @@ watch(
           <MapPin class="size-4 shrink-0 text-primary" />
           <span class="flex min-w-0 flex-col leading-snug">
             <span class="truncate">{{
-              state.gpsReady
+              locationReady
                 ? ownRegion
                 : state.position
                   ? "Последнее положение"
@@ -360,6 +387,12 @@ watch(
                 address ||
                 `${state.position.lat.toFixed(4)}, ${state.position.lng.toFixed(4)}`
               }}
+            </span>
+            <span
+              v-if="!locationReady && lastLocationDescription"
+              class="text-[11px] text-muted-foreground"
+            >
+              Последнее обновление {{ lastLocationDescription }}
             </span>
           </span>
         </div>
@@ -390,13 +423,13 @@ watch(
       }}</span>
       <ChevronRight class="size-4 shrink-0" aria-hidden="true" />
     </button>
-    <p v-if="state.position && state.gpsReady" class="sr-only" role="status">
+    <p v-if="state.position && locationReady" class="sr-only" role="status">
       GPS · точность {{ Math.round(state.position.accuracy) }} м
     </p>
     <p
-      v-if="!connectionReady"
+      v-if="state.profile?.isOnline && !connectionReady"
       role="status"
-      class="shrink-0 text-xs text-destructive"
+      class="shrink-0 text-xs text-amber-700 dark:text-amber-300"
     >
       Переподключаемся к диспетчеру…
     </p>
@@ -430,7 +463,7 @@ watch(
             : 'bg-card hover:bg-secondary/50',
           d.id === state.profile?.districtId ? 'ring-1 ring-primary' : '',
         ]"
-        :disabled="!state.gpsReady || !state.profile?.isOnline"
+        :disabled="!locationReady || !state.profile?.isOnline"
         @click="selected = d.id"
       >
         <span
@@ -444,7 +477,7 @@ watch(
           class="region-score text-2xl font-semibold leading-none tabular-nums"
           :aria-label="`Машин на линии: ${d.onlineDrivers ?? d.freeDrivers}. Заказов: ${d.activeOrders}`"
           >{{
-            state.gpsReady && state.profile?.isOnline
+            locationReady && state.profile?.isOnline
               ? `${d.onlineDrivers ?? d.freeDrivers}:${d.activeOrders}`
               : "—:—"
           }}</strong
@@ -460,11 +493,12 @@ watch(
           ></DialogHeader
         >
         <AvailableOrders
-          v-if="selectedDistrict && state.profile?.isOnline && state.gpsReady"
+          v-if="selectedDistrict && state.profile?.isOnline"
+          v-show="locationReady"
           :district-id="selectedDistrict.id"
           :district-name="selectedDistrict.name"
         />
-        <p v-else class="muted text-sm">
+        <p v-if="!locationReady" class="muted text-sm">
           Включите GPS и выйдите на линию, чтобы принимать заказы.
         </p>
       </DialogContent></Dialog

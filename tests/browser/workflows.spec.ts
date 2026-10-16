@@ -818,6 +818,12 @@ test("GPS reporting continues across driver routes and stops after logout", asyn
       .click();
     await (await firstReport).finished();
     await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+    await page
+      .getByRole("button", { name: "Выйти на линию", exact: true })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Уйти с линии", exact: true }),
+    ).toBeVisible();
     const token = await page.evaluate(() =>
       localStorage.getItem("openride.driver.accessToken"),
     );
@@ -1421,6 +1427,75 @@ test("regional queues and counts recover through updates, reconnect and reload",
   }
 });
 
+test("a delayed one-shot timeout cannot erase a newer successful GPS watch fix", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    let requests = 0;
+    let staleFailure: PositionErrorCallback | null | undefined;
+    const position = () =>
+      ({
+        coords: {
+          latitude: 37.96,
+          longitude: 58.32,
+          accuracy: 10,
+          heading: null,
+          speed: null,
+          altitude: null,
+          altitudeAccuracy: null,
+        },
+        timestamp: Date.now(),
+      }) as GeolocationPosition;
+    Object.defineProperty(navigator, "geolocation", {
+      configurable: true,
+      value: {
+        getCurrentPosition(
+          success: PositionCallback,
+          failure?: PositionErrorCallback,
+        ) {
+          if (++requests === 1) setTimeout(() => success(position()), 0);
+          else staleFailure = failure;
+        },
+        watchPosition(success: PositionCallback) {
+          setTimeout(() => success(position()), 0);
+          return 1;
+        },
+        clearWatch() {},
+      },
+    });
+    window.addEventListener("late-one-shot-timeout", () =>
+      staleFailure?.({
+        code: 3,
+        message: "Old request timeout",
+        PERMISSION_DENIED: 1,
+        POSITION_UNAVAILABLE: 2,
+        TIMEOUT: 3,
+      }),
+    );
+  });
+  await login(page, "driver");
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeEnabled();
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  const online = page.getByRole("button", {
+    name: "Уйти с линии",
+    exact: true,
+  });
+  await expect(online).toBeVisible();
+  await page.waitForTimeout(100);
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("late-one-shot-timeout")),
+  );
+  await expect(online).toBeEnabled();
+  await expect(
+    page.getByRole("button", { name: "Включить GPS", exact: true }),
+  ).toHaveAttribute("data-state", "ready");
+});
+
 test("a transient GPS timeout keeps its blocker visible until an explicit retry receives a fresh server-acknowledged fix", async ({
   page,
 }) => {
@@ -1480,6 +1555,10 @@ test("a transient GPS timeout keeps its blocker visible until an explicit retry 
     exact: true,
   });
   await expect(power).toBeEnabled();
+  await power.click();
+  await expect(
+    page.getByRole("button", { name: "Уйти с линии", exact: true }),
+  ).toBeVisible();
   await page.evaluate(() =>
     window.dispatchEvent(new Event("synthetic-gps-timeout")),
   );
@@ -1509,6 +1588,8 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
       syntheticNativeStopped?: boolean;
       syntheticNativeStopSequence?: number;
       syntheticNativeStopAfterPermission?: boolean;
+      syntheticNativePermissionDenied?: boolean;
+      syntheticNativeGpsDisabled?: boolean;
     };
     bridge.holdNativePermission = holdPermission;
     bridge.CapacitorCustomPlatform = { name: "android" };
@@ -1565,7 +1646,8 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
             stopSequence: bridge.syntheticNativeStopped
               ? (bridge.syntheticNativeStopSequence ?? 1)
               : 0,
-            locationGranted: true,
+            locationGranted: !bridge.syntheticNativePermissionDenied,
+            locationEnabled: !bridge.syntheticNativeGpsDisabled,
             ordersEnabled: true,
             chatEnabled: true,
           };
@@ -1575,6 +1657,7 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
             bridge.releaseNativePermission = () =>
               resolve({
                 locationGranted: true,
+                locationEnabled: true,
                 ordersEnabled: true,
                 chatEnabled: true,
               });
@@ -1593,6 +1676,54 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
       },
     };
   }, holdPermission);
+}
+
+test("native foreground detects revoked GPS permission while the shift is off", async ({
+  page,
+}) => {
+  await emulateNativeBridge(page, false);
+  await login(page, "driver");
+  const gps = page.getByRole("button", { name: "Включить GPS", exact: true });
+  await gps.click();
+  await expect(gps).toHaveAttribute("data-state", "ready");
+  await page.evaluate(() => {
+    (
+      window as unknown as { syntheticNativePermissionDenied: boolean }
+    ).syntheticNativePermissionDenied = true;
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(gps).toHaveAttribute("data-state", "blocked");
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeDisabled();
+});
+
+for (const foreground of [true, false]) {
+  test(`native GPS system switch is checked ${foreground ? "on foreground" : "before going online"} independently of permission`, async ({
+    page,
+  }) => {
+    await emulateNativeBridge(page, false);
+    await login(page, "driver");
+    const gps = page.getByRole("button", { name: "Включить GPS", exact: true });
+    await gps.click();
+    await expect(gps).toHaveAttribute("data-state", "ready");
+    await page.evaluate((foreground) => {
+      (
+        window as unknown as { syntheticNativeGpsDisabled: boolean }
+      ).syntheticNativeGpsDisabled = true;
+      if (foreground) window.dispatchEvent(new Event("focus"));
+    }, foreground);
+    const power = page.getByRole("button", {
+      name: "Выйти на линию",
+      exact: true,
+    });
+    if (!foreground) await power.click();
+    await expect(gps).toHaveAttribute("data-state", "blocked");
+    await expect(power).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Уйти с линии", exact: true }),
+    ).toHaveCount(0);
+  });
 }
 
 test("an offline native driver sees the healthy dispatcher connection before starting a shift", async ({
@@ -1860,7 +1991,7 @@ test("permission controls distinguish confirmed GPS and enabled notification per
       await route.continue();
     });
     const gpsStarted = startGps(page);
-    await expect(gps).toHaveAttribute("data-state", "pending");
+    await expect(gps).toHaveAttribute("data-state", "connecting");
     await expect(
       page.getByRole("button", { name: "Выйти на линию", exact: true }),
     ).toBeDisabled();
@@ -1883,6 +2014,10 @@ test("permission controls distinguish confirmed GPS and enabled notification per
       "aria-description",
       /Нет связи с диспетчером/,
     );
+    await expect(gps).toHaveAttribute("data-state", "connecting");
+    await expect(
+      page.getByText("Последнее положение", { exact: true }),
+    ).toBeVisible();
     await context.setOffline(false);
     await expect(power).toHaveAttribute(
       "aria-description",
@@ -1910,6 +2045,33 @@ test("permission controls distinguish confirmed GPS and enabled notification per
   } finally {
     await context.close();
   }
+});
+
+test("offline drivers keep a local GPS fix, show its timestamp, and send no location uploads", async ({
+  page,
+}) => {
+  await page.context().grantPermissions(["geolocation"]);
+  await page.context().setGeolocation({
+    latitude: 37.96,
+    longitude: 58.32,
+    accuracy: 10,
+  });
+  await login(page, "driver");
+  await page.context().setOffline(true);
+  let uploads = 0;
+  await page.route("**/driver/location", async (route) => {
+    uploads++;
+    await route.abort();
+  });
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  const gps = page.getByRole("button", { name: "Включить GPS", exact: true });
+  await expect(gps).toHaveAttribute("data-state", "connecting");
+  await expect(
+    page.getByText("Последнее положение", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(/Последнее обновление/)).toBeVisible();
+  expect(uploads).toBe(0);
+  await page.context().setOffline(false);
 });
 
 for (const [savedAdminSession, driverEntry] of [
@@ -2150,7 +2312,15 @@ test("a delayed address cannot replace a newer GPS position outside the saved re
   await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
   await lookup;
   await expect.poll(() => originalAddress).toBe("Synthetic street, 12");
-  await page.waitForTimeout(10_100); // A new GPS report is allowed every ten seconds.
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Уйти с линии", exact: true }),
+  ).toBeVisible();
+  // Starting the shift requests another fix; let that acknowledgement's
+  // real ten-second upload throttle expire before delivering movement.
+  await page.waitForTimeout(10_100);
   await page
     .context()
     .setGeolocation({ latitude: 30.2328, longitude: 120.0398, accuracy: 10 });
@@ -2454,6 +2624,35 @@ test("private offer picker disables an online driver whose balance cannot cover 
     await adminContext.close();
     await driverContext.close();
   }
+});
+
+test("fresh acknowledged GPS enters a shift without another preflight upload and stops reporting offline", async ({
+  page,
+}) => {
+  await login(page, "driver");
+  await startGps(page);
+  let uploads = 0;
+  await page.route("**/driver/location", async (route) => {
+    uploads++;
+    await route.continue();
+  });
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Уйти с линии", exact: true }),
+  ).toBeVisible();
+  expect(uploads).toBe(0);
+  await page.getByRole("button", { name: "Уйти с линии", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(/Последнее обновление/)).toBeVisible();
+  await page
+    .context()
+    .setGeolocation({ latitude: 37.97, longitude: 58.33, accuracy: 10 });
+  await page.waitForTimeout(300);
+  expect(uploads).toBe(0);
 });
 
 test("dispatcher driver details follow fresh location events without a manual refresh", async ({

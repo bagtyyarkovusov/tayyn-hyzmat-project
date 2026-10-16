@@ -17,6 +17,7 @@ export interface NativeShiftStatus {
   ordersEnabled: boolean;
   chatEnabled: boolean;
   locationGranted?: boolean;
+  locationEnabled?: boolean;
 }
 interface NativeShiftPlugin {
   permissions(): Promise<NativeShiftStatus>;
@@ -62,6 +63,7 @@ export async function startNativeShift() {
   if (current !== generation) throw new Error("Смена отменена.");
   if (
     !permission.locationGranted ||
+    permission.locationEnabled !== true ||
     !permission.ordersEnabled ||
     !permission.chatEnabled
   )
