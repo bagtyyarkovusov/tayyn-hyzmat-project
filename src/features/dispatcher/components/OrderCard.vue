@@ -79,16 +79,19 @@ const ageLabel = (seconds?: number | null) => {
         >Предложить водителю</Button
       >
       <Button
-        v-if="cancellable && !['CANCELLED', 'COMPLETED'].includes(order.status)"
+        v-if="
+          cancellable && ['NEW', 'ACCEPTED', 'WAITING'].includes(order.status)
+        "
         variant="outline"
         size="sm"
         @click="$emit('cancel', order)"
         >Отменить заказ</Button
       >
       <Button
-        v-if="order.status === 'STARTED' && order.needsCompletion"
+        v-if="order.status === 'STARTED'"
         variant="destructive"
         size="sm"
+        title="Завершить оказанную поездку без возврата. Причина обязательна."
         @click="$emit('resolve', order)"
         >Завершить вручную</Button
       >

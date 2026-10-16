@@ -54,3 +54,7 @@ Yandex reverse geocoding can show a street and building under the dispatch-regio
 Driver labels, navigation and cards do not select text on long press. Inputs, textareas, editable content and explicit copyable content preserve text editing and selection. This treatment is scoped to driver routes, including portalled dialogs. Scrolling, keyboard focus and browser zoom remain available.
 
 Dispatcher order lists use exclusive lifecycle filters: **Ожидают** shows unclaimed `NEW` orders; **В работе** shows assigned `ACCEPTED`, `WAITING` and `STARTED` orders. Completed and cancelled orders have their own lists. **Все** intentionally includes every status. The API retains legacy `active` (all unfinished orders) for existing clients.
+
+Dispatcher cancellation is allowed only in NEW, ACCEPTED or WAITING. It closes the unstarted order, refunds a recorded debit once and frees the driver. STARTED orders reject ordinary cancellation with409. Manual completion requires a reason, records service under the same driver and keeps the existing charge. Exceptional refunds/recovery are separate reviewed actions and must not be disguised as cancellation.
+
+Диспетчер может отменить заказ только до начала поездки: NEW, ACCEPTED или WAITING. Отмена возвращает списание и освобождает водителя. Для STARTED обычная отмена запрещена. Ручное завершение требует причину, сохраняет выполненную услугу и списание без возврата. Исключительный возврат или восстановление разбираются отдельно.

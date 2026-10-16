@@ -1918,3 +1918,29 @@ test('stopped private orders remain unfinished in today cohort but leave the liv
   const expectedOldest = (Date.parse(result.asOf) - (start + 2)) / 1000;
   assert.ok(Math.abs(result.waiting.oldestSeconds - expectedOldest) < 0.01);
 });
+
+test('a started trip cannot be dispatcher-cancelled or refunded even while manual completion races it', async () => {
+  const created = await order(30);
+  const body = { orderId: created.id };
+  for (const action of ['accept', 'waiting', 'start']) assert.equal((await request(`/orders/${action}`, driverToken, body)).status, 200);
+  const before = (await request('/driver/history', driverToken)).data;
+  const profile = (await request('/driver/profile', driverToken)).data;
+  assert.equal((await request(`/admin/orders/${created.id}/cancel`, adminToken, { reason: 'Must not refund a drive in progress' })).status, 409);
+  assert.equal((await request('/orders/current', driverToken)).data.status, 'STARTED');
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '470');
+  assert.equal((await request('/driver/profile', driverToken)).data.isAvailable, profile.isAvailable);
+  assert.deepEqual((await request('/driver/history', driverToken)).data.transactions, before.transactions);
+  assert.equal((await request(`/admin/orders/${created.id}/force-resolve`, adminToken, {})).status, 400);
+  const [cancelled, resolved] = await Promise.all([
+    request(`/admin/orders/${created.id}/cancel`, adminToken, { reason: 'Racing forbidden cancellation' }),
+    request(`/admin/orders/${created.id}/force-resolve`, adminToken, { reason: 'Passenger confirmed arrival by phone' })
+  ]);
+  assert.equal(cancelled.status, 409);
+  assert.equal(resolved.status, 200);
+  assert.equal(resolved.data.status, 'COMPLETED');
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '470');
+  const history = (await request('/driver/history', driverToken)).data;
+  assert.equal(history.transactions.total, 1);
+  assert.equal(history.transactions.items[0].type, 'PAYMENT');
+  assert.equal(history.orders.items[0].driverId, profile.id);
+});
