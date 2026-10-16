@@ -105,3 +105,9 @@ PR #105 merged as `fd10bc86457fd9292565ad5a727aa2a9142e90de` after all three CI 
 PR #103 enlarged the optional order map beside the form on wide screens and stacks it below on narrow screens. Required region, phone and TMT price, private eligibility and optional pickup/destination remain unchanged. API-backed browser evidence covers desktop, mobile and landscape; live vendor SDK behavior and phone keyboard checks remain separate.
 
 The final security audit found session and device-binding gaps tracked in #23 and #24. The focused authentication patch remains a release gate until its reviewed merge, checks and matching APK rebuild. Do not describe fd10bc8 as the final release SHA while that patch is pending.
+
+## Current isolated APK environment
+
+The isolated APK API has no configured private Yandex reverse-geocoder key or confirmed lookup-budget policy. Its expected location display is the saved region plus actual coordinates, or Outside region plus coordinates. This is the approved fallback and never blocks a shift or trip. It is not evidence that the provider is broken. A public map SDK key is a different credential; native map rendering is verified separately in the final APK build record.
+
+The client tutorials contain eight A4 pages per language. Both tagged PDFs were rendered to page images and all sixteen pages inspected. The lifecycle explanation has its own page so cancellation/refund and completion/no-refund are readable without squeezing monitoring instructions. The HTML files embed the logo and use local diagrams; opening them does not require a diagram service. Production signing and physical Infinix checks remain explicit gates in both languages.
