@@ -1,4 +1,24 @@
 import { test, expect } from "@playwright/test";
+import { createRequire } from "node:module";
+const require = createRequire(
+  new URL("../../backend/package.json", import.meta.url),
+);
+const { PrismaClient } = require("@prisma/client");
+let fixtureUserId = "";
+let fixtureOrderId = "";
+test.afterEach(async () => {
+  const prisma = new PrismaClient();
+  try {
+    if (fixtureUserId)
+      await prisma.user.deleteMany({ where: { id: fixtureUserId } });
+    if (fixtureOrderId)
+      await prisma.order.deleteMany({ where: { id: fixtureOrderId } });
+  } finally {
+    await prisma.$disconnect();
+    fixtureUserId = "";
+    fixtureOrderId = "";
+  }
+});
 if (process.env.DISPOSABLE_BROWSER_TEST !== "true")
   throw new Error("Use disposable browser runner");
 test("dispatcher completes a started drive with a reason and cannot select refund cancellation", async ({
@@ -14,11 +34,41 @@ test("dispatcher completes a started drive with a reason and cannot select refun
   const adminToken = await page.evaluate(() =>
     localStorage.getItem("openride.admin.accessToken"),
   );
+  const adminHeaders = { Authorization: `Bearer ${adminToken}` };
+  const driverResponse = await page.request.post(
+    `${process.env.TEST_API_URL}/admin/drivers`,
+    {
+      headers: adminHeaders,
+      data: {
+        phone: "+99361999791",
+        fullName: "Started recovery fixture",
+        password: process.env.TEST_ACCOUNT_PASSWORD,
+      },
+    },
+  );
+  expect(driverResponse.status()).toBe(201);
+  const fixture = await driverResponse.json();
+  fixtureUserId = fixture.userId;
+  expect(
+    (
+      await page.request.post(
+        `${process.env.TEST_API_URL}/admin/drivers/${fixture.id}/balance`,
+        {
+          headers: adminHeaders,
+          data: {
+            operationId: crypto.randomUUID(),
+            amount: 500,
+            type: "TOPUP",
+          },
+        },
+      )
+    ).ok(),
+  ).toBe(true);
   const auth = await page.request.post(
     `${process.env.TEST_API_URL}/auth/login`,
     {
       data: {
-        phone: "+99360000101",
+        phone: "+99361999791",
         password: process.env.TEST_ACCOUNT_PASSWORD,
         deviceId: "synthetic-approved-browser",
       },
@@ -27,7 +77,6 @@ test("dispatcher completes a started drive with a reason and cannot select refun
   expect(auth.ok()).toBe(true);
   const driverToken = (await auth.json()).accessToken;
   const driverHeaders = { Authorization: `Bearer ${driverToken}` };
-  const adminHeaders = { Authorization: `Bearer ${adminToken}` };
   expect(
     (
       await page.request.post(`${process.env.TEST_API_URL}/driver/location`, {
@@ -58,6 +107,7 @@ test("dispatcher completes a started drive with a reason and cannot select refun
   );
   expect(created.status()).toBe(201);
   const order = await created.json();
+  fixtureOrderId = order.id;
   for (const action of ["accept", "waiting", "start"]) {
     const result = await page.request.post(
       `${process.env.TEST_API_URL}/orders/${action}`,
