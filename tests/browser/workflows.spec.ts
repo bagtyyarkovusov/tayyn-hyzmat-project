@@ -607,10 +607,22 @@ test("driver history hides single-page navigation and resets the page when switc
   page,
 }) => {
   await login(page, "admin");
-  await login(page, "driver");
   const adminToken = await page.evaluate(() =>
     localStorage.getItem("openride.admin.accessToken"),
   );
+  const create = await page.request.post(
+    `${process.env.TEST_API_URL}/admin/drivers`,
+    {
+      headers: { Authorization: `Bearer ${adminToken}` },
+      data: {
+        fullName: "История без поездок",
+        phone: "+99360000301",
+        password,
+      },
+    },
+  );
+  expect(create.ok()).toBe(true);
+  await login(page, "driver", "+99360000301");
   const driverToken = await page.evaluate(() =>
     localStorage.getItem("openride.driver.accessToken"),
   );
