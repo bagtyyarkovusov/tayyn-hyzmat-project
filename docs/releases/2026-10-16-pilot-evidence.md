@@ -104,7 +104,7 @@ PR #105 merged as `fd10bc86457fd9292565ad5a727aa2a9142e90de` after all three CI 
 
 PR #103 enlarged the optional order map beside the form on wide screens and stacks it below on narrow screens. Required region, phone and TMT price, private eligibility and optional pickup/destination remain unchanged. API-backed browser evidence covers desktop, mobile and landscape; live vendor SDK behavior and phone keyboard checks remain separate.
 
-The final security audit found session and device-binding gaps tracked in #23 and #24. The focused authentication patch remains a release gate until its reviewed merge, checks and matching APK rebuild. Do not describe fd10bc8 as the final release SHA while that patch is pending.
+PR #107 merged as `2eb84649901e70aaae3feb1d1a188f8d71ef5db4` after all CI jobs passed. It closes the session and device-binding gaps tracked in #23 and #24: driver device identity is required, password/reset races are serialized, logout revokes the current credential generation and sockets, and transient restore failures keep credentials behind a retry screen. The final APK must still be rebuilt from this mainline and tested on the target phone.
 
 ## Current isolated APK environment
 
