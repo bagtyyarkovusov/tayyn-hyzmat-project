@@ -115,7 +115,7 @@ async function cancel() {
         @click="transition('complete')"
         >Завершить поездку</Button
       ><Button
-        v-if="state.active.status !== 'STARTED'"
+        v-if="state.active.status === 'WAITING'"
         variant="ghost"
         :disabled="state.busy"
         @click="cancelOpen = true"
