@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { lockedBalance } from '../balance/locked-balance';
 
 interface QuotedOrder {
   id: string;
@@ -19,11 +20,7 @@ export async function recordOrderCharge(
   const price = new Prisma.Decimal(order.priceEstimated ?? 0);
   if (!price.greaterThan(0)) return null;
 
-  const balance = await tx.balance.upsert({
-    where: { userId },
-    update: {},
-    create: { userId, amount: 0 }
-  });
+  const balance = await lockedBalance(tx, userId);
   const payment = action === 'PAYMENT';
   const balanceAfter = payment
     ? new Prisma.Decimal(balance.amount).sub(price)

@@ -7,6 +7,7 @@ const logger = require('../../config/logger');
 const districtsService = require('../districts/districts.service');
 const { haversineDistanceKm } = require('../../utils/geo');
 const { recordOrderCharge } = require('./order-charge');
+const { lockedBalance } = require('../balance/locked-balance');
 const { assertOrderEligibility } = require('../driver/gps-eligibility');
 const { refreshOrderRecipients } = require('../../sockets/roomSync');
 
@@ -43,8 +44,8 @@ function calculateWaitFee(arrivedAt, endAt) {
 // summed as consecutive haversine deltas between startedAt and now. This is
 // why a driver can only have one active order at a time (isAvailable=false
 // on accept): the location history in that window is unambiguously theirs.
-async function calculateDistanceKm(driverId, fromDate, toDate) {
-  const points = await prisma.driverLocation.findMany({
+async function calculateDistanceKm(driverId, fromDate, toDate, client = prisma) {
+  const points = await client.driverLocation.findMany({
     where: { driverId, recordedAt: { gte: fromDate, lte: toDate } },
     orderBy: { recordedAt: 'asc' },
     select: { lat: true, lng: true }
@@ -212,6 +213,14 @@ async function getCurrent(driver) {
   });
 }
 
+// Mutations lock driver then order before rechecking committed state.
+async function lockOrder(tx, orderId) {
+  await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} FOR UPDATE`;
+  const order = await tx.order.findUnique({ where: { id: orderId } });
+  if (!order) throw ApiError.notFound('Заказ не найден');
+  return order;
+}
+
 async function accept(orderId, driver, etaMinutes, privateOfferExpiresAt) {
   assertOrderEligibility(driver);
   if (!(await hasPositiveBalance(driver.userId))) {
@@ -221,9 +230,14 @@ async function accept(orderId, driver, etaMinutes, privateOfferExpiresAt) {
   await expirePrivateOffers();
   const order = await prisma.$transaction(async (tx) => {
     await lockDriver(tx, driver.id);
+    await lockOrder(tx, orderId);
     const currentDriver = await tx.driver.findUnique({ where: { id: driver.id } });
     if (!currentDriver) throw ApiError.notFound('Профиль водителя не найден');
     assertOrderEligibility(currentDriver);
+    const balance = await lockedBalance(tx, currentDriver.userId);
+    if (!balance.amount.greaterThan(0)) {
+      throw ApiError.forbidden('Пополните баланс, чтобы принимать заказы');
+    }
     if (!currentDriver.isAvailable) throw ApiError.conflict('Водитель сейчас недоступен');
     if (currentDriver.status !== 'APPROVED') throw ApiError.forbidden('Водитель недоступен');
     const pending = await tx.order.findFirst({ where: { privateOfferDriverId: driver.id, status: 'NEW', privateOfferExpiresAt: { gt: new Date() } } });
@@ -234,19 +248,13 @@ async function accept(orderId, driver, etaMinutes, privateOfferExpiresAt) {
     // already active), but DistrictOrdersSheet.vue lets a driver browse and
     // accept any open order directly, bypassing that popup-only gate
     // entirely. Checked inside the same transaction as the updateMany below
-    // so two concurrent accept calls can't both slip through.
+    // while the driver row lock excludes concurrent claims.
     const existingActive = await tx.order.findFirst({
       where: { driverId: driver.id, status: { in: ACTIVE_DRIVER_ORDER_STATUSES } }
     });
     if (existingActive) {
       throw ApiError.conflict('У вас уже есть активный заказ');
     }
-
-    // Evaluate time-sensitive eligibility only after any competing order
-    // write has completed. A bound timestamp captured before a row-lock wait
-    // must not let a queued acceptance cross the reservation deadline.
-    await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} FOR UPDATE`;
-    assertOrderEligibility(currentDriver);
 
     // Was district-restricted (districtId: driver.districtId in this
     // where clause) - a driver could only accept an order in their own
@@ -315,15 +323,19 @@ function assertOwnedByDriver(order, driver) {
 // sees the free-then-ticking countdown computed live from `arrivedAt`
 // without the server needing to push anything every second.
 async function markWaiting(orderId, driver) {
-  const order = await prisma.order.findUnique({ where: { id: orderId } });
-  assertOwnedByDriver(order, driver);
-  if (order.status !== 'ACCEPTED') {
-    throw ApiError.conflict('Невозможно начать ожидание в текущем статусе заказа', { status: order.status });
-  }
+  const updated = await prisma.$transaction(async (tx) => {
+    await lockDriver(tx, driver.id);
+    const order = await lockOrder(tx, orderId);
+    assertOwnedByDriver(order, driver);
+    if (order.status !== 'ACCEPTED') {
+      throw ApiError.conflict('Невозможно начать ожидание в текущем статусе заказа', { status: order.status });
+    }
 
-  const updated = await prisma.order.update({
-    where: { id: orderId },
-    data: { status: 'WAITING', arrivedAt: new Date() }
+    const updated = await tx.order.update({
+      where: { id: orderId },
+      data: { status: 'WAITING', arrivedAt: new Date() }
+    });
+    return updated;
   });
 
   safeEmit((io) => {
@@ -338,18 +350,22 @@ async function markWaiting(orderId, driver) {
 // as many WAIT_INCREMENT_MINUTES blocks as elapsed) and switches billing
 // over to the per-km tariff for the rest of the ride.
 async function startTrip(orderId, driver) {
-  const order = await prisma.order.findUnique({ where: { id: orderId } });
-  assertOwnedByDriver(order, driver);
-  if (order.status !== 'WAITING') {
-    throw ApiError.conflict('Невозможно начать поездку в текущем статусе заказа', { status: order.status });
-  }
+  const updated = await prisma.$transaction(async (tx) => {
+    await lockDriver(tx, driver.id);
+    const order = await lockOrder(tx, orderId);
+    assertOwnedByDriver(order, driver);
+    if (order.status !== 'WAITING') {
+      throw ApiError.conflict('Невозможно начать поездку в текущем статусе заказа', { status: order.status });
+    }
 
-  const startedAt = new Date();
-  const waitFee = calculateWaitFee(order.arrivedAt, startedAt);
+    const startedAt = new Date();
+    const waitFee = calculateWaitFee(order.arrivedAt, startedAt);
 
-  const updated = await prisma.order.update({
-    where: { id: orderId },
-    data: { status: 'STARTED', startedAt, waitFee }
+    const updated = await tx.order.update({
+      where: { id: orderId },
+      data: { status: 'STARTED', startedAt, waitFee }
+    });
+    return updated;
   });
 
   safeEmit((io) => {
@@ -368,27 +384,22 @@ async function startTrip(orderId, driver) {
 // charged (priceEstimated) rather than a distance-derived number, so it
 // doesn't misleadingly suggest a second amount was billed.
 async function complete(orderId, driver) {
-  const order = await prisma.order.findUnique({ where: { id: orderId } });
-  assertOwnedByDriver(order, driver);
-  if (order.status !== 'STARTED') {
-    throw ApiError.conflict('Невозможно завершить поездку в текущем статусе заказа', { status: order.status });
-  }
-
-  const completedAt = new Date();
-  const distanceKm = await calculateDistanceKm(driver.id, order.startedAt, completedAt);
-
-  const [updatedOrder] = await prisma.$transaction([
-    prisma.order.update({
+  const updatedOrder = await prisma.$transaction(async (tx) => {
+    await lockDriver(tx, driver.id);
+    const order = await lockOrder(tx, orderId);
+    assertOwnedByDriver(order, driver);
+    if (order.status !== 'STARTED') {
+      throw ApiError.conflict('Невозможно завершить поездку в текущем статусе заказа', { status: order.status });
+    }
+    const completedAt = new Date();
+    const distanceKm = await calculateDistanceKm(driver.id, order.startedAt, completedAt, tx);
+    const updated = await tx.order.update({
       where: { id: orderId },
-      data: {
-        status: 'COMPLETED',
-        completedAt,
-        distanceKm: D(distanceKm),
-        priceFinal: order.priceEstimated
-      }
-    }),
-    prisma.driver.update({ where: { id: driver.id }, data: { isAvailable: true } })
-  ]);
+      data: { status: 'COMPLETED', completedAt, distanceKm: D(distanceKm), priceFinal: order.priceEstimated }
+    });
+    await tx.driver.update({ where: { id: driver.id }, data: { isAvailable: true } });
+    return updated;
+  });
 
   safeEmit((io) => {
     io.to(rooms.admins()).emit('order:completed', updatedOrder);
@@ -409,13 +420,13 @@ async function complete(orderId, driver) {
 // that charge is refunded in full here. Shared with adminCancel() below via
 // recordOrderCharge.
 async function cancel(orderId, driver, reason) {
-  const order = await prisma.order.findUnique({ where: { id: orderId } });
-  assertOwnedByDriver(order, driver);
-  if (!['ACCEPTED', 'WAITING'].includes(order.status)) {
-    throw ApiError.conflict('Невозможно отменить заказ в текущем статусе', { status: order.status });
-  }
-
   const result = await prisma.$transaction(async (tx) => {
+    await lockDriver(tx, driver.id);
+    const order = await lockOrder(tx, orderId);
+    assertOwnedByDriver(order, driver);
+    if (!['ACCEPTED', 'WAITING'].includes(order.status)) {
+      throw ApiError.conflict('Невозможно отменить заказ в текущем статусе', { status: order.status });
+    }
     const updated = await tx.order.update({
       where: { id: orderId },
       data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: reason || null }
@@ -504,30 +515,32 @@ async function createOrder(data) {
 // COMPLETED/CANCELLED are terminal and rejected the same way the driver
 // endpoint rejects an already-wrong status.
 async function adminCancel(orderId, reason) {
-  const order = await prisma.order.findUnique({ where: { id: orderId }, include: { driver: true } });
-  if (!order) throw ApiError.notFound('Заказ не найден');
-  if (['COMPLETED', 'CANCELLED'].includes(order.status)) {
-    throw ApiError.conflict('Невозможно отменить заказ в текущем статусе', { status: order.status });
-  }
-
-  const wasUnaccepted = order.status === 'NEW';
-
+  // Read only to choose the lock order. Revalidate after locking: a concurrent
+  // claim of a NEW order must not be cancelled using its stale unassigned state.
+  const observed = await prisma.order.findUnique({ where: { id: orderId } });
+  if (!observed) throw ApiError.notFound('Заказ не найден');
   const result = await prisma.$transaction(async (tx) => {
-    const changed = await tx.order.updateMany({
-      where: { id: orderId, status: order.status, driverId: order.driverId },
+    if (observed.driverId) await lockDriver(tx, observed.driverId);
+    const order = await lockOrder(tx, orderId);
+    if (order.driverId !== observed.driverId) {
+      throw ApiError.conflict('Заказ изменился. Повторите отмену');
+    }
+    if (['COMPLETED', 'CANCELLED'].includes(order.status)) {
+      throw ApiError.conflict('Невозможно отменить заказ в текущем статусе', { status: order.status });
+    }
+    const updated = await tx.order.update({
+      where: { id: orderId },
+
       data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: reason || null }
     });
-    if (!changed.count) throw ApiError.conflict('Заказ изменился, обновите список');
-    const updated = await tx.order.findUnique({ where: { id: orderId } });
     let balanceAfter = null;
     if (order.driverId) {
-      await tx.driver.update({ where: { id: order.driverId }, data: { isAvailable: true } });
-      // Same refund as the driver's own cancel() - an admin pulling an
-      // already-accepted order is the same "ride didn't happen" case.
-      balanceAfter = await recordOrderCharge(tx, order, order.driver.userId, 'REFUND');
+      const driver = await tx.driver.update({ where: { id: order.driverId }, data: { isAvailable: true } });
+      balanceAfter = await recordOrderCharge(tx, order, driver.userId, 'REFUND');
     }
-    return { order: updated, balanceAfter };
+    return { order: updated, balanceAfter, wasUnaccepted: order.status === 'NEW' };
   });
+  const order = result.order;
 
   safeEmit((io) => {
     if (result.order.privateOfferDriverId) io.to(rooms.driver(result.order.privateOfferDriverId)).emit('order:private-offer-ended', { orderId, privateOfferExpiresAt: result.order.privateOfferExpiresAt });
@@ -549,7 +562,7 @@ async function adminCancel(orderId, reason) {
     // exactly the existing signal driver/order.js's applyOrderTaken already
     // uses to close that popup, so this reuses it rather than needing a new
     // frontend event handler for "admin pulled it before anyone answered".
-    if (wasUnaccepted && order.districtId) {
+    if (result.wasUnaccepted && order.districtId) {
       io.to(rooms.district(order.districtId)).emit('order:taken', { orderId: result.order.id });
     }
   });
