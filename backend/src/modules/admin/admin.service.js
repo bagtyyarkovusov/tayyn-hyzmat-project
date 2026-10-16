@@ -165,6 +165,7 @@ async function approveDriver(driverId, actorId) {
     io.to(rooms.driver(driverId)).emit('driver:approved', { driverId });
   });
 
+  await districtsService.broadcastDistrictStats();
   logger.info({ driverId, actorId }, 'Driver approved');
   return updated;
 }
@@ -208,6 +209,7 @@ async function unblockDriver(driverId, actorId) {
   });
 
   safeEmit((io) => io.to(rooms.driver(driverId)).emit('driver:approved', { driverId }));
+  await districtsService.broadcastDistrictStats();
   logger.info({ driverId, actorId }, 'Driver unblocked');
   return updated;
 }
@@ -285,6 +287,7 @@ async function deleteDriver(driverId, actorId) {
     await tx.user.delete({ where: { id: driver.userId } });
   });
 
+  await districtsService.broadcastDistrictStats();
   logger.info({ driverId, actorId }, 'Driver deleted');
   return { id: driverId };
 }

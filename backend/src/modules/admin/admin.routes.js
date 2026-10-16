@@ -28,6 +28,8 @@ const { createOrderSchema, privateOfferSchema } = require('../orders/orders.vali
 // Mounted in routes/index.js behind: authenticate, requireRole('ADMIN')
 const router = Router();
 
+router.get('/overview', asyncHandler(async (_req, res) => res.json(await require('./overview').getOverview())));
+
 router.post('/drivers/:id/password', validate({ params: driverIdParamSchema, body: passwordSchema }), asyncHandler(async (req, res) => { res.json(await credentials.resetDriverPassword(req.params.id, req.body.password)); }));
 router.post('/drivers/:id/profile', validate({ params: driverIdParamSchema, body: profileSchema }), asyncHandler(async (req, res) => { res.json(await credentials.updateDriverProfile(req.params.id, req.body)); }));
 router.post('/drivers', validate({ body: createDriverSchema }), controller.createDriver);
