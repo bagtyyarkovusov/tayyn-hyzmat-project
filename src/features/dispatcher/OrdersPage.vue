@@ -26,6 +26,7 @@ const filter = ref("active"),
   create = ref(route.query.create === "1"),
   offer = ref<Order | null>(null),
   cancel = ref<Order | null>(null),
+  resolve = ref<Order | null>(null),
   reason = ref(""),
   pending = ref(false),
   actionError = ref("");
@@ -80,6 +81,26 @@ async function confirmCancel() {
     pending.value = false;
   }
 }
+async function confirmResolve() {
+  if (!resolve.value || !reason.value.trim()) {
+    actionError.value = "Укажите причину";
+    return;
+  }
+  pending.value = true;
+  actionError.value = "";
+  try {
+    await adminApi.post(`/admin/orders/${resolve.value.id}/force-resolve`, {
+      reason: reason.value,
+    });
+    resolve.value = null;
+    reason.value = "";
+    await load();
+  } catch (e) {
+    actionError.value = errorMessage(e);
+  } finally {
+    pending.value = false;
+  }
+}
 </script>
 <template>
   <div class="space-y-6">
@@ -122,6 +143,11 @@ async function confirmCancel() {
         @offer="offer = $event"
         @cancel="
           cancel = $event;
+          actionError = '';
+        "
+        @resolve="
+          resolve = $event;
+          reason = '';
           actionError = '';
         "
       />
@@ -194,6 +220,37 @@ async function confirmCancel() {
             :disabled="pending"
             @click="confirmCancel"
             >{{ pending ? "Отменяем…" : "Отменить заказ" }}</Button
+          ></DialogFooter
+        ></DialogContent
+      ></Dialog
+    ><Dialog
+      :open="!!resolve"
+      @update:open="!$event && !pending && (resolve = null)"
+      ><DialogContent
+        ><DialogHeader
+          ><DialogTitle>Завершить поездку вручную?</DialogTitle
+          ><DialogDescription
+            >Используйте после проверки поездки. Заказ останется за водителем в
+            истории, а списание не изменится.</DialogDescription
+          ></DialogHeader
+        ><Label for="resolve-reason">Причина обязательна</Label
+        ><Textarea
+          id="resolve-reason"
+          v-model="reason"
+          maxlength="500"
+          placeholder="Например: клиент подтвердил завершение по телефону"
+        />
+        <p v-if="actionError" role="alert" class="text-sm text-destructive">
+          {{ actionError }}
+        </p>
+        <DialogFooter
+          ><Button variant="outline" :disabled="pending" @click="resolve = null"
+            >Оставить в пути</Button
+          ><Button
+            variant="destructive"
+            :disabled="pending || !reason.trim()"
+            @click="confirmResolve"
+            >{{ pending ? "Завершаем…" : "Завершить поездку" }}</Button
           ></DialogFooter
         ></DialogContent
       ></Dialog

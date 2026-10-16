@@ -12,6 +12,7 @@ const { assertOrderEligibility } = require('../driver/gps-eligibility');
 const { refreshOrderRecipients } = require('../../sockets/roomSync');
 
 const D = (value) => new Prisma.Decimal(value ?? 0);
+const NEEDS_COMPLETION_AFTER_MS = 15 * 60 * 1000;
 
 // --- Tariff, exactly as specified ---
 // Ожидание в точке А: первые 3 минуты бесплатно, затем +1 манат за каждые
@@ -577,6 +578,46 @@ async function adminCancel(orderId, reason) {
   return result.order;
 }
 
+// A started trip is never completed by a clock. If the driver loses the app
+// or forgets the final action, a dispatcher can explicitly resolve it after
+// verifying the ride. The required reason is persisted as an attributable
+// audit event; the original assignment and charge stay intact.
+async function forceResolveStarted(orderId, actorId, reason) {
+  const completedAt = new Date();
+  const result = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} FOR UPDATE`;
+    const order = await tx.order.findUnique({ where: { id: orderId } });
+    if (!order) throw ApiError.notFound('Заказ не найден');
+    if (order.status !== 'STARTED') {
+      throw ApiError.conflict('Принудительно завершить можно только начатую поездку', { status: order.status });
+    }
+    const updated = await tx.order.update({
+      where: { id: orderId },
+      data: {
+        status: 'COMPLETED',
+        completedAt,
+        priceFinal: order.priceFinal ?? order.priceEstimated
+      },
+      include: { driver: { include: { user: { select: { fullName: true, phone: true } } } }, district: true }
+    });
+    if (order.driverId) {
+      await tx.driver.update({ where: { id: order.driverId }, data: { isAvailable: true } });
+    }
+    await tx.orderResolutionAudit.create({
+      data: { orderId, actorId, action: 'FORCE_COMPLETED', reason }
+    });
+    return updated;
+  });
+
+  safeEmit((io) => {
+    io.to(rooms.admins()).emit('order:completed', { ...result, forced: true, resolutionReason: reason });
+    io.to(rooms.order(result.id)).emit('order:completed', { ...result, forced: true });
+    if (result.driverId) io.to(rooms.driver(result.driverId)).emit('order:completed', { ...result, forced: true });
+  });
+  await districtsService.broadcastDistrictStats();
+  return result;
+}
+
 module.exports = {
   listAvailable,
   getPrivateOffer,
@@ -590,6 +631,8 @@ module.exports = {
   complete,
   cancel,
   adminCancel,
+  forceResolveStarted,
+  NEEDS_COMPLETION_AFTER_MS,
   createOrder,
   // exported for tests/tooling - pure functions, no I/O
   calculateWaitFee,
