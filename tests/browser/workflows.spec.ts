@@ -3014,3 +3014,50 @@ test("monitoring keeps a claimed driver busy across delayed snapshots and reconn
     await driverContext.close();
   }
 });
+
+test("today overview stays compact on mobile and separates request failure from real metrics", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 740 });
+  await page.route("**/admin/overview/today", (route) => route.abort("failed"));
+  await login(page, "admin");
+  const today = page.getByRole("region", {
+    name: "Оперативные показатели",
+    exact: true,
+  });
+  await expect(today.getByRole("alert")).toBeVisible();
+  await expect(today.getByText("Создано сегодня", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("heading", {
+      name: "Завершённые поездки за всё время",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.unroute("**/admin/overview/today");
+  await today.getByRole("button", { name: "Повторить", exact: true }).click();
+  await expect(
+    today.getByText("Создано сегодня", { exact: true }),
+  ).toBeVisible();
+  await expect(today.getByText(/Ашхабад, UTC\+5/)).toBeVisible();
+  await expect(
+    today.getByText(/Только заказы, созданные сегодня/),
+  ).toBeVisible();
+  await expect(
+    today.getByText(/Сейчас ждут принятия · за все дни/),
+  ).toBeVisible();
+  await expect(
+    today.getByText(/период доступа только своему району/),
+  ).toBeVisible();
+  for (const dark of [false, true]) {
+    await page.evaluate(
+      (value) => document.documentElement.classList.toggle("dark", value),
+      dark,
+    );
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(320);
+    await expect(today).toBeVisible();
+  }
+});
