@@ -1,12 +1,24 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type BrowserContext } from "@playwright/test";
 if (process.env.DISPOSABLE_BROWSER_TEST !== "true")
   throw new Error("Use pnpm test:e2e with its disposable database");
 const password = process.env.TEST_ACCOUNT_PASSWORD!;
+const browserClients = new WeakMap<BrowserContext, string>();
+let nextBrowserClient = 1;
+async function isolateBrowserClient(page: Page) {
+  const context = page.context();
+  if (browserClients.has(context)) return;
+  // Vite proxies all browsers through loopback. Model each browser as a
+  // distinct client without weakening the API's production auth limiter.
+  const address = `198.18.0.${nextBrowserClient++}`;
+  browserClients.set(context, address);
+  await context.setExtraHTTPHeaders({ "X-Forwarded-For": address });
+}
 async function login(
   page: Page,
   role: "admin" | "driver",
   driverPhone = "+10000000101",
 ) {
+  await isolateBrowserClient(page);
   if (role === "driver")
     await page.addInitScript(() =>
       localStorage.setItem(
@@ -1133,5 +1145,83 @@ test("regional queues and counts recover through updates, reconnect and reload",
   } finally {
     await a.close();
     await b.close();
+  }
+});
+
+for (const [savedAdminSession, driverEntry] of [
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true],
+] as const) {
+  test(`driver reload never renders dispatcher navigation with ${savedAdminSession ? "both sessions saved" : "only a driver session"} via ${driverEntry ? "driver bundle" : "web bundle"}`, async ({
+    page,
+  }) => {
+    if (savedAdminSession) await login(page, "admin");
+    await login(page, "driver");
+    let release!: () => void;
+    let reached!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const restoring = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    await page.route("**/api/driver/profile", async (route) => {
+      reached();
+      await gate;
+      await route.continue();
+    });
+    try {
+      if (driverEntry)
+        await page.goto("/driver.html", { waitUntil: "domcontentloaded" });
+      else await page.reload({ waitUntil: "domcontentloaded" });
+      await restoring;
+      await expect(
+        page.getByRole("navigation", { name: "Разделы диспетчера" }),
+      ).toHaveCount(0);
+      release();
+      await expect(
+        page.getByRole("button", { name: "Включить GPS", exact: true }),
+      ).toBeVisible();
+      await expect(page).toHaveURL(/driverDashboard/);
+      await expect(
+        page.getByRole("navigation", { name: "Разделы диспетчера" }),
+      ).toHaveCount(0);
+    } finally {
+      release();
+      await page.unroute("**/api/driver/profile");
+    }
+  });
+}
+
+test("auth throttling blocks repeated attempts from one browser without blocking another", async ({
+  browser,
+}) => {
+  const first = await browser.newContext();
+  const second = await browser.newContext();
+  try {
+    await isolateBrowserClient(await first.newPage());
+    await isolateBrowserClient(await second.newPage());
+    const invalidLogin = {
+      data: { phone: "+10000000000", password: "wrong-password" },
+    };
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const response = await first.request.post(
+        "/api/auth/login",
+        invalidLogin,
+      );
+      expect(response.status()).toBe(401);
+    }
+    const blocked = await first.request.post("/api/auth/login", invalidLogin);
+    expect(blocked.status()).toBe(429);
+    const otherClient = await second.request.post(
+      "/api/auth/login",
+      invalidLogin,
+    );
+    expect(otherClient.status()).toBe(401);
+  } finally {
+    await first.close();
+    await second.close();
   }
 });
