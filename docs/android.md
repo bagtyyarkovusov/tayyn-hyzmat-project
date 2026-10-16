@@ -27,13 +27,13 @@ cd android
 sh ./gradlew :app:assembleDebug :app:testDebugUnitTest
 ```
 
-Both build URLs must be explicit HTTPS URLs; a packaged WebView cannot use a relative `/api` or its own origin to reach the server. Configure the matching backend `CORS_ORIGIN` to include the APK's default `https://localhost` origin as well as the authorized web origin. Deploy the branch's API/migration to an isolated environment before testing this feature. An APK pointing at the current shared main deployment cannot exercise missing shift endpoints. Do not seed or modify the supporting developer's region database.
+Both build URLs must be explicit HTTPS URLs; a packaged WebView cannot use a relative `/api` or its own origin to reach the server. Configure the matching backend `CORS_ORIGIN` to include the APK's default `https://localhost` origin as well as the authorized web origin. Deploy the matching API and migrations to an isolated environment before testing. A direct backend origin has no `/api` suffix; that prefix belongs to the web Nginx proxy. Do not seed or modify the supporting developer's region database.
 
 The artifact is `android/app/build/outputs/apk/debug/TayynHyzmat-debug.apk`. A debug signature is for testing. Release signing secrets remain ignored. The native-lease migration only adds an empty table; rollback the application first and leave that table until a later forward migration removes it. It never changes region geometry or existing order/balance records.
 
 ## Verification and remaining release gates
 
-The combined isolated APK candidate passed 62 public HTTP/Socket.IO tests, 5 backend unit tests, 34 Chromium actor workflows (including focused recovery reruns), TypeScript checks and app-only Android debug assembly/JUnit tests. Public regressions showed transient GPS retry, revoked native stop credentials, unread chat overflow, native shift status broadcasts and account-switch races fail before fixes and pass afterward. The two Java notification-boundary tests cover deduplication, canonical removal/expiry and channel-specific clearing. These checks do not establish native phone behavior.
+An earlier isolated baseline passed 62 public HTTP/Socket.IO tests, 5 backend unit tests, 34 Chromium actor workflows, TypeScript checks and app-only Android debug assembly/JUnit tests. Public regressions showed transient GPS retry, revoked native stop credentials, unread chat overflow, native shift status broadcasts and account-switch races fail before fixes and pass afterward. The two Java notification-boundary tests cover deduplication, canonical removal/expiry and channel-specific clearing. These historical counts do not describe the final candidate's full suite or establish native phone behavior. Match the final APK hash, source commit and deployment to its new build record.
 
 Before release, run the APK against the matching isolated API on intended Android phones and record:
 
