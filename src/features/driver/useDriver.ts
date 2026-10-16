@@ -445,8 +445,11 @@ async function setOnline() {
         }
       }
       if (account.current()) {
+        if (!nativeAndroid && state.profile) {
+          state.profile.isOnline = true;
+          enableGps();
+        }
         await refresh();
-        if (!nativeAndroid && state.profile?.isOnline) enableGps();
       }
     });
     return;

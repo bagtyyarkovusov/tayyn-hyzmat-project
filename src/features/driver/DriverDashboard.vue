@@ -493,11 +493,12 @@ watch(
           ></DialogHeader
         >
         <AvailableOrders
-          v-if="selectedDistrict && state.profile?.isOnline && locationReady"
+          v-if="selectedDistrict && state.profile?.isOnline"
+          v-show="locationReady"
           :district-id="selectedDistrict.id"
           :district-name="selectedDistrict.name"
         />
-        <p v-else class="muted text-sm">
+        <p v-if="!locationReady" class="muted text-sm">
           Включите GPS и выйдите на линию, чтобы принимать заказы.
         </p>
       </DialogContent></Dialog
