@@ -46,34 +46,3 @@ export function loadYandexMaps(): Promise<any> {
   });
   return pending;
 }
-
-// Yandex JS API accepts [latitude, longitude], unlike HTTP Geocoder's
-// longitude,latitude string. Administrative names never define dispatch regions.
-export async function reverseYandexAddress(
-  lat: number,
-  lng: number,
-): Promise<string | null> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      (async () => {
-        const maps = await loadYandexMaps();
-        const result = await maps.geocode([lat, lng], { results: 1 });
-        const place = result.geoObjects.get(0);
-        if (!place) return null;
-        const street = place.getThoroughfare();
-        const house = place.getPremiseNumber();
-        return street
-          ? house
-            ? `${street}, ${house}`
-            : street
-          : place.getAddressLine() || null;
-      })(),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("Адрес недоступен")), 8000);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-}

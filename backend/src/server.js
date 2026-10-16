@@ -5,6 +5,12 @@ const app = require('./app');
 const prisma = require('./lib/prisma');
 const initSockets = require('./sockets');
 
+const { clearExpiredAddressCache } = require('./modules/geo/driver-address');
+const purgeAddresses = () => clearExpiredAddressCache().catch(() => logger.warn('Expired address cache cleanup failed'));
+void purgeAddresses();
+const addressCleanup = setInterval(purgeAddresses, 60_000);
+addressCleanup.unref();
+
 const httpServer = http.createServer(app);
 initSockets(httpServer);
 
@@ -13,6 +19,7 @@ const server = httpServer.listen(env.port, () => {
 });
 
 async function shutdown(signal) {
+  clearInterval(addressCleanup);
   logger.info(`${signal} received, shutting down gracefully...`);
   server.close(async () => {
     await prisma.$disconnect();
