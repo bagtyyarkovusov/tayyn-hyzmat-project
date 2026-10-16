@@ -83,12 +83,13 @@ export async function tick(token: string, fix: Fix) {
     // The same user lock guards password/phone changes, availability and native renewal.
     await tx.$queryRaw`SELECT u.id FROM users u JOIN drivers d ON d.user_id = u.id JOIN native_shift_leases n ON n.driver_id = d.id WHERE n.token_hash = ${digest(token)} FOR UPDATE OF u`;
     const rows = await tx.$queryRaw<Lease[]>`SELECT * FROM native_shift_leases WHERE token_hash = ${digest(token)} FOR UPDATE`;
-    const now = new Date();
-    if (now.getTime() - recordedAt.getTime() > 30000) throw ApiError.badRequest('Требуется свежее местоположение');
     const lease = rows[0];
-    if (!lease || lease.revoked_at || lease.expires_at.getTime() <= now.getTime()) throw ApiError.unauthorized('Смена завершена');
+    if (!lease || lease.revoked_at) throw ApiError.unauthorized('Смена завершена');
     // Lock driver status against explicit offline/admin/device changes during renewal.
     await tx.$queryRaw`SELECT id FROM drivers WHERE id = ${lease.driver_id} FOR UPDATE`;
+    const now = new Date();
+    if (lease.expires_at.getTime() <= now.getTime()) throw ApiError.unauthorized('Смена завершена');
+    if (now.getTime() - recordedAt.getTime() > 30000) throw ApiError.badRequest('Требуется свежее местоположение');
     const driver = await tx.driver.findUnique({ where: { id: lease.driver_id }, include: { user: { include: { balance: true } } } });
     if (!driver || !driver.isOnline || driver.status !== 'APPROVED' || driver.user.status === 'BLOCKED' || driver.user.credentialVersion !== lease.credential_version || driver.currentDeviceId !== lease.device_id) throw ApiError.unauthorized('Смена завершена');
     const expires = new Date(now.getTime() + GPS_FRESHNESS_MS);
@@ -98,7 +99,7 @@ export async function tick(token: string, fix: Fix) {
     return { driver: updated, lease, expires, balance: Number(driver.user.balance?.amount ?? 0) };
   });
   try {
-    getIO().to(rooms.admins()).to(rooms.driver(renewed.driver.id)).emit('driver:location', { driverId: renewed.driver.id, lat: fix.lat, lng: fix.lng, recordedAt: now.toISOString() });
+    getIO().to(rooms.admins()).to(rooms.driver(renewed.driver.id)).emit('driver:location', { driverId: renewed.driver.id, lat: fix.lat, lng: fix.lng, recordedAt: renewed.driver.lastLocationAt?.toISOString() });
   } catch (err) { logger.warn({ err }, 'Failed to broadcast native driver location'); }
   await syncDriverDistrictRoom(renewed.driver.id);
   await districts.broadcastDistrictStats();

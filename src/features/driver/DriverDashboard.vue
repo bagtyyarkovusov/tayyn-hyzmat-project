@@ -143,9 +143,10 @@ const blockers = computed(() => {
   const messages: string[] = [];
   if (!state.gpsReady)
     messages.push(
-      state.gpsPending
-        ? "Получаем местоположение…"
-        : state.gpsError || "Включите GPS, чтобы принимать заказы.",
+      state.gpsError ||
+        (state.gpsPending
+          ? "Получаем местоположение…"
+          : "Включите GPS, чтобы принимать заказы."),
     );
   if (state.balance && Number(state.balance.amount) <= 0)
     messages.push("Для выхода на линию пополните баланс у диспетчера.");

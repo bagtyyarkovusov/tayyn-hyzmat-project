@@ -1203,7 +1203,10 @@ test('private confirmation and cancellation preserve credits with one charge and
 
 test('a native renewal blocked beyond lease expiry cannot restore availability', async () => {
   const auth = await request('/auth/login', '', { phone: '+10000000101', password, deviceId: 'native-test-device' });
+  assert.equal(auth.status, 200);
   const started = await request('/driver/shift', auth.data.accessToken, { deviceId: 'native-test-device', refreshToken: auth.data.refreshToken });
+  assert.equal(started.status, 201);
+  assert.equal(typeof started.data.shiftToken, 'string');
   const profile = (await request('/driver/profile', auth.data.accessToken)).data;
   await prisma.$executeRaw`UPDATE native_shift_leases SET expires_at = NOW() + INTERVAL '600 milliseconds' WHERE driver_id = ${profile.id}`;
   let release!: () => void;
@@ -1217,6 +1220,13 @@ test('a native renewal blocked beyond lease expiry cannot restore availability',
   await locked;
   try {
     const pending = request('/native-shift/tick', started.data.shiftToken, { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() });
+    let blocked = false;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE 'SELECT u.id FROM users u JOIN drivers d%'`;
+      if (Number(rows[0].count) > 0) { blocked = true; break; }
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(blocked, true, 'native renewal must reach the held user lock before its expiry');
     await new Promise(resolve => setTimeout(resolve, 850));
     release();
     assert.equal((await pending).status, 401);
