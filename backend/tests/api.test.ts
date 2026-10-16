@@ -2,6 +2,7 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { io as connect, Socket } from 'socket.io-client';
 import bcrypt from 'bcryptjs';
@@ -29,7 +30,7 @@ async function request(path: string, token = '', body?: unknown) {
     method: body === undefined ? 'GET' : 'POST',
     signal: AbortSignal.timeout(5000),
     headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `127.0.1.${testClient}`,  ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    ...(body === undefined ? {} : { body: JSON.stringify(/\/admin\/drivers\/[^/]+\/balance$/.test(path) && body && typeof body === 'object' ? { operationId: randomUUID(), ...body } : body) })
   });
   const data = response.status === 204 ? null : await response.json();
   return { status: response.status, data };
@@ -2071,5 +2072,54 @@ test('deactivation refuses an active trip and preserves its balance and driver l
     assert.equal(response.status, 409);
     assert.equal((await request('/driver/balance', driverToken)).data.amount, '470');
     assert.equal((await request('/orders/current', driverToken)).data.driverId, driver.id);
+  }
+});
+
+
+test('balance operation retries debit once, retain original result and reject changed intent', async () => {
+  const driver = await prisma.driver.findFirstOrThrow({ where: { user: { phone: '+99360000101' } } });
+  const path = `/admin/drivers/${driver.id}/balance`;
+  const operationId = randomUUID();
+  const body = { operationId, amount: -30, type: 'WITHDRAWAL', note: 'One intent' };
+  const responses = await Promise.all(Array.from({ length: 8 }, () => request(path, adminToken, body)));
+  assert.ok(responses.every(result => result.status === 200));
+  assert.equal(new Set(responses.map(result => result.data.transaction.id)).size, 1);
+  assert.ok(responses.every(result => result.data.balance.amount === '470'));
+  assert.equal((await request(path, adminToken, { amount: 15, type: 'TOPUP' })).status, 200);
+  assert.equal((await request(path, adminToken, body)).data.balance.amount, '470');
+  assert.equal((await request(path, adminToken, { ...body, amount: -31 })).status, 409);
+  const other = await prisma.driver.findFirstOrThrow({ where: { user: { phone: '+99360000102' } } });
+  assert.equal((await request(`/admin/drivers/${other.id}/balance`, adminToken, body)).status, 409);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '485');
+  assert.equal((await request(`${path.replace('/balance', '/history')}`, adminToken)).data.transactions.total, 2);
+  const missing = await fetch(`${base}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` }, body: JSON.stringify({ amount: 10, type: 'TOPUP' }) });
+  assert.equal(missing.status, 400);
+});
+
+test('operation IDs are scoped to the acting dispatcher and rollback permits a safe retry', async () => {
+  const admin = await prisma.user.create({ data: { phone: '+99361999982', fullName: 'Second financial actor', role: 'ADMIN', passwordHash: await bcrypt.hash(password, 4), admin: { create: { permissionLevel: 'SUPER' } } } });
+  const secondToken = await login(admin.phone);
+  const driver = await prisma.driver.findFirstOrThrow({ where: { user: { phone: '+99360000101' } } });
+  const path = `/admin/drivers/${driver.id}/balance`;
+  const body = { operationId: randomUUID(), amount: 15, type: 'TOPUP' };
+  try {
+    assert.equal((await request(path, adminToken, body)).status, 200);
+    assert.equal((await request(path, secondToken, body)).status, 200);
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, '530');
+    assert.equal((await request(path.replace('/balance', '/history'), adminToken)).data.transactions.total, 2);
+    const retry = { operationId: randomUUID(), amount: 30, type: 'TOPUP' };
+    await prisma.$executeRawUnsafe(`ALTER TABLE transactions ADD CONSTRAINT fail_test_adjust CHECK (type <> 'TOPUP') NOT VALID`);
+    try {
+      assert.equal((await request(path, adminToken, retry)).status, 500);
+      assert.equal((await request('/driver/balance', driverToken)).data.amount, '530');
+    } finally {
+      await prisma.$executeRawUnsafe('ALTER TABLE transactions DROP CONSTRAINT fail_test_adjust');
+    }
+    assert.equal((await request(path, adminToken, retry)).status, 200);
+    assert.equal((await request(path, adminToken, retry)).status, 200);
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, '560');
+    assert.equal((await request(path.replace('/balance', '/history'), adminToken)).data.transactions.total, 3);
+  } finally {
+    await prisma.user.delete({ where: { id: admin.id } });
   }
 });
