@@ -38,7 +38,7 @@ async function cancel() {
   <section
     v-if="state.active"
     class="space-y-4"
-    :class="embedded ? 'pt-4' : 'panel border-primary/40'"
+    :class="embedded ? 'pt-8' : 'panel border-primary/40'"
     aria-labelledby="trip-title"
   >
     <div class="flex items-start justify-between gap-4">

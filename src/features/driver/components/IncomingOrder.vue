@@ -3,53 +3,61 @@ import { ref } from "vue";
 import { Button } from "@/shared/ui/button";
 import { useDriver } from "../useDriver";
 import { money } from "../model";
+defineProps<{ embedded?: boolean }>();
 const { state, accept, dismissIncoming, declinePrivateOffer } = useDriver();
 const eta = ref(10);
 </script>
 <template>
   <section
     v-if="state.incoming && !state.active"
-    class="panel space-y-3 border-primary/40"
+    class="min-w-0 space-y-4"
+    :class="embedded ? '' : 'panel'"
     aria-live="polite"
   >
-    <div class="flex justify-between gap-3">
-      <h2 class="font-semibold">
+    <header class="grid min-h-8 gap-1" :class="{ 'pr-9': embedded }">
+      <h2 class="min-w-0 break-words text-lg font-semibold leading-snug">
         {{
           state.incoming.privateOfferExpiresAt
             ? "Личное предложение"
             : "Новый заказ"
         }}
       </h2>
-      <span class="shrink-0 font-semibold tabular-nums">{{
-        money(state.incoming.priceEstimated)
-      }}</span>
-    </div>
-    <p class="break-words font-medium">
-      {{ state.incoming.pickupAddress || "Подача уточняется по телефону" }}
-    </p>
-    <p v-if="state.incoming.dropoffAddress" class="muted text-sm break-words">
-      {{ state.incoming.dropoffAddress }}
-    </p>
+      <p
+        v-if="state.incoming.privateOfferExpiresAt"
+        class="shrink-0 pt-0.5 text-sm font-semibold tabular-nums"
+        role="timer"
+        aria-label="Осталось времени на принятие"
+      >
+        {{ state.offerSeconds }} сек
+      </p>
+    </header>
     <p
-      v-if="state.incoming.privateOfferExpiresAt"
-      class="text-lg font-semibold tabular-nums"
-      role="timer"
-      aria-label="Осталось времени на принятие"
+      class="offer-price flex flex-wrap items-baseline gap-x-2 font-semibold leading-none tabular-nums"
     >
-      {{ state.offerSeconds }} сек
+      <span>{{ money(state.incoming.priceEstimated).slice(0, -4) }}</span>
+      <span class="text-base font-medium text-muted-foreground">TMT</span>
     </p>
-    <p class="muted text-sm">
-      Заказ принимается только после нажатия «Принять заказ».
+    <div class="min-w-0 space-y-2">
+      <p class="break-words font-medium [overflow-wrap:anywhere]">
+        {{ state.incoming.pickupAddress || "Подача уточняется по телефону" }}
+      </p>
+      <p
+        v-if="state.incoming.dropoffAddress"
+        class="muted text-sm break-words [overflow-wrap:anywhere]"
+      >
+        {{ state.incoming.dropoffAddress }}
+      </p>
+    </div>
+    <p class="muted text-sm leading-relaxed">
+      При принятии спишется {{ money(state.incoming.priceEstimated) }} с
+      баланса. Телефон клиента откроется после принятия.
     </p>
-    <p class="muted text-xs">
-      При принятии указанная сумма списывается с баланса. Телефон откроется
-      после принятия.
-    </p>
-    <label class="grid gap-1 text-sm" for="incoming-eta"
+    <label class="grid gap-1.5 text-sm" for="incoming-eta"
       >Буду через<select
         id="incoming-eta"
         v-model="eta"
         class="native-select min-h-11"
+        :disabled="state.busy"
       >
         <option
           v-for="minutes in [5, 10, 15, 20]"
@@ -60,11 +68,15 @@ const eta = ref(10);
         </option>
       </select></label
     >
-    <div class="flex flex-wrap gap-2">
-      <Button :disabled="state.busy" @click="accept(state.incoming!.id, eta)"
+    <div class="grid gap-1">
+      <Button
+        class="min-h-11 w-full"
+        :disabled="state.busy"
+        @click="accept(state.incoming!.id, eta)"
         >Принять заказ</Button
       ><Button
-        variant="outline"
+        class="min-h-11 w-full whitespace-normal"
+        variant="ghost"
         :disabled="state.busy"
         @click="
           state.incoming.privateOfferExpiresAt
@@ -80,3 +92,8 @@ const eta = ref(10);
     </div>
   </section>
 </template>
+<style scoped>
+.offer-price {
+  font-size: clamp(1.75rem, 8vw, 2.25rem);
+}
+</style>
