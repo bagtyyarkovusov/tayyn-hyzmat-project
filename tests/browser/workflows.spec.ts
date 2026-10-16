@@ -239,7 +239,7 @@ test("a driver must explicitly accept after five minutes, then completes a quote
       driver.getByRole("heading", { name: "Текущая поездка" }),
     ).not.toBeVisible();
     await expect(
-      driver.getByRole("link", { name: "+99360000999", exact: true }),
+      driver.getByRole("link", { name: "+993 60 00 09 99", exact: true }),
     ).not.toBeVisible();
     await expect(driver.getByText(/500\s*TMT/).first()).toBeVisible();
     // Advancing the browser clock also expires GPS. Reacquire a real fix
@@ -261,7 +261,7 @@ test("a driver must explicitly accept after five minutes, then completes a quote
       driver.getByRole("heading", { name: "Текущая поездка" }),
     ).toBeVisible();
     await expect(
-      driver.getByRole("link", { name: "+99360000999", exact: true }),
+      driver.getByRole("link", { name: "+993 60 00 09 99", exact: true }),
     ).toBeVisible();
     await driver
       .getByRole("button", { name: "Я на месте", exact: true })
@@ -813,7 +813,7 @@ test("dispatcher enters region, phone and price and the region modal closes afte
       driver.getByText("Подача уточняется по телефону", { exact: true }),
     ).toBeVisible();
     await expect(
-      driver.getByRole("link", { name: "+99360000888", exact: true }),
+      driver.getByRole("link", { name: "+993 60 00 08 88", exact: true }),
     ).not.toBeVisible();
     await driver
       .getByRole("button", { name: "Скрыть предложение", exact: true })
@@ -828,7 +828,7 @@ test("dispatcher enters region, phone and price and the region modal closes afte
       .click();
     await expect(regionOrders).not.toBeVisible();
     await expect(
-      driver.getByRole("link", { name: "+99360000888", exact: true }),
+      driver.getByRole("link", { name: "+993 60 00 08 88", exact: true }),
     ).toBeVisible();
     await driver
       .getByRole("dialog", { name: "Управление поездкой", exact: true })
@@ -951,7 +951,7 @@ test("dispatcher edits driver name and login phone", async ({ page }) => {
     page.getByRole("heading", { name: "Изменённый водитель", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "+99361999889", exact: true }),
+    page.getByRole("link", { name: "+993 61 99 98 89", exact: true }),
   ).toBeVisible();
 });
 test("dispatcher confirms password reset and the closed form forgets its password", async ({
@@ -1145,7 +1145,7 @@ test("regional queues and counts recover through updates, reconnect and reload",
       .click();
     await expect(queue).not.toBeVisible();
     await expect(
-      driver.getByRole("link", { name: "+99360000777", exact: true }),
+      driver.getByRole("link", { name: "+993 60 00 07 77", exact: true }),
     ).toBeVisible();
     await driver.reload();
     const trip = driver.getByRole("dialog", {

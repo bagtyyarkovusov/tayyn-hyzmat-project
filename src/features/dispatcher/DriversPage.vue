@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { formatPhone } from "@/shared/phone";
 import { computed, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { Search, ChevronRight } from "lucide-vue-next";
@@ -117,7 +118,7 @@ const visible = computed(() =>
             {{ driver.user.fullName }}
           </p>
           <p class="text-xs text-muted-foreground">
-            {{ driver.user.phone }} ·
+            {{ formatPhone(driver.user.phone) }} ·
             {{ driver.currentVehicle?.plateNumber || "Нет автомобиля" }}
           </p>
           <p class="mt-1 text-xs text-muted-foreground">
