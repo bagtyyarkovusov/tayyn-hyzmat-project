@@ -1473,6 +1473,10 @@ test("a transient GPS timeout keeps its blocker visible until an explicit retry 
     exact: true,
   });
   await expect(power).toBeEnabled();
+  await power.click();
+  await expect(
+    page.getByRole("button", { name: "Уйти с линии", exact: true }),
+  ).toBeVisible();
   await page.evaluate(() =>
     window.dispatchEvent(new Event("synthetic-gps-timeout")),
   );
@@ -2163,6 +2167,12 @@ test("GPS outside every saved region keeps its actual coordinates and ignores a 
   await expect
     .poll(() => page.evaluate(() => (window as any).addressReplies.length))
     .toBe(1);
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Уйти с линии", exact: true }),
+  ).toBeVisible();
   await page
     .context()
     .setGeolocation({ latitude: 30.2328, longitude: 120.0398, accuracy: 10 });
