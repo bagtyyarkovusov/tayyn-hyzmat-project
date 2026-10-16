@@ -583,13 +583,14 @@ function enableGps() {
   }
   state.gpsPending = true;
   const generation = sessionGeneration;
+  const trackingEpoch = gpsEpoch;
   const options = {
     enableHighAccuracy: true,
     maximumAge: 10000,
     timeout: 20000,
   };
   const report = async (position: GeolocationPosition) => {
-    if (generation !== sessionGeneration) return;
+    if (generation !== sessionGeneration || trackingEpoch !== gpsEpoch) return;
     const {
       latitude: lat,
       longitude: lng,
@@ -649,7 +650,7 @@ function enableGps() {
   };
   const failed = (error: GeolocationPositionError) => {
     console.debug("[driver-gps] geolocationFailure", error.code, error.message);
-    if (generation !== sessionGeneration) return;
+    if (generation !== sessionGeneration || trackingEpoch !== gpsEpoch) return;
     state.gpsPending = false;
     void loseGps(
       error.code === error.PERMISSION_DENIED
