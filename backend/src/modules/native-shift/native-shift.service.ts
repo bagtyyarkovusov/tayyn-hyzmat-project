@@ -116,7 +116,7 @@ export async function tick(token: string, fix: Fix) {
     });
     for (const order of orders) {
       const expiry = order.privateOfferExpiresAt?.toISOString();
-      events.push({ id: expiry ? `private:${order.id}:${expiry}` : `order:${order.id}`, channel: 'orders', title: 'Новый заказ', body: expiry ? 'Личное предложение. Откройте приложение.' : 'Заказ в вашем районе. Откройте приложение.', orderId: order.id, expiresAt: expiry ?? renewed.expires.toISOString() });
+      events.push({ id: expiry ? `private:${order.id}:${expiry}` : `order:${order.id}`, channel: 'orders', title: 'Новый заказ', body: expiry ? 'Личное предложение. Откройте приложение.' : 'Доступен заказ. Откройте приложение.', orderId: order.id, expiresAt: expiry ?? renewed.expires.toISOString() });
     }
   }
   const after = new Date(Math.max(renewed.lease.started_at.getTime(), renewed.driver.lastChatReadAt?.getTime() ?? 0));
