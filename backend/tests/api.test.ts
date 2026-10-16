@@ -577,9 +577,12 @@ test('concurrent topups preserve every credit and its ledger balance', async () 
   assert.deepEqual(history.items.map((entry: { balanceAfter: string }) => Number(entry.balanceAfter)).sort((a: number, b: number) => a - b), Array.from({ length: 80 }, (_, index) => 501 + index));
 });
 
-test('a queued claim rechecks positive balance after a concurrent withdrawal commits', async () => {
+for (const mode of ['public', 'private']) {
+  test(`a queued ${mode} claim rechecks positive balance after a concurrent withdrawal commits`, async () => {
   const driver = (await request('/driver/profile', driverToken)).data;
-  const created = await order();
+  const created = mode === 'public' ? await order() : (await request('/admin/orders', adminToken, {
+    districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: driver.id
+  })).data;
   let release!: () => void;
   let locked!: (pid: number) => void;
   const ready = new Promise<number>(resolve => { locked = resolve; });
@@ -605,7 +608,7 @@ test('a queued claim rechecks positive balance after a concurrent withdrawal com
     const walletPid = await ready;
     withdrawal = request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: -500, type: 'WITHDRAWAL' });
     const withdrawalPid = await blockedBy(walletPid);
-    claim = request('/orders/accept', driverToken, { orderId: created.id });
+    claim = request(mode === 'public' ? '/orders/accept' : '/orders/private-offer/accept', driverToken, { orderId: created.id, ...(mode === 'private' ? { privateOfferExpiresAt: created.privateOfferExpiresAt } : {}) });
     await blockedBy(withdrawalPid);
   } finally {
     release();
@@ -618,7 +621,8 @@ test('a queued claim rechecks positive balance after a concurrent withdrawal com
   const history = (await request('/driver/history', driverToken)).data.transactions;
   assert.equal(history.total, 1);
   assert.equal(history.items[0].amount, '-500');
-});
+  });
+}
 
 test('topups racing order charges and refunds reconcile through public history', async () => {
   const driver = (await request('/driver/profile', driverToken)).data;
@@ -1001,4 +1005,30 @@ test('credential reset revokes a private offer session while the new login can r
   assert.equal((await request('/driver/balance', token)).data.amount, '490');
   assert.equal((await request('/orders/current', token)).data.id, created.data.id);
   otherToken = token;
+});
+
+test('private confirmation and cancellation preserve credits with one charge and refund', async () => {
+  const driver = (await request('/driver/profile', otherToken)).data;
+  const created = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: driver.id });
+  assert.equal(created.status, 201);
+  const confirmation = { orderId: created.data.id, privateOfferExpiresAt: created.data.privateOfferExpiresAt };
+  const accepted = await Promise.all([
+    request('/orders/private-offer/accept', otherToken, confirmation),
+    request('/orders/private-offer/accept', otherToken, confirmation),
+    request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 1, type: 'TOPUP' })
+  ]);
+  assert.deepEqual(accepted.map(response => response.status).sort(), [200, 200, 409]);
+  assert.equal((await request('/driver/balance', otherToken)).data.amount, '491');
+  const cancelled = await Promise.all([
+    request('/orders/cancel', otherToken, { orderId: created.data.id }),
+    request(`/admin/orders/${created.data.id}/cancel`, adminToken, {}),
+    request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 1, type: 'TOPUP' })
+  ]);
+  assert.deepEqual(cancelled.map(response => response.status).sort(), [200, 200, 409]);
+  assert.equal((await request('/driver/balance', otherToken)).data.amount, '502');
+  const history = (await request('/driver/history', otherToken)).data.transactions;
+  assert.equal(history.total, 4);
+  assert.equal(history.items.filter((entry: { type: string }) => entry.type === 'PAYMENT').length, 1);
+  assert.equal(history.items.filter((entry: { type: string }) => entry.type === 'REFUND').length, 1);
+  assert.equal(history.items.reduce((sum: number, entry: { amount: string }) => sum + Number(entry.amount), 0), 2);
 });
