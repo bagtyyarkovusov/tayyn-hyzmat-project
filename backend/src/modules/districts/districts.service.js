@@ -4,7 +4,7 @@ const rooms = require('../../sockets/rooms');
 const logger = require('../../config/logger');
 const { findNearestDistrict, findDistrictByBoundary } = require('../../utils/geo');
 const { refreshOrderRecipients } = require('../../sockets/roomSync');
-const { GPS_FRESHNESS_MS } = require('../driver/gps-eligibility');
+const { onlineDriverWhere } = require('../driver/gps-eligibility');
 
 // "Активные заказы" - anything still in the pipeline (not finished, not
 // cancelled). "Свободные водители" - online, available, approved AND with a
@@ -18,6 +18,7 @@ async function listDistrictsWithStats() {
     orderBy: { name: 'asc' }
   });
 
+  const onlineWhere = onlineDriverWhere();
   const [orderCounts, candidateFreeDrivers, onlineCounts] = await Promise.all([
     prisma.order.groupBy({
       by: ['districtId'],
@@ -28,12 +29,12 @@ async function listDistrictsWithStats() {
     // tallied here in JS rather than in a groupBy - simple and unambiguous
     // for the driver counts a single city instance actually has.
     prisma.driver.findMany({
-      where: { districtId: { not: null }, status: 'APPROVED', isOnline: true, lastLat: { not: null }, lastLng: { not: null }, lastLocationAt: { gt: new Date(Date.now() - GPS_FRESHNESS_MS) }, isAvailable: true },
+      where: { ...onlineWhere, districtId: { not: null }, isAvailable: true },
       select: { districtId: true, user: { select: { balance: { select: { amount: true } } } } }
     }),
     prisma.driver.groupBy({
       by: ['districtId'],
-      where: { districtId: { not: null }, status: 'APPROVED', isOnline: true, lastLat: { not: null }, lastLng: { not: null }, lastLocationAt: { gt: new Date(Date.now() - GPS_FRESHNESS_MS) } },
+      where: { ...onlineWhere, districtId: { not: null } },
       _count: { _all: true }
     })
   ]);
@@ -65,23 +66,24 @@ async function listDistrictsWithStats() {
   }));
 }
 
-// Prefers a real drawn boundary (see the admin "Границы районов" editor,
-// admin.service.js#updateDistrictBoundary) over the older nearest-center
-// guess - a point actually inside a district's polygon wins regardless of
-// which center it's closer to. Falls back to nearest-center for any point
-// no polygon claims, so districts without a drawn boundary yet (or a point
-// genuinely outside all of them) still resolve to *something*, exactly as
-// before this function existed.
+// Driver GPS uses saved dispatch polygons only. A nearby center is not
+// evidence that a position belongs to that region.
+async function findDistrictForGpsPoint(lat, lng) {
+  const districts = await prisma.district.findMany({
+    where: { isActive: true },
+    select: { id: true, centerLat: true, centerLng: true, boundary: true }
+  });
+  return findDistrictByBoundary(districts, { lat, lng });
+}
+
+// Retain the inherited nearest-center interface for callers that explicitly
+// request that fallback. Driver location must use findDistrictForGpsPoint.
 async function findNearestDistrictForPoint(lat, lng) {
   const districts = await prisma.district.findMany({
     where: { isActive: true },
     select: { id: true, centerLat: true, centerLng: true, boundary: true }
   });
-  const point = { lat, lng };
-  const byBoundary = findDistrictByBoundary(districts, point);
-  if (byBoundary) return byBoundary;
-  const result = findNearestDistrict(districts, point);
-  return result ? result.district : null;
+  return findDistrictByBoundary(districts, { lat, lng }) || findNearestDistrict(districts, { lat, lng })?.district || null;
 }
 
 // Called after anything that can change a district's card: an order
@@ -99,4 +101,4 @@ async function broadcastDistrictStats() {
   }
 }
 
-module.exports = { listDistrictsWithStats, findNearestDistrictForPoint, broadcastDistrictStats };
+module.exports = { listDistrictsWithStats, findDistrictForGpsPoint, findNearestDistrictForPoint, broadcastDistrictStats };

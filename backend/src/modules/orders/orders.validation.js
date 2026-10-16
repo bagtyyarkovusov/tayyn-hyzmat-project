@@ -1,4 +1,5 @@
 const { z } = require('zod');
+const { phoneSchema } = require('../../utils/phone-policy');
 
 const orderIdSchema = z.object({
   orderId: z.string().uuid('Некорректный идентификатор заказа')
@@ -27,9 +28,7 @@ const createOrderSchema = z.object({
   dropoffLng: z.number().min(-180).max(180).optional(),
   dropoffAddress: z.string().trim().max(300).optional(),
   priceEstimated: z.number().finite().positive(),
-  clientPhone: z.string().trim().min(6, 'Укажите телефон клиента').max(20, 'Некорректный телефон клиента')
-    .regex(/^\+?[0-9][0-9\s-]*$/, 'Телефон может содержать цифры, пробелы, дефисы и начальный +')
-    .refine(phone => { const digits = phone.replace(/\D/g, ''); return digits.length >= 6 && digits.length <= 15; }, 'Телефон должен содержать от 6 до 15 цифр'),
+  clientPhone: phoneSchema,
   districtId: z.string().uuid('Выберите район'),
   privateOfferDriverId: z.string().uuid().optional(),
   note: z.string().trim().max(500).optional()

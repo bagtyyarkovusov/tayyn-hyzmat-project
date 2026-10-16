@@ -16,6 +16,7 @@ const server = createServer(app);
 const sockets = initSockets(server);
 const clients: Socket[] = [];
 let base = '';
+let testClient = 1;
 let adminToken = '';
 let driverToken = '';
 let otherToken = '';
@@ -27,7 +28,7 @@ async function request(path: string, token = '', body?: unknown) {
   const response = await fetch(`${base}${path}`, {
     method: body === undefined ? 'GET' : 'POST',
     signal: AbortSignal.timeout(5000),
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `127.0.1.${testClient}`,  ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) })
   });
   const data = response.status === 204 ? null : await response.json();
@@ -62,7 +63,7 @@ async function socketEvent(client: Socket, event: string): Promise<any[]> {
   });
 }
 async function order(priceEstimated: number | null = 10) {
-  const response = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: priceEstimated ?? 10, pickupAddress: 'Synthetic pickup', clientPhone: '+10000000999' });
+  const response = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: priceEstimated ?? 10, pickupAddress: 'Synthetic pickup', clientPhone: '+99360000999' });
   assert.equal(response.status, 201);
   if (priceEstimated === null) {
     await prisma.order.update({ where: { id: response.data.id }, data: { priceEstimated: null } });
@@ -72,12 +73,12 @@ async function order(priceEstimated: number | null = 10) {
 
 before(async () => {
   const passwordHash = await bcrypt.hash(password, 4);
-  await prisma.user.create({ data: { phone: '+10000000000', fullName: 'Test dispatcher', role: 'ADMIN', passwordHash, admin: { create: { permissionLevel: 'SUPER' } } } });
-  const region = await prisma.district.create({ data: { name: 'Synthetic west', centerLat: 37.96, centerLng: 58.32 } });
-  const otherRegion = await prisma.district.create({ data: { name: 'Synthetic east', centerLat: 37.96, centerLng: 58.42 } });
+  await prisma.user.create({ data: { phone: '+99360000000', fullName: 'Test dispatcher', role: 'ADMIN', passwordHash, admin: { create: { permissionLevel: 'SUPER' } } } });
+  const region = await prisma.district.create({ data: { name: 'Synthetic west', centerLat: 37.96, centerLng: 58.32, boundary: [[[37.94, 58.30], [37.98, 58.30], [37.98, 58.36], [37.94, 58.36]]] } });
+  const otherRegion = await prisma.district.create({ data: { name: 'Synthetic east', centerLat: 37.96, centerLng: 58.42, boundary: [[[37.94, 58.38], [37.98, 58.38], [37.98, 58.46], [37.94, 58.46]]] } });
   regionId = region.id;
   otherRegionId = otherRegion.id;
-  for (const [phone, districtId] of [['+10000000101', regionId], ['+10000000102', otherRegionId]]) {
+  for (const [phone, districtId] of [['+99360000101', regionId], ['+99360000102', otherRegionId]]) {
     await prisma.user.create({ data: { phone, fullName: 'Synthetic driver', role: 'DRIVER', passwordHash, driver: { create: { status: 'APPROVED', districtId } }, balance: { create: { amount: 500, currency: 'TMT' } } } });
   }
   server.listen(0, '127.0.0.1');
@@ -85,16 +86,17 @@ before(async () => {
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   base = `http://127.0.0.1:${address.port}`;
-  adminToken = await login('+10000000000');
-  driverToken = await login('+10000000101');
-  otherToken = await login('+10000000102');
+  adminToken = await login('+99360000000');
+  driverToken = await login('+99360000101');
+  otherToken = await login('+99360000102');
 });
 beforeEach(async () => {
+  testClient++;
   await prisma.transaction.deleteMany();
   await prisma.order.deleteMany();
   await prisma.balance.updateMany({ data: { amount: 500 } });
   await prisma.driver.updateMany({ data: { isAvailable: true, isOnline: false } });
-  await prisma.driver.updateMany({ where: { user: { phone: '+10000000102' } }, data: { districtId: otherRegionId } });
+  await prisma.driver.updateMany({ where: { user: { phone: '+99360000102' } }, data: { districtId: otherRegionId } });
   for (const [token, lng] of [[driverToken, 58.32], [otherToken, 58.42]] as const) {
     assert.equal((await request('/driver/location', token, { lat: 37.96, lng })).status, 200);
     assert.equal((await request('/driver/status', token, { isOnline: true })).status, 200);
@@ -108,6 +110,26 @@ after(async () => {
   await require('../dist/lib/prisma').$disconnect();
 });
 
+test('GPS outside saved regions clears the previous region without hiding the real position or going offline', async () => {
+  const within = await request('/driver/location', driverToken, { lat: 37.96, lng: 58.32 });
+  assert.equal(within.status, 200);
+  assert.equal(within.data.districtId, regionId);
+  const outside = await request('/driver/location', driverToken, { lat: 30.2329, lng: 120.0399 });
+  assert.equal(outside.status, 200);
+  const profile = await request('/driver/profile', driverToken);
+  assert.equal(profile.data.districtId, null);
+  assert.equal(Number(profile.data.lastLat), 30.2329);
+  assert.equal(Number(profile.data.lastLng), 120.0399);
+  assert.equal(profile.data.isOnline, true);
+  const regions = await request('/districts', driverToken);
+  assert.equal(regions.data.find((region: { id: string }) => region.id === regionId).onlineDrivers, 0);
+  const publicOrder = await order();
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, driverToken)).status, 200);
+  assert.equal((await request('/orders/accept', driverToken, { orderId: publicOrder.id, arrivalMinutes: 5 })).status, 200);
+  const returned = await request('/driver/location', driverToken, { lat: 37.96, lng: 58.32 });
+  assert.equal(returned.data.districtId, regionId);
+});
+
 test('private driver data requires authentication and dispatcher data requires an admin role', async () => {
   assert.equal((await request('/driver/profile')).status, 401);
   assert.equal((await request('/admin/drivers', driverToken)).status, 403);
@@ -116,7 +138,7 @@ test('private driver data requires authentication and dispatcher data requires a
 test('missing or stale GPS blocks online status, order browsing and claims without charging', async () => {
   const created = await order();
   for (const lastLocationAt of [null, new Date(Date.now() - 61000)]) {
-    await prisma.driver.updateMany({ where: { user: { phone: '+10000000101' } }, data: { lastLocationAt, isOnline: true } });
+    await prisma.driver.updateMany({ where: { user: { phone: '+99360000101' } }, data: { lastLocationAt, isOnline: true } });
     assert.equal((await request('/driver/status', driverToken, { isOnline: true })).status, 403);
     assert.equal((await request('/orders/available', driverToken)).status, 403);
     assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 403);
@@ -141,7 +163,7 @@ test('GPS expiry forces offline without interrupting a claimed trip and fresh GP
   assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 200);
   const client = await socket(driverToken);
   try {
-    await prisma.driver.updateMany({ where: { user: { phone: '+10000000101' } }, data: { lastLocationAt: new Date(Date.now() - 59500) } });
+    await prisma.driver.updateMany({ where: { user: { phone: '+99360000101' } }, data: { lastLocationAt: new Date(Date.now() - 59500) } });
     const expired = new Promise<Record<string, unknown>>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('GPS expiry did not emit offline')), 2500);
       client.on('driver:status', event => { if (event.reason === 'GPS_REQUIRED') { clearTimeout(timeout); resolve(event); } });
@@ -171,7 +193,7 @@ test('stale sockets receive no offers or live queues after balance, region chang
   watch();
   try {
     // Seed a stale timestamp while a previously eligible socket is still joined.
-    await prisma.driver.updateMany({ where: { user: { phone: '+10000000101' } }, data: { lastLocationAt: new Date(Date.now() - 61000) } });
+    await prisma.driver.updateMany({ where: { user: { phone: '+99360000101' } }, data: { lastLocationAt: new Date(Date.now() - 61000) } });
     await order();
     const profile = await request('/driver/profile', driverToken);
     assert.equal(profile.data.isOnline, false);
@@ -220,7 +242,7 @@ test('an inherited unpriced order can be completed without a balance charge', as
   assert.equal('clientPhone' in offered, false);
   const claimed = await request('/orders/accept', driverToken, { orderId: created.data.id });
   assert.equal(claimed.status, 200);
-  assert.equal(claimed.data.clientPhone, '+10000000999');
+  assert.equal(claimed.data.clientPhone, '+99360000999');
   assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
   for (const action of ['waiting', 'start', 'complete']) assert.equal((await request(`/orders/${action}`, driverToken, { orderId: created.data.id })).status, 200);
   assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
@@ -234,7 +256,7 @@ test('a claimed order progresses to completion and charges the quoted TMT price 
   const claimed = await request('/orders/accept', driverToken, body);
   assert.equal(claimed.status, 200);
   assert.equal(claimed.data.status, 'ACCEPTED');
-  assert.equal(claimed.data.clientPhone, '+10000000999');
+  assert.equal(claimed.data.clientPhone, '+99360000999');
   assert.equal((await request('/orders/complete', driverToken, body)).status, 409);
   for (const [action, status] of [['waiting', 'WAITING'], ['start', 'STARTED'], ['complete', 'COMPLETED']]) {
     const response = await request(`/orders/${action}`, driverToken, body);
@@ -368,7 +390,7 @@ test('dispatcher creates an approved driver with a zero TMT balance and no leake
 });
 
 test('a newly registered driver can log in only after dispatcher approval', async () => {
-  const phone = '+10000000103';
+  const phone = '+99360000103';
   const registered = await request('/auth/register', '', { phone, password, fullName: 'Pending synthetic driver' });
   assert.equal(registered.status, 201);
   assert.equal((await request('/auth/login', '', { phone, password })).status, 403);
@@ -420,6 +442,376 @@ test('canonical bootstrap fills a missing boundary without changing an existing 
   assert.equal(restored[0].boundary[0].length, 26);
 });
 
+test('native inbox safely replays notifications and removes consumed orders and chats', async () => {
+  const island = await prisma.district.create({ data: { name: 'Native synthetic island', centerLat: 0, centerLng: 0, boundary: [[[-0.01, -0.01], [0.01, -0.01], [0.01, 0.01], [-0.01, 0.01]]] } });
+  const auth = await request('/auth/login', '', { phone: '+99360000101', password, deviceId: 'native-test-device' });
+  await request('/driver/location', auth.data.accessToken, { lat: 0, lng: 0 });
+  await request('/driver/status', auth.data.accessToken, { isOnline: true });
+  assert.equal(auth.status, 200);
+  const started = await request('/driver/shift', auth.data.accessToken, { deviceId: 'native-test-device', refreshToken: auth.data.refreshToken });
+  assert.equal(started.status, 201);
+  assert.equal(started.data.pollIntervalMs, 10000);
+  const createdResponse = await request('/admin/orders', adminToken, { districtId: island.id, priceEstimated: 10, clientPhone: '+99360000999' });
+  assert.equal(createdResponse.status, 201);
+  const created = createdResponse.data;
+  assert.equal((await request('/admin/messages', adminToken, { driverId: auth.data.user.driver.id, body: 'Private test message' })).status, 200);
+  const fix = { lat: 0, lng: 0, recordedAt: new Date().toISOString() };
+  const first = await request('/native-shift/tick', started.data.shiftToken, fix);
+  assert.equal(first.status, 200);
+  assert.ok(first.data.events.some((event: { orderId?: string }) => event.orderId === created.id));
+  assert.ok(first.data.events.some((event: { channel: string }) => event.channel === 'chat'));
+  assert.ok(!JSON.stringify(first.data.events).includes('+99360000999'));
+  assert.ok(!JSON.stringify(first.data.events).includes('Private test message'));
+  const second = await request('/native-shift/tick', started.data.shiftToken, fix);
+  assert.deepEqual(second.data.events.map((event: { id: string }) => event.id), first.data.events.map((event: { id: string }) => event.id));
+  assert.equal((await request('/driver/messages/read', auth.data.accessToken, {})).status, 204);
+  assert.equal((await request('/orders/accept', auth.data.accessToken, { orderId: created.id })).status, 200);
+  const consumed = await request('/native-shift/tick', started.data.shiftToken, fix);
+  assert.deepEqual(consumed.data.events, []);
+});
+
+test('native chat inbox includes the newest unread message when more than one hundred are pending', async () => {
+  const auth = await request('/auth/login', '', { phone: '+99360000101', password, deviceId: 'native-test-device' });
+  await request('/driver/location', auth.data.accessToken, { lat: 37.96, lng: 58.32 });
+  await request('/driver/status', auth.data.accessToken, { isOnline: true });
+  const started = await request('/driver/shift', auth.data.accessToken, { deviceId: 'native-test-device', refreshToken: auth.data.refreshToken });
+  assert.equal(started.status, 201);
+  const fix = { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() };
+  const sender = await prisma.user.findUniqueOrThrow({ where: { phone: '+99360000000' } });
+  const sentAt = new Date(Date.now() + 1);
+  await prisma.message.createMany({ data: Array.from({ length: 100 }, (_, i) => ({ id: `native-chat-overflow-${i}`, senderId: sender.id, receiverId: auth.data.user.id, body: 'Synthetic older unread', sentAt })) });
+  await prisma.message.create({ data: { id: 'native-chat-newest', senderId: sender.id, receiverId: auth.data.user.id, body: 'Synthetic newest unread', sentAt: new Date(sentAt.getTime() + 1) } });
+  const overflow = await request('/native-shift/tick', started.data.shiftToken, fix);
+  assert.ok(overflow.data.events.some((event: { messageId?: string }) => event.messageId === 'native-chat-newest'));
+
+});
+
+
+test('native shift cannot start without matching device and GPS or renew with a stale fix, expired lease or logout', async () => {
+  const auth = await request('/auth/login', '', { phone: '+99360000101', password, deviceId: 'native-test-device' });
+  const body = { deviceId: 'native-test-device', refreshToken: auth.data.refreshToken };
+  assert.equal((await request('/driver/shift', auth.data.accessToken, { ...body, deviceId: 'wrong-device' })).status, 403);
+  await request('/driver/status', auth.data.accessToken, { isOnline: false });
+  assert.equal((await request('/driver/shift', auth.data.accessToken, body)).status, 403);
+  await request('/driver/status', auth.data.accessToken, { isOnline: true });
+  const first = await request('/driver/shift', auth.data.accessToken, body);
+  assert.equal(first.status, 201);
+  const fix = { lat: 0, lng: 0, recordedAt: new Date().toISOString() };
+  assert.equal((await request('/native-shift/tick', first.data.shiftToken, { ...fix, recordedAt: new Date(Date.now() - 31000).toISOString() })).status, 400);
+  assert.equal((await request('/native-shift/tick', 'invalid-token', fix)).status, 401);
+  await prisma.$executeRaw`UPDATE native_shift_leases SET expires_at = NOW() - INTERVAL '1 second'`;
+  assert.equal((await request('/native-shift/tick', first.data.shiftToken, fix)).status, 401);
+  const second = await request('/driver/shift', auth.data.accessToken, body);
+  assert.equal(second.status, 201);
+  await request('/native-shift/stop', first.data.shiftToken, {});
+  assert.equal((await request('/native-shift/tick', second.data.shiftToken, fix)).status, 200);
+  await request('/auth/logout', '', { refreshToken: auth.data.refreshToken });
+  assert.equal((await request('/native-shift/tick', second.data.shiftToken, fix)).status, 401);
+  assert.equal((await request('/driver/profile', auth.data.accessToken)).data.isOnline, false);
+});
+
+test('native task stop publishes persisted offline state to the driver and dispatcher', async () => {
+  const auth = await request('/auth/login', '', { phone: '+99360000101', password, deviceId: 'native-test-device' });
+  await request('/driver/location', auth.data.accessToken, { lat: 37.96, lng: 58.32 });
+  await request('/driver/status', auth.data.accessToken, { isOnline: true });
+  const started = await request('/driver/shift', auth.data.accessToken, { deviceId: 'native-test-device', refreshToken: auth.data.refreshToken });
+  assert.equal(started.status, 201);
+  const driver = await socket(auth.data.accessToken);
+  const admin = await socket(adminToken);
+  const stopped = (client: Socket) => new Promise<Record<string, unknown>>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Offline shift status was not broadcast')), 1500);
+    client.on('driver:status', event => {
+      if (event.driverId !== auth.data.user.driver.id || event.isOnline !== false) return;
+      clearTimeout(timer);
+      resolve(event);
+    });
+  });
+  const observed = Promise.all([stopped(driver), stopped(admin)]);
+  const result = await request('/native-shift/stop', started.data.shiftToken, {});
+  assert.equal(result.status, 204);
+  for (const event of await observed) assert.equal(event.reason, 'SHIFT_ENDED');
+  assert.equal((await request('/driver/profile', auth.data.accessToken)).data.isOnline, false);
+});
+
+test('explicit shift stop revokes its credential and a later replay cannot offline the driver', async () => {
+  const auth = await request('/auth/login', '', { phone: '+99360000101', password, deviceId: 'native-test-device' });
+  const started = await request('/driver/shift', auth.data.accessToken, { deviceId: 'native-test-device', refreshToken: auth.data.refreshToken });
+  assert.equal(started.status, 201);
+  assert.equal((await request('/driver/shift/stop', auth.data.accessToken, {})).status, 204);
+  const fix = { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() };
+  assert.equal((await request('/native-shift/tick', started.data.shiftToken, fix)).status, 401);
+  assert.equal((await request('/driver/profile', auth.data.accessToken)).data.isOnline, false);
+  assert.equal((await request('/driver/status', auth.data.accessToken, { isOnline: true })).status, 200);
+  assert.equal((await request('/native-shift/stop', started.data.shiftToken, {})).status, 204);
+  assert.equal((await request('/driver/profile', auth.data.accessToken)).data.isOnline, true);
+});
+for (const scenario of ['driver-driver', 'admin-admin', 'driver-admin']) {
+  test(`cancellation stress: ${scenario} refunds exactly once across 20 races`, async () => {
+    const failures: unknown[] = [];
+    for (let round = 0; round < 20; round++) {
+      const before = Number((await request('/driver/balance', driverToken)).data.amount);
+      const created = await order();
+      const body = { orderId: created.id };
+      assert.equal((await request('/orders/accept', driverToken, body)).status, 200);
+      const driverCancel = () => request('/orders/cancel', driverToken, body);
+      const adminCancel = () => request(`/admin/orders/${created.id}/cancel`, adminToken, {});
+      const responses = await Promise.all(scenario === 'driver-driver' ? [driverCancel(), driverCancel()] : scenario === 'admin-admin' ? [adminCancel(), adminCancel()] : [driverCancel(), adminCancel()]);
+      const after = Number((await request('/driver/balance', driverToken)).data.amount);
+      const history = (await request('/driver/history', driverToken)).data;
+      const refunds = history.transactions.items.filter((entry: {orderId: string; type: string}) => entry.orderId === created.id && entry.type === 'REFUND').length;
+      if (after !== before || refunds !== 1 || responses.filter(r => r.status === 200).length !== 1) failures.push({round, statuses: responses.map(r => r.status), before, after, refunds});
+    }
+    assert.equal(failures.length, 0, 'concurrent cancellation must refund once and have one winner');
+  });
+}
+
+test('cancellation flow: closes without requeue, frees driver, and forbids driver cancellation after start', async () => {
+  const created = await order();
+  const body = { orderId: created.id };
+  assert.equal((await request('/orders/accept', driverToken, body)).status, 200);
+  assert.equal((await request('/orders/cancel', driverToken, body)).status, 200);
+  assert.equal((await request('/orders/current', driverToken)).data, null);
+  assert.equal((await request('/driver/profile', driverToken)).data.isAvailable, true);
+  assert.equal((await request('/orders/available', driverToken)).data.some((o: {id: string}) => o.id === created.id), false);
+  const next = await order();
+  const nextBody = {orderId: next.id};
+  assert.equal((await request('/orders/accept', driverToken, nextBody)).status, 200);
+  assert.equal((await request('/orders/waiting', driverToken, nextBody)).status, 200);
+  assert.equal((await request('/orders/start', driverToken, nextBody)).status, 200);
+  assert.equal((await request('/orders/cancel', driverToken, nextBody)).status, 409);
+  assert.equal((await request('/orders/current', driverToken)).data.status, 'STARTED');
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '490');
+});
+
+test('cancellation stress: competing start and cancel cannot resurrect a cancelled trip', async () => {
+  const failures: unknown[] = [];
+  for (let round = 0; round < 20; round++) {
+    await prisma.order.deleteMany();
+    await prisma.driver.updateMany({data:{isAvailable:true}});
+    await prisma.balance.updateMany({data:{amount:500}});
+    const created = await order();
+    const body = {orderId:created.id};
+    assert.equal((await request('/orders/accept', driverToken, body)).status, 200);
+    assert.equal((await request('/orders/waiting', driverToken, body)).status, 200);
+    const responses = await Promise.all([request('/orders/start', driverToken, body), request('/orders/cancel', driverToken, body)]);
+    const current = (await request('/orders/current', driverToken)).data;
+    const balance = Number((await request('/driver/balance', driverToken)).data.amount);
+    if (responses.filter(r=>r.status===200).length !== 1 || (current?.status === 'STARTED' && balance !== 490) || (!current && balance !== 500)) failures.push({round,statuses:responses.map(r=>r.status),current:current?.status ?? null,balance});
+  }
+  assert.equal(failures.length,0,'only one allowed state transition may win');
+});
+
+
+test('concurrent claims of different orders keep one active trip and one debit', async () => {
+  for (let round = 0; round < 20; round++) {
+    const first = await order();
+    const second = await order();
+    const responses = await Promise.all([first, second].map(created => request('/orders/accept', driverToken, { orderId: created.id })));
+    assert.deepEqual(responses.map(response => response.status).sort(), [200, 409]);
+    const current = (await request('/orders/current', driverToken)).data;
+    assert.ok([first.id, second.id].includes(current.id));
+    assert.equal((await request('/driver/profile', driverToken)).data.isAvailable, false);
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, '490');
+    assert.equal((await request('/orders/cancel', driverToken, { orderId: current.id })).status, 200);
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
+  }
+});
+
+test('cancellation wins once over repeated arrival and emits one committed refund', async () => {
+  const client = await socket(adminToken);
+  const created = await order();
+  const body = { orderId: created.id };
+  assert.equal((await request('/orders/accept', driverToken, body)).status, 200);
+  const cancelled: string[] = [];
+  const refunds: string[] = [];
+  client.on('order:cancelled', event => { if (event.id === created.id) cancelled.push(event.id); });
+  client.on('balance:updated', event => { if (event.orderId === created.id && event.reason === 'REFUND') refunds.push(event.orderId); });
+  const responses = await Promise.all([
+    request('/orders/waiting', driverToken, body),
+    request('/orders/cancel', driverToken, body),
+    request('/orders/cancel', driverToken, body)
+  ]);
+  assert.equal(responses.filter(response => response.status === 200 && response.data.status === 'CANCELLED').length, 1);
+  assert.equal((await request('/orders/current', driverToken)).data, null);
+  assert.equal((await request('/orders/waiting', driverToken, body)).status, 409);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(cancelled.length, 1);
+  assert.equal(refunds.length, 1);
+  client.disconnect();
+});
+
+test('dispatcher cancellation and trip completion have one terminal winner', async () => {
+  for (let round = 0; round < 20; round++) {
+    await prisma.order.deleteMany();
+    await prisma.driver.updateMany({ data: { isAvailable: true } });
+    await prisma.balance.updateMany({ data: { amount: 500 } });
+    const created = await order();
+    const body = { orderId: created.id };
+    assert.equal((await request('/orders/accept', driverToken, body)).status, 200);
+    assert.equal((await request('/orders/waiting', driverToken, body)).status, 200);
+    assert.equal((await request('/orders/start', driverToken, body)).status, 200);
+    const responses = await Promise.all([
+      request('/orders/complete', driverToken, body),
+      request(`/admin/orders/${created.id}/cancel`, adminToken, {})
+    ]);
+    assert.deepEqual(responses.map(response => response.status).sort(), [200, 409]);
+    const winner = responses.find(response => response.status === 200)!;
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, winner.data.status === 'COMPLETED' ? '490' : '500');
+    assert.equal((await request('/orders/current', driverToken)).data, null);
+    assert.equal((await request('/driver/profile', driverToken)).data.isAvailable, true);
+  }
+});
+
+test('a claim racing dispatcher cancellation never leaves an unpaid active trip', async () => {
+  for (let round = 0; round < 20; round++) {
+    const created = await order();
+    const responses = await Promise.all([
+      request('/orders/accept', driverToken, { orderId: created.id }),
+      request(`/admin/orders/${created.id}/cancel`, adminToken, {})
+    ]);
+    assert.ok(responses.every(response => [200, 409].includes(response.status)));
+    const current = (await request('/orders/current', driverToken)).data;
+    const balance = (await request('/driver/balance', driverToken)).data.amount;
+    if (current) {
+      assert.equal(current.id, created.id);
+      assert.equal(current.status, 'ACCEPTED');
+      assert.equal(balance, '490');
+      assert.equal((await request('/orders/cancel', driverToken, { orderId: created.id })).status, 200);
+    } else {
+      assert.equal(balance, '500');
+      assert.equal(responses[1].status, 200);
+    }
+    assert.equal((await request('/driver/profile', driverToken)).data.isAvailable, true);
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
+  }
+});
+
+test('concurrent topups preserve every credit and its ledger balance', async () => {
+  const driver = (await request('/driver/profile', driverToken)).data;
+  for (let batch = 0; batch < 10; batch++) {
+    const responses = await Promise.all(Array.from({ length: 8 }, () =>
+      request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 1, type: 'TOPUP' })
+    ));
+    assert.ok(responses.every(response => response.status === 200));
+  }
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '580');
+  const history = (await request('/driver/history?limit=100', driverToken)).data.transactions;
+  assert.equal(history.total, 80);
+  assert.equal(history.items.reduce((sum: number, entry: { amount: string }) => sum + Number(entry.amount), 0), 80);
+  assert.deepEqual(history.items.map((entry: { balanceAfter: string }) => Number(entry.balanceAfter)).sort((a: number, b: number) => a - b), Array.from({ length: 80 }, (_, index) => 501 + index));
+});
+
+for (const mode of ['public', 'private']) {
+  test(`a queued ${mode} claim rechecks positive balance after a concurrent withdrawal commits`, async () => {
+  const driver = (await request('/driver/profile', driverToken)).data;
+  const created = mode === 'public' ? await order() : (await request('/admin/orders', adminToken, {
+    districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: driver.id
+  })).data;
+  let release!: () => void;
+  let locked!: (pid: number) => void;
+  const ready = new Promise<number>(resolve => { locked = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const heldWallet = prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM balances WHERE user_id = ${driver.userId} FOR UPDATE`;
+    const [connection] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+    locked(connection.pid);
+    await gate;
+  }, { timeout: 10000 });
+  async function blockedBy(pid: number) {
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline) {
+      const waiting = await prisma.$queryRaw<Array<{ pid: number }>>`SELECT pid FROM pg_stat_activity WHERE ${pid} = ANY(pg_blocking_pids(pid))`;
+      if (waiting.length) return waiting[0].pid;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    throw new Error('Concurrent request did not reach its database lock');
+  }
+  let withdrawal: ReturnType<typeof request> | undefined;
+  let claim: ReturnType<typeof request> | undefined;
+  try {
+    const walletPid = await ready;
+    withdrawal = request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: -500, type: 'WITHDRAWAL' });
+    const withdrawalPid = await blockedBy(walletPid);
+    claim = request(mode === 'public' ? '/orders/accept' : '/orders/private-offer/accept', driverToken, { orderId: created.id, ...(mode === 'private' ? { privateOfferExpiresAt: created.privateOfferExpiresAt } : {}) });
+    await blockedBy(withdrawalPid);
+  } finally {
+    release();
+    await heldWallet;
+  }
+  assert.equal((await withdrawal!).status, 200);
+  assert.equal((await claim!).status, 403);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '0');
+  assert.equal((await request('/orders/current', driverToken)).data, null);
+  const history = (await request('/driver/history', driverToken)).data.transactions;
+  assert.equal(history.total, 1);
+  assert.equal(history.items[0].amount, '-500');
+  });
+}
+
+test('topups racing order charges and refunds reconcile through public history', async () => {
+  const driver = (await request('/driver/profile', driverToken)).data;
+  for (let round = 0; round < 20; round++) {
+    const created = await order();
+    const responses = await Promise.all([
+      request('/orders/accept', driverToken, { orderId: created.id }),
+      request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 1, type: 'TOPUP' })
+    ]);
+    assert.ok(responses.every(response => response.status === 200));
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, String(491 + round * 2));
+    const cancelled = await Promise.all([
+      request('/orders/cancel', driverToken, { orderId: created.id }),
+      request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 1, type: 'TOPUP' })
+    ]);
+    assert.ok(cancelled.every(response => response.status === 200));
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, String(502 + round * 2));
+  }
+  const history = (await request('/driver/history?limit=100', driverToken)).data.transactions;
+  assert.equal(history.total, 80);
+  assert.equal(history.items.filter((entry: { type: string }) => entry.type === 'PAYMENT').length, 20);
+  assert.equal(history.items.filter((entry: { type: string }) => entry.type === 'REFUND').length, 20);
+  assert.equal(history.items.reduce((sum: number, entry: { amount: string }) => sum + Number(entry.amount), 0), 40);
+});
+
+test('concurrent withdrawals recheck funds without creating a forbidden ledger entry', async () => {
+  const driver = (await request('/driver/profile', driverToken)).data;
+  const responses = await Promise.all(Array.from({ length: 2 }, () =>
+    request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: -400, type: 'WITHDRAWAL' })
+  ));
+  assert.deepEqual(responses.map(response => response.status).sort(), [200, 400]);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '100');
+  const history = (await request('/driver/history', driverToken)).data.transactions;
+  assert.equal(history.total, 1);
+  assert.equal(history.items[0].amount, '-400');
+  assert.equal(history.items[0].balanceAfter, '100');
+});
+
+test('a failed ledger insert rolls back the claim and wallet before a safe retry', async () => {
+  const created = await order();
+  const client = await socket(adminToken);
+  const payments: unknown[] = [];
+  client.on('balance:updated', event => { if (event.orderId === created.id) payments.push(event); });
+  // A storage-boundary failure fixture, confined to this disposable schema.
+  await prisma.$executeRawUnsafe('ALTER TABLE transactions ADD CONSTRAINT fail_test_payment CHECK (amount <> -10)');
+  try {
+    assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 500);
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
+    assert.equal((await request('/orders/current', driverToken)).data, null);
+    assert.equal((await request('/driver/profile', driverToken)).data.isAvailable, true);
+    assert.equal((await request('/driver/history', driverToken)).data.transactions.total, 0);
+    assert.equal(payments.length, 0);
+  } finally {
+    await prisma.$executeRawUnsafe('ALTER TABLE transactions DROP CONSTRAINT fail_test_payment');
+  }
+  assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 200);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '490');
+  const history = (await request('/driver/history', driverToken)).data.transactions;
+  assert.equal(history.total, 1);
+  assert.equal(history.items[0].amount, '-10');
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(payments.length, 1);
+  client.disconnect();
+});
 
 test('private offers reserve cross-region orders without disclosing phone or charging until acceptance', async () => {
   const driver = (await request('/driver/profile', otherToken)).data;
@@ -612,7 +1004,7 @@ test('dispatcher edits driver identity without a name-only change ending the ses
   assert.equal(updated.status, 200);
   assert.equal(updated.data.user.fullName, 'Updated driver');
   assert.equal((await request('/driver/profile', login.data.accessToken)).status, 200);
-  const duplicate = await request(`/admin/drivers/${id}/profile`, adminToken, { fullName: 'Should not save', phone: '+10000000102' });
+  const duplicate = await request(`/admin/drivers/${id}/profile`, adminToken, { fullName: 'Should not save', phone: '+99360000102' });
   assert.equal(duplicate.status, 409);
   const preserved = await request(`/admin/drivers/${id}`, adminToken);
   assert.equal(preserved.data.user.fullName, 'Updated driver');
@@ -723,7 +1115,7 @@ test('credential reset revokes a private offer session while the new login can r
   assert.equal(reset.status, 200);
   assert.equal((await request('/orders/private-offer', otherToken)).status, 401);
   assert.equal((await request('/orders/private-offer/accept', otherToken, { orderId: created.data.id, privateOfferExpiresAt: created.data.privateOfferExpiresAt })).status, 401);
-  const session = await request('/auth/login', '', { phone: '+10000000102', password: 'SyntheticReplacement123!' });
+  const session = await request('/auth/login', '', { phone: '+99360000102', password: 'SyntheticReplacement123!' });
   assert.equal(session.status, 200);
   const token = session.data.accessToken;
   assert.equal((await request('/orders/private-offer', token)).status, 403);
@@ -738,4 +1130,295 @@ test('credential reset revokes a private offer session while the new login can r
   assert.equal((await request('/driver/balance', token)).data.amount, '490');
   assert.equal((await request('/orders/current', token)).data.id, created.data.id);
   otherToken = token;
+});
+
+test('credential reset cannot revive an old native shift after the new session goes online', async () => {
+  const phone = '+99361001090';
+  const created = await request('/admin/drivers', adminToken, { fullName: 'Native credential fixture', phone, password });
+  const id = created.data.id;
+  const auth = await request('/auth/login', '', { phone, password, deviceId: 'native-credential-device' });
+  const token = auth.data.accessToken;
+  await request('/driver/location', token, { lat: 37.96, lng: 58.32 });
+  await request('/driver/status', token, { isOnline: true });
+  const started = await request('/driver/shift', token, { deviceId: 'native-credential-device', refreshToken: auth.data.refreshToken });
+  assert.equal(started.status, 201);
+  const changedPassword = 'UpdatedNative123!';
+  assert.equal((await request(`/admin/drivers/${id}/password`, adminToken, { password: changedPassword, passwordConfirmation: changedPassword })).status, 200);
+  const fresh = await request('/auth/login', '', { phone, password: changedPassword, deviceId: 'native-credential-device' });
+  assert.equal(fresh.status, 200);
+  await request('/driver/location', fresh.data.accessToken, { lat: 37.96, lng: 58.32 });
+  await request('/driver/status', fresh.data.accessToken, { isOnline: true });
+  assert.equal((await request('/native-shift/tick', started.data.shiftToken, { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() })).status, 401);
+});
+
+test('native private offer replay preserves the persisted deadline and acceptance removes its notification', async () => {
+  const auth = await request('/auth/login', '', { phone: '+99360000101', password, deviceId: 'native-test-device' });
+  assert.equal(auth.status, 200);
+  const token = auth.data.accessToken;
+  const started = await request('/driver/shift', token, { deviceId: 'native-test-device', refreshToken: auth.data.refreshToken });
+  assert.equal(started.status, 201);
+  const profile = (await request('/driver/profile', token)).data;
+  const offered = await request('/admin/orders', adminToken, { districtId: otherRegionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: profile.id });
+  assert.equal(offered.status, 201);
+  const fix = () => ({ lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() });
+  const first = await request('/native-shift/tick', started.data.shiftToken, fix());
+  const event = first.data.events.find((item: { orderId?: string }) => item.orderId === offered.data.id);
+  assert.equal(event.expiresAt, offered.data.privateOfferExpiresAt);
+  assert.equal(event.id, `private:${offered.data.id}:${offered.data.privateOfferExpiresAt}`);
+  assert.equal(JSON.stringify(first.data.events).includes('+99365000000'), false);
+  const replay = await request('/native-shift/tick', started.data.shiftToken, fix());
+  assert.deepEqual(replay.data.events.find((item: { orderId?: string }) => item.orderId === offered.data.id), event);
+  const recovered = await request('/orders/private-offer', token);
+  assert.equal(recovered.data.privateOfferExpiresAt, event.expiresAt);
+  assert.equal((await request('/orders/private-offer/accept', token, { orderId: offered.data.id, privateOfferExpiresAt: event.expiresAt })).status, 200);
+  const accepted = await request('/native-shift/tick', started.data.shiftToken, fix());
+  assert.equal(accepted.data.events.some((item: { orderId?: string }) => item.orderId === offered.data.id), false);
+  assert.equal((await request('/driver/balance', token)).data.amount, '490');
+});
+test('private confirmation and cancellation preserve credits with one charge and refund', async () => {
+  const driver = (await request('/driver/profile', otherToken)).data;
+  const created = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: driver.id });
+  assert.equal(created.status, 201);
+  const confirmation = { orderId: created.data.id, privateOfferExpiresAt: created.data.privateOfferExpiresAt };
+  const accepted = await Promise.all([
+    request('/orders/private-offer/accept', otherToken, confirmation),
+    request('/orders/private-offer/accept', otherToken, confirmation),
+    request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 1, type: 'TOPUP' })
+  ]);
+  assert.deepEqual(accepted.map(response => response.status).sort(), [200, 200, 409]);
+  assert.equal((await request('/driver/balance', otherToken)).data.amount, '491');
+  const cancelled = await Promise.all([
+    request('/orders/cancel', otherToken, { orderId: created.data.id }),
+    request(`/admin/orders/${created.data.id}/cancel`, adminToken, {}),
+    request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 1, type: 'TOPUP' })
+  ]);
+  assert.deepEqual(cancelled.map(response => response.status).sort(), [200, 200, 409]);
+  assert.equal((await request('/driver/balance', otherToken)).data.amount, '502');
+  const history = (await request('/driver/history', otherToken)).data.transactions;
+  assert.equal(history.total, 4);
+  assert.equal(history.items.filter((entry: { type: string }) => entry.type === 'PAYMENT').length, 1);
+  assert.equal(history.items.filter((entry: { type: string }) => entry.type === 'REFUND').length, 1);
+  assert.equal(history.items.reduce((sum: number, entry: { amount: string }) => sum + Number(entry.amount), 0), 2);
+});
+
+test('a native renewal blocked beyond lease expiry cannot restore availability', async () => {
+  const auth = await request('/auth/login', '', { phone: '+99360000101', password, deviceId: 'native-test-device' });
+  assert.equal(auth.status, 200);
+  const started = await request('/driver/shift', auth.data.accessToken, { deviceId: 'native-test-device', refreshToken: auth.data.refreshToken });
+  assert.equal(started.status, 201);
+  assert.equal(typeof started.data.shiftToken, 'string');
+  const profile = (await request('/driver/profile', auth.data.accessToken)).data;
+  await prisma.$executeRaw`UPDATE native_shift_leases SET expires_at = NOW() + INTERVAL '600 milliseconds' WHERE driver_id = ${profile.id}`;
+  let release!: () => void;
+  let ready!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const locked = new Promise<void>(resolve => { ready = resolve; });
+  const blocker = prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM users WHERE id = ${profile.userId} FOR UPDATE`;
+    ready(); await gate;
+  }, { timeout: 10000 });
+  await locked;
+  try {
+    const pending = request('/native-shift/tick', started.data.shiftToken, { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() });
+    let blocked = false;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE 'SELECT u.id FROM users u JOIN drivers d%'`;
+      if (Number(rows[0].count) > 0) { blocked = true; break; }
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(blocked, true, 'native renewal must reach the held user lock before its expiry');
+    await new Promise(resolve => setTimeout(resolve, 850));
+    release();
+    assert.equal((await pending).status, 401);
+  } finally { release(); await blocker; }
+});
+
+test('numeric six-character driver passwords work consistently for creation and reset while old sessions are revoked', async () => {
+  const phone = '+99361001091';
+  const created = await request('/admin/drivers', adminToken, { fullName: 'Numeric password fixture', phone, password: '123456' });
+  assert.equal(created.status, 201);
+  const auth = await request('/auth/login', '', { phone, password: '123456', deviceId: 'numeric-password-device' });
+  assert.equal(auth.status, 200);
+  const token = auth.data.accessToken;
+  await request('/driver/location', token, { lat: 37.96, lng: 58.32 });
+  await request('/driver/status', token, { isOnline: true, isAvailable: true });
+  const shift = await request('/driver/shift', token, { deviceId: 'numeric-password-device', refreshToken: auth.data.refreshToken });
+  assert.equal(shift.status, 201);
+  const connected = await socket(token);
+  const revoked = nextSocketEvent(connected, 'session:revoked');
+  const reset = await request(`/admin/drivers/${created.data.id}/password`, adminToken, { password: '654321', passwordConfirmation: '654321' });
+  assert.equal(reset.status, 200);
+  await revoked;
+  assert.equal((await request('/driver/profile', token)).status, 401);
+  assert.equal((await request('/auth/refresh', '', { refreshToken: auth.data.refreshToken })).status, 401);
+  assert.equal((await request('/native-shift/tick', shift.data.shiftToken, { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() })).status, 401);
+  assert.equal((await request('/auth/login', '', { phone, password: '123456' })).status, 401);
+  assert.equal((await request('/auth/login', '', { phone, password: '654321', deviceId: 'numeric-password-device' })).status, 200);
+});
+
+test('new driver passwords reject short values and bcrypt-truncated UTF-8 values in registration, creation and reset', async () => {
+  const fixture = await request('/admin/drivers', adminToken, { fullName: 'Password byte limit fixture', phone: '+99361001092', password: '123456' });
+  assert.equal(fixture.status, 201);
+  for (const invalid of ['12345', 'a'.repeat(73), 'é'.repeat(37)]) {
+    for (const path of ['/auth/register', '/admin/drivers']) {
+      const result = await request(path, path.startsWith('/admin') ? adminToken : '', { fullName: 'Invalid password fixture', phone: '+99361001093', password: invalid });
+      assert.equal(result.status, 400, `${path} rejects invalid new password`);
+    }
+    const reset = await request(`/admin/drivers/${fixture.data.id}/password`, adminToken, { password: invalid, passwordConfirmation: invalid });
+    assert.equal(reset.status, 400);
+  }
+  assert.equal((await request('/auth/login', '', { phone: '+99361001092', password: '123456' })).status, 200);
+});
+
+test('driver registration rejects a UTF-8 password beyond bcrypt 72-byte capacity even when character length is short', async () => {
+  const result = await request('/auth/register', '', { fullName: 'UTF-8 limit fixture', phone: '+99361001094', password: 'é'.repeat(37) });
+  assert.equal(result.status, 400);
+});
+
+
+test('Turkmen phone inputs normalize formatting and reject other countries or invalid lengths across public writes', async () => {
+  const formatted = '+993 61-001095';
+  const created = await request('/admin/drivers', adminToken, { fullName: 'Phone policy fixture', phone: formatted, password: '123456' });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.user.phone, '+99361001095');
+  assert.equal((await request('/auth/login', '', { phone: formatted, password: '123456' })).status, 200);
+  const invalidPhones = ['+10000000999', '+9936100109', '+993610010950', '61001095', '+99361x01095', '+993+61001095'];
+  for (const phone of invalidPhones) {
+    assert.equal((await request('/auth/register', '', { fullName: 'Invalid phone', phone, password: '123456' })).status, 400);
+    assert.equal((await request('/admin/drivers', adminToken, { fullName: 'Invalid phone', phone, password: '123456' })).status, 400);
+    assert.equal((await request(`/admin/drivers/${created.data.id}/profile`, adminToken, { fullName: 'Invalid phone', phone })).status, 400);
+    assert.equal((await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: phone })).status, 400);
+    assert.equal((await request('/auth/login', '', { phone, password: '123456' })).status, 400);
+  }
+  const result = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: formatted });
+  assert.equal(result.status, 201);
+  assert.equal(result.data.clientPhone, '+99361001095');
+});
+
+
+test('dispatcher overview counts the full fleet and decimal completed trip value instead of a page sample', async () => {
+  const now = new Date();
+  const extraUsers: string[] = [];
+  // Earlier workflows create accounts; this measurement example owns a fixed fleet.
+  await prisma.user.deleteMany({ where: { role: 'DRIVER', phone: { notIn: ['+99360000101', '+99360000102'] } } });
+  try {
+    for (let index = 0; index < 107; index++) {
+      const user = await prisma.user.create({ data: {
+        phone: `+99361${String(index).padStart(6, '0')}`, fullName: `Analytics fixture ${index}`, role: 'DRIVER', passwordHash: 'fixture-only',
+        status: index === 106 ? 'BLOCKED' : 'ACTIVE',
+        driver: { create: {
+          districtId: regionId, status: index === 103 ? 'PENDING' : index === 104 ? 'BLOCKED' : 'APPROVED',
+          isOnline: index !== 101, isAvailable: true, lastLat: 37.96, lastLng: 58.32,
+          lastLocationAt: new Date(now.getTime() + (index === 102 ? -120000 : index === 105 ? 120000 : 0)),
+          createdAt: new Date('2020-01-01T00:00:00Z')
+        } }, balance: { create: { amount: 500 } }
+      } });
+      extraUsers.push(user.id);
+    }
+    await prisma.order.createMany({ data: [
+      ...Array.from({ length: 100 }, () => ({ districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'COMPLETED' as const, priceFinal: '0.10', completedAt: now })),
+      { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'COMPLETED', priceEstimated: '0.21', completedAt: now },
+      { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'COMPLETED', completedAt: now },
+      { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'CANCELLED', priceFinal: '999', cancelledAt: now },
+      { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'NEW', priceEstimated: '500' }
+    ] });
+    const page = await request('/admin/drivers?limit=100', adminToken);
+    assert.equal(page.data.total, 109);
+    assert.equal(page.data.items.length, 100);
+    assert.notEqual(page.data.items.filter((driver: { isOnline: boolean }) => driver.isOnline).length, 103);
+    const result = await request('/admin/overview', adminToken);
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.data, {
+      totalDrivers: 109, onlineDrivers: 103, pendingDrivers: 1, activeOrders: 1,
+      completedTrips: 102, pricedCompletedTrips: 101, completedTripValue: '10.21', averageCompletedTripValue: '0.10'
+    });
+    const districts = await request('/districts', adminToken);
+    const district = districts.data.find((item: { id: string }) => item.id === regionId);
+    assert.equal(district.onlineDrivers, 102);
+    assert.equal(district.freeDrivers, 102);
+  } finally {
+    await prisma.user.deleteMany({ where: { id: { in: extraUsers } } });
+  }
+});
+
+test('dispatcher overview protects roles and distinguishes empty, unknown and zero-priced trips', async () => {
+  assert.equal((await request('/admin/overview')).status, 401);
+  assert.equal((await request('/admin/overview', driverToken)).status, 403);
+  const empty = await request('/admin/overview', adminToken);
+  assert.equal(empty.status, 200);
+  assert.equal(empty.data.completedTrips, 0);
+  assert.equal(empty.data.pricedCompletedTrips, 0);
+  assert.equal(empty.data.completedTripValue, '0.00');
+  assert.equal(empty.data.averageCompletedTripValue, '0.00');
+  const now = new Date();
+  await prisma.order.createMany({ data: [
+    { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'COMPLETED', priceFinal: 0, priceEstimated: 50, completedAt: now },
+    { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'COMPLETED', priceFinal: '0.20', priceEstimated: 100, completedAt: now },
+    { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'COMPLETED', completedAt: now }
+  ] });
+  const result = await request('/admin/overview', adminToken);
+  assert.equal(result.data.completedTrips, 3);
+  assert.equal(result.data.pricedCompletedTrips, 2);
+  assert.equal(result.data.completedTripValue, '0.20');
+  assert.equal(result.data.averageCompletedTripValue, '0.10');
+  await prisma.driver.updateMany({ where: { user: { phone: '+99360000101' } }, data: { isAvailable: false } });
+  const busy = await request('/admin/overview', adminToken);
+  assert.equal(busy.data.onlineDrivers, 2, 'busy drivers remain part of the online fleet');
+  const districts = await request('/districts', adminToken);
+  const district = districts.data.find((item: { id: string }) => item.id === regionId);
+  assert.equal(district.onlineDrivers, 1);
+  assert.equal(district.freeDrivers, 0);
+});
+
+test('dispatcher overview invalidates live counts after approval, unblock and account deletion', async () => {
+  const user = await prisma.user.create({ data: { role: 'DRIVER', phone: '+99361999990', fullName: 'Analytics pending driver', passwordHash: 'fixture-only', driver: { create: { status: 'PENDING' } } }, include: { driver: true } });
+  const client = await socket(adminToken);
+  try {
+    assert.equal((await request('/admin/overview', adminToken)).data.pendingDrivers, 1);
+    const approved = nextSocketEvent(client, 'districts:stats', 500);
+    assert.equal((await request(`/admin/drivers/${user.driver!.id}/approve`, adminToken, {})).status, 200);
+    await approved;
+    assert.equal((await request('/admin/overview', adminToken)).data.pendingDrivers, 0);
+    assert.equal((await request(`/admin/drivers/${user.driver!.id}/block`, adminToken, {})).status, 200);
+    const unblocked = nextSocketEvent(client, 'districts:stats', 500);
+    assert.equal((await request(`/admin/drivers/${user.driver!.id}/unblock`, adminToken, {})).status, 200);
+    await unblocked;
+    const removed = nextSocketEvent(client, 'districts:stats', 500);
+    const response = await fetch(`${base}/admin/drivers/${user.driver!.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${adminToken}` } });
+    assert.equal(response.status, 204);
+    await removed;
+    assert.equal((await request('/admin/overview', adminToken)).data.totalDrivers, 2);
+  } finally {
+    client.disconnect();
+    await prisma.user.deleteMany({ where: { id: user.id } });
+  }
+});
+
+test('self-registration refreshes admin overview counts without exposing the application to drivers', async () => {
+  const admin = await socket(adminToken);
+  const driver = await socket(driverToken);
+  const leaked: unknown[] = [];
+  driver.on('driver:registered', payload => leaked.push(payload));
+  try {
+    const before = await request('/admin/overview', adminToken);
+    const registered = nextSocketEvent<{ driverId: string }>(admin, 'driver:registered');
+    // Attach rejection handling immediately while the HTTP request is in flight.
+    const notification = registered.then(value => ({ value }), error => ({ error }));
+    const response = await request('/auth/register', '', {
+      phone: '+99361999888', fullName: 'Pending overview applicant', password: '123456'
+    });
+    assert.equal(response.status, 201);
+    const result = await notification;
+    assert.ok('value' in result, 'admin must receive registration invalidation after the account is committed');
+    assert.deepEqual(result.value, { driverId: response.data.user.driver.id });
+    const overview = await request('/admin/overview', adminToken);
+    assert.equal(overview.data.totalDrivers, before.data.totalDrivers + 1);
+    assert.equal(overview.data.pendingDrivers, before.data.pendingDrivers + 1);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.deepEqual(leaked, [], 'driver sockets must not receive applicant registration events');
+  } finally {
+    admin.disconnect();
+    driver.disconnect();
+    await prisma.user.deleteMany({ where: { phone: '+99361999888' } });
+  }
 });

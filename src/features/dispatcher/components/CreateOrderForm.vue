@@ -2,8 +2,10 @@
 import { onMounted, onUnmounted, reactive, ref } from "vue";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
+import PhoneInput from "@/shared/ui/phone-input/PhoneInput.vue";
 import { Label } from "@/shared/ui/label";
 import { Textarea } from "@/shared/ui/textarea";
+import { isTurkmenPhone, phoneError } from "@/shared/phone";
 import { adminApi, errorMessage } from "@/shared/api";
 import { hasYandexMapsApiKey, loadYandexMaps } from "@/shared/maps/yandex";
 import PrivateOfferDriverPicker from "./PrivateOfferDriverPicker.vue";
@@ -12,7 +14,6 @@ import type { District } from "../domain";
 const props = defineProps<{ initialDriverId?: string }>();
 const mode = ref(props.initialDriverId ? "private" : "public");
 const privateDriverId = ref(props.initialDriverId ?? "");
-const phonePattern = String.raw`[+]?[0-9][0-9\s\-]{5,19}`;
 const emit = defineEmits<{ created: [] }>();
 const districts = ref<District[]>([]),
   pending = ref(false),
@@ -43,7 +44,8 @@ onMounted(async () => {
     error.value = errorMessage(e);
   }
   if (!hasYandexMapsApiKey()) {
-    mapError.value = "Карта недоступна. Выберите район ниже.";
+    mapError.value =
+      "Карта недоступна. Заказ можно создать без точек на карте.";
     return;
   }
   try {
@@ -120,12 +122,8 @@ async function submit() {
     error.value = "Выберите район";
     return;
   }
-  if (
-    !/^\+?[0-9][0-9\s-]*$/.test(phone) ||
-    phone.replace(/\D/g, "").length < 6 ||
-    phone.replace(/\D/g, "").length > 15
-  ) {
-    error.value = "Укажите телефон клиента: от 6 до 15 цифр";
+  if (!isTurkmenPhone(phone)) {
+    error.value = phoneError;
     return;
   }
   if (
@@ -168,10 +166,6 @@ async function submit() {
 </script>
 <template>
   <form class="space-y-5" @submit.prevent="submit">
-    <p class="text-sm text-muted-foreground">
-      Обязательны район, телефон и стоимость в TMT. Остальные поля можно
-      оставить пустыми.
-    </p>
     <fieldset class="space-y-3">
       <legend class="mb-2 text-sm font-medium">Кому предложить заказ</legend>
       <div class="flex flex-wrap gap-2">
@@ -224,22 +218,29 @@ async function submit() {
           <Label for="client-phone">Телефон клиента</Label
           ><span aria-hidden="true" class="text-destructive">*</span>
         </div>
-        <Input
-          id="client-phone"
-          v-model="form.clientPhone"
-          type="tel"
-          autocomplete="tel"
-          inputmode="tel"
-          required
-          minlength="6"
-          maxlength="20"
-          :pattern="phonePattern"
-          placeholder="+993…"
-        />
+        <PhoneInput id="client-phone" v-model="form.clientPhone" required />
         <p class="text-xs text-muted-foreground">
           Номер виден водителю только после принятия.
         </p>
       </div>
+    </div>
+    <div class="space-y-2">
+      <div class="flex items-center gap-1">
+        <Label for="order-price">Стоимость, TMT</Label
+        ><span aria-hidden="true" class="text-destructive">*</span>
+      </div>
+      <Input
+        id="order-price"
+        v-model="form.priceEstimated"
+        type="number"
+        min="0.01"
+        step="0.01"
+        required
+        placeholder="Введите сумму"
+      />
+      <p class="text-xs text-muted-foreground">
+        Сумма списывается с баланса при принятии заказа.
+      </p>
     </div>
     <div class="space-y-4">
       <div class="grid gap-4 sm:grid-cols-2">
@@ -263,24 +264,6 @@ async function submit() {
             placeholder="Адрес назначения"
           />
         </div>
-      </div>
-      <div class="space-y-2">
-        <div class="flex items-center gap-1">
-          <Label for="order-price">Стоимость, TMT</Label
-          ><span aria-hidden="true" class="text-destructive">*</span>
-        </div>
-        <Input
-          id="order-price"
-          v-model="form.priceEstimated"
-          type="number"
-          min="0.01"
-          step="0.01"
-          required
-          placeholder="Введите сумму"
-        />
-        <p class="text-xs text-muted-foreground">
-          Сумма списывается с баланса при принятии заказа.
-        </p>
       </div>
       <div class="space-y-2">
         <Label for="order-note">Комментарий</Label

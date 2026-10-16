@@ -12,12 +12,12 @@ async function actors(browser: Browser) {
   const prisma = new PrismaClient();
   try {
     const admin = await prisma.user.findUniqueOrThrow({
-      where: { phone: "+10000000000" },
+      where: { phone: "+99360000000" },
       include: { admin: true },
     });
     const driver = await prisma.user.create({
       data: {
-        phone: `+19${Date.now()}`,
+        phone: `+993${String(Date.now()).slice(-8)}`,
         fullName: `Водитель личных предложений ${Date.now()}`,
         role: "DRIVER",
         passwordHash: admin.passwordHash,
@@ -148,7 +148,7 @@ test("dispatcher creates a private offer and driver explicitly accepts into the 
       exact: true,
     });
     await expect(
-      trip.getByRole("link", { name: "+99365000999", exact: true }),
+      trip.getByRole("link", { name: "+993 65 00 09 99", exact: true }),
     ).toBeVisible();
     await expect(
       trip.getByText("Прибытие: 5 мин", { exact: true }),

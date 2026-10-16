@@ -108,6 +108,8 @@ async function confirmCancel() {
       :loading="loading"
       :error="error"
       :empty="!data.items.length"
+      empty-title="Заказов с этим статусом нет"
+      empty-description="Измените фильтр или создайте новый заказ."
       @retry="load"
     />
     <div v-if="!loading && !error" class="grid gap-4 xl:grid-cols-2">

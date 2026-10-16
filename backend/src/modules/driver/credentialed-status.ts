@@ -19,6 +19,8 @@ export async function updateCredentialedStatus(
     const driver = await tx.driver.findUniqueOrThrow({
       where: { id: driverId },
     });
+    if (data.isOnline === false)
+      await tx.$executeRaw`UPDATE native_shift_leases SET revoked_at = NOW() WHERE driver_id = ${driverId} AND revoked_at IS NULL`;
     if (data.isOnline === true) assertFreshGps(driver);
     return tx.driver.update({ where: { id: driverId }, data });
   });

@@ -1,16 +1,12 @@
 const { z } = require('zod');
+const { newPasswordSchema } = require('../../utils/password-policy');
 
-const phoneSchema = z
-  .string()
-  .trim()
-  .min(6, 'Некорректный номер телефона')
-  .max(20, 'Некорректный номер телефона')
-  .regex(/^\+?[0-9\s-]+$/, 'Номер телефона может содержать только цифры, пробелы, "-" и "+"');
+const { phoneSchema } = require('../../utils/phone-policy');
 
 const registerDriverSchema = z.object({
   phone: phoneSchema,
   fullName: z.string().trim().min(2, 'Укажите имя').max(120),
-  password: z.string().min(6, 'Пароль должен быть не короче 6 символов').max(128)
+  password: newPasswordSchema
 });
 
 const loginSchema = z.object({

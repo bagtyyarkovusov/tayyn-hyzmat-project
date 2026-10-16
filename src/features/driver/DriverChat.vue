@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import IncomingOrder from "./components/IncomingOrder.vue";
 import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
-import { RefreshCw } from "lucide-vue-next";
 import {
   Dialog,
   DialogContent,
@@ -10,10 +9,12 @@ import {
 } from "@/shared/ui/dialog";
 import { Button } from "@/shared/ui/button";
 import ChatComposer from "@/shared/ChatComposer.vue";
+import { useChatRecovery } from "@/shared/useChatRecovery";
 import { useChatScroll } from "@/shared/useChatScroll";
 import { driverApi, errorMessage } from "@/shared/api";
 import { driverSession } from "@/features/auth/session";
 import { useDriver } from "./useDriver";
+import { closeChatAlerts } from "./alerts";
 import { date, type Message, type Page } from "./model";
 const { state, dismissIncoming } = useDriver();
 const offerOpen = computed({
@@ -30,6 +31,7 @@ const messages = ref<Message[]>([]),
   sending = ref(false),
   page = ref(1),
   total = ref(0);
+const loadFailed = ref(false);
 let alive = true;
 let refreshQueued = false;
 async function load(older = false) {
@@ -38,13 +40,29 @@ async function load(older = false) {
     return;
   }
   loading.value = true;
+  loadFailed.value = false;
   error.value = "";
   try {
     const previousHeight = history.value?.scrollHeight ?? 0;
     const next = older ? page.value + 1 : 1;
+    const anchor = older ? undefined : messages.value.at(-1)?.id;
+    let fetchedPage = next;
     const { data } = await driverApi.get<Page<Message>>("/driver/messages", {
-      params: { page: next, limit: 50 },
+      params: { page: fetchedPage, limit: 50 },
     });
+    // Reconnect can miss more than one page. Fetch back to the last known
+    // message before merging, rather than leaving a silent gap in the thread.
+    while (
+      anchor &&
+      !data.items.some((message) => message.id === anchor) &&
+      fetchedPage * 50 < data.total
+    ) {
+      const more = await driverApi.get<Page<Message>>("/driver/messages", {
+        params: { page: ++fetchedPage, limit: 50 },
+      });
+      if (!alive) return;
+      data.items.push(...more.data.items);
+    }
     if (!alive) return;
     if (older) page.value = next;
     total.value = data.total;
@@ -53,13 +71,17 @@ async function load(older = false) {
       (a, b) => Date.parse(a.sentAt) - Date.parse(b.sentAt),
     );
     await driverApi.post("/driver/messages/read");
+    closeChatAlerts();
     if (older) {
       await nextTick();
       if (history.value)
         history.value.scrollTop += history.value.scrollHeight - previousHeight;
     } else await updated();
   } catch (e) {
-    if (alive) error.value = errorMessage(e);
+    if (alive) {
+      error.value = errorMessage(e);
+      loadFailed.value = true;
+    }
   } finally {
     loading.value = false;
     if (refreshQueued && alive) {
@@ -92,6 +114,7 @@ const off = [
   driverSession.on("admin:message", () => void load()),
   driverSession.on("connect", () => void load()),
 ];
+useChatRecovery(() => void load());
 onMounted(() => void load());
 onUnmounted(() => {
   alive = false;
@@ -104,14 +127,6 @@ onUnmounted(() => {
       <div>
         <h1 class="text-lg font-semibold">Диспетчер</h1>
       </div>
-      <Button
-        variant="outline"
-        size="icon"
-        aria-label="Обновить сообщения"
-        :disabled="loading"
-        @click="load()"
-        ><RefreshCw class="size-4" :class="{ 'animate-spin': loading }"
-      /></Button>
     </header>
     <Dialog v-model:open="offerOpen"
       ><DialogContent
@@ -126,6 +141,13 @@ onUnmounted(() => {
       class="rounded-lg border border-destructive/30 p-3 text-sm text-destructive"
     >
       {{ error }}
+      <Button
+        v-if="loadFailed"
+        variant="outline"
+        :disabled="loading"
+        @click="load()"
+        >Повторить</Button
+      >
     </p>
     <section
       ref="history"

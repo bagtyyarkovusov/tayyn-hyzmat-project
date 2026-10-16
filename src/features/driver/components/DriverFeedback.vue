@@ -54,6 +54,7 @@ watch(
 
 <template>
   <p
+    id="driver-gps-blocker"
     v-if="blockers.length"
     class="col-span-full text-xs leading-relaxed text-muted-foreground"
     role="status"

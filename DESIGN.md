@@ -1,11 +1,75 @@
-# Browser workspace design
+---
+name: Tayyn Hyzmat
+description: Compact monochrome dispatch and driver interfaces
+colors:
+  ink: "#111111"
+  paper: "#ffffff"
+  background: "#f6f6f6"
+  foreground: "#141414"
+  secondary: "#ebebeb"
+  muted-foreground: "#5c5c5c"
+  border: "#dcdcdc"
+  dark-card: "#1c1c1c"
+  dark-foreground: "#f5f5f5"
+  dark-secondary: "#292929"
+  dark-muted-foreground: "#b8b8b8"
+  dark-border: "#404040"
+  destructive: "#b42318"
+  dark-destructive: "#ffb4ab"
+  dark-destructive-foreground: "#4a0903"
+typography:
+  body:
+    fontFamily: "Manrope Variable, sans-serif"
+    fontSize: "14px"
+    fontWeight: 400
+    lineHeight: 1.6
+  wordmark:
+    fontFamily: "Manrope Variable, sans-serif"
+    fontWeight: 750
+    letterSpacing: "-0.035em"
+rounded:
+  sm: "6px"
+  md: "8px"
+  lg: "12px"
+  xl: "16px"
+spacing:
+  sm: "8px"
+  md: "16px"
+  lg: "24px"
+---
 
-Dispatcher and driver surfaces use Operate mode. The primary tasks are assigning orders to regions and taking a regional order through its existing lifecycle. Interfaces remain in Russian and show TMT only.
+# Design system: Tayyn Hyzmat
 
-The visual direction uses the order and legibility of a city public-service information sheet: white surfaces on a pale mint background, Turkmen-green actions, ink typography, ruled lists and consistent status text. It replaces the inherited gradients and duplicated role styling. Manrope Variable is self-hosted, including Cyrillic. Dark mode uses deep green surfaces and mint-green actions with separately checked text contrast. Light, dark and system settings follow the real usage scene: dispatcher desks and drivers outdoors or at night.
+## Overview
 
-The grounded alternatives considered were a municipal information sheet, a street atlas, a public-service information sheet, a numbered delivery register, a rail timetable, a local newspaper and a printed road directory. The direction roll assigned the third. Airline coupons were competitive on workflow clarity but less familiar; their explicit cancelled state is retained as a discipline. Goldenrod slides, catalog thumbnails, airport signs and split-flap boards were declined because forced shapes or oversized codes reduce order scanning; the selected direction retains their fixed alignment, consistent state marks and clear destinations without their costumes.
+Dispatcher and driver interfaces use Operate mode. Drivers need to scan regions, confirm orders and manage a trip in a compact phone viewport. Dispatchers create and assign orders, manage drivers and monitor regions. Preserve Russian operational copy, Latin `Tayyn Hyzmat`, TMT, current business rules and the existing fixed driver grid.
 
-Dispatcher navigation remains visible on desktop and scrolls horizontally on narrow screens. Driver navigation stays reachable at the bottom. Lists expose the actual operational content; views prioritize the next action, current state and recovery over decorative metrics. Forms use labels, actionable errors and pending guards. Destructive or charging operations require clear intent. Shared primitive components come from the official shadcn-vue registry and use the semantic tokens in `src/shared/theme.css`.
+The user requested a replacement black-and-white identity inspired by the clarity of Uber's interfaces. The user-supplied final identity preserves the original H-shaped uprights and rising swoosh: black/green on light surfaces, white/light green on dark surfaces, with a Latin Manrope wordmark. It replaces the mistaken temporary T interpretation. No Uber mark, font or artwork is used. White and near-black establish hierarchy; neutral surfaces distinguish panels without decorative cards or gradients. Primary actions reverse ink and paper between light and dark mode. Green is retained in the supplied brand swoosh and for operational readiness and regions with active orders; amber and red continue to communicate uncertainty and failure alongside icons, labels or accessible descriptions.
 
-No real regions, credentials or operational claims belong in design fixtures. Map vendor failures retain usable lists and explain recovery. Live connection status is distinct from a guaranteed background notification service.
+## Colors
+
+`src/shared/theme.css` is the runtime authority. Light uses background `#f6f6f6`, card `#ffffff`, foreground `#141414`, primary `#111111`, secondary `#ebebeb`, muted text `#5c5c5c`, border `#dcdcdc`. Dark uses background `#111111`, card `#1c1c1c`, foreground/primary `#f5f5f5`, secondary `#292929`, muted text `#b8b8b8`, border `#404040`. Destructive actions use white on `#b42318` in light mode and `#4a0903` on `#ffb4ab` in dark mode; never white on a pale red background.
+
+## Typography
+
+Manrope Variable is self-hosted through the existing Fontsource package. Its open counters and broad Cyrillic/Latin extended coverage suit compact Russian controls and Turkmen names. Use one family, 400 body, 500 labels, 600 headings and 750 wordmark, with tabular numerals for operational data. The OFL license ships in `public/brand/`. No remote font service is required.
+
+## Layout
+
+The dispatcher overview uses one compact three-column summary band followed immediately by a ruled regional list; historical metrics sit below it. Both regional demand and supply remain visible on phones. Region boundaries have one 44px action per compact row. Driver home preserves its fixed viewport grid.
+
+## Elevation & Depth
+
+Shared shadcn-vue primitives keep their behavior. Panels remain flat and ruled; soft offset shadows distinguish floating dialogs and menus. Use the existing restrained motion, reduced-motion support, 44px driver controls and borderless close icons. Fixed `+993` phone prefixes and formatted digits must fit narrow forms without clipping.
+
+## Components
+
+`src/shared/BrandLogo.vue` displays the exact user-supplied artwork using `public/brand/mark-light.png` and `mark-dark.png`, alongside the live Latin wordmark. Byte-identical uploaded sources are retained under `public/brand/source/`; the historical root `logo.png` remains unchanged. PNG preparation removes detached alpha specks and trims/centers/pads, without redrawing the H or swoosh. `scripts/generate-brand-assets.py` reproduces web and Android raster assets with source metadata; Android adaptive foregrounds retain a safe margin for system masks. The manifest, browser chrome, launcher icon and launch screen use this identity. These are build assets, not a backend or database migration.
+
+Verification covers both actors, light/dark, desktop/mobile and the driver viewport. A polished visual test does not certify financial integrity, background notification delivery or production readiness; those have separate release gates.
+
+### Glass navigation
+
+The user additionally requested restrained transparent glass and professional shadows. Apple’s [Materials guidance](https://developer.apple.com/design/human-interface-guidelines/materials) places Liquid Glass in a distinct functional navigation/control layer, recommends sparing use, and keeps it out of the content layer. This implementation follows that hierarchy using a modest 12px CSS backdrop blur on the workspace header, dispatcher sidebar and driver bottom navigation. It does not claim to reproduce Apple's native material or rely on an unverified iOS version.
+
+Navigation surfaces retain 88–90% opacity and solid text; forms, order cards, GPS/availability controls and dialogs remain opaque. There are no nested blurred controls, animated blur or full-page glass. Unsupported WebViews receive solid surfaces. Reduced-transparency, increased-contrast and forced-color preferences turn blur and shadows off. Apple source consulted on 2026-10-16; JSON documentation lists Liquid Glass guidance updated September 2025.

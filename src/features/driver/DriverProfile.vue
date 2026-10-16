@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { formatPhone } from "@/shared/phone";
 import IncomingOrder from "./components/IncomingOrder.vue";
-import { onMounted, ref } from "vue";
+import { onMounted, ref, watch } from "vue";
 import { Car, Wallet, ChevronLeft, ChevronRight } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
 import { Badge } from "@/shared/ui/badge";
@@ -38,6 +39,7 @@ async function load(next = page.value) {
     loading.value = false;
   }
 }
+watch(tab, () => void load(1));
 onMounted(() => void load());
 </script>
 <template>
@@ -61,7 +63,7 @@ onMounted(() => void load());
             :href="`tel:${state.profile.user.phone}`"
             class="mt-1 inline-block text-sm text-muted-foreground"
           >
-            {{ state.profile.user.phone }}
+            {{ formatPhone(state.profile.user.phone) }}
           </a>
         </div>
         <Badge
@@ -198,7 +200,10 @@ onMounted(() => void load());
             </div>
           </article>
         </div>
-        <div class="flex items-center justify-between">
+        <div
+          v-if="history[tab].total > 20"
+          class="flex items-center justify-between"
+        >
           <Button
             variant="outline"
             :disabled="page === 1 || loading"

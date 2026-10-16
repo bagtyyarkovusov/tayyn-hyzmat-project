@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { formatPhone } from "@/shared/phone";
 import { computed, ref } from "vue";
 import { Phone, Navigation, MapPin, Flag } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
@@ -83,7 +84,9 @@ async function cancel() {
     <div class="flex flex-wrap gap-2">
       <Button v-if="state.active.clientPhone" as-child variant="outline"
         ><a :href="`tel:${state.active.clientPhone}`"
-          ><Phone class="size-4" />{{ state.active.clientPhone }}</a
+          ><Phone class="size-4" />{{
+            formatPhone(state.active.clientPhone)
+          }}</a
         ></Button
       ><Button v-if="navigation" as-child variant="outline"
         ><a :href="navigation" target="_blank" rel="noopener"

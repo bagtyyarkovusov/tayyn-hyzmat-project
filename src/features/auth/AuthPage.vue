@@ -8,8 +8,11 @@ import {
   Truck,
   Users,
 } from "lucide-vue-next";
+import BrandLogo from "@/shared/BrandLogo.vue";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
+import PhoneInput from "@/shared/ui/phone-input/PhoneInput.vue";
+import { passwordError, passwordHint } from "@/shared/password";
 import { Label } from "@/shared/ui/label";
 import { adminSession, driverSession } from "./session";
 import { errorMessage, publicRequest } from "@/shared/api";
@@ -25,6 +28,10 @@ const busy = ref(false);
 const error = ref("");
 const message = ref("");
 async function submit() {
+  if (registering.value && passwordError(password.value)) {
+    error.value = passwordError(password.value);
+    return;
+  }
   busy.value = true;
   error.value = "";
   message.value = "";
@@ -57,10 +64,7 @@ async function submit() {
 <template>
   <div class="auth-layout">
     <section class="auth-story" aria-label="Tayyn Hyzmat">
-      <RouterLink to="/" class="brand"
-        ><span class="brand-symbol">т</span
-        ><span>Tayyn Hyzmat</span></RouterLink
-      >
+      <RouterLink to="/" class="brand"><BrandLogo /></RouterLink>
       <div>
         <h1>
           {{
@@ -83,15 +87,17 @@ async function submit() {
     </section>
     <section class="auth-form-wrap">
       <div class="w-full max-w-sm">
-        <div class="mb-8 flex items-center gap-2 text-sm text-muted-foreground">
+        <div
+          class="auth-context mb-8 flex items-center gap-2 text-sm text-muted-foreground"
+        >
           <component :is="isAdmin ? Users : Truck" class="size-5" />{{
             isAdmin ? "Рабочее место диспетчера" : "Приложение водителя"
           }}
         </div>
-        <h2 class="mb-2 text-3xl font-semibold tracking-tight">
+        <h2 class="auth-heading mb-2 text-3xl font-semibold tracking-tight">
           {{ registering ? "Стать водителем" : "С возвращением" }}
         </h2>
-        <p class="mb-8 text-muted-foreground">
+        <p class="auth-intro mb-8 text-muted-foreground">
           {{
             registering
               ? "Создайте аккаунт и дождитесь одобрения диспетчера."
@@ -112,14 +118,7 @@ async function submit() {
           </div>
           <div class="field">
             <Label for="phone">Номер телефона</Label
-            ><Input
-              id="phone"
-              v-model="phone"
-              type="tel"
-              autocomplete="tel"
-              placeholder="+993 …"
-              required
-            />
+            ><PhoneInput id="phone" v-model="phone" required />
           </div>
           <div class="field">
             <Label for="password">Пароль</Label
@@ -130,8 +129,12 @@ async function submit() {
               :autocomplete="registering ? 'new-password' : 'current-password'"
               required
               :minlength="registering ? 6 : 1"
+              :maxlength="registering ? 72 : undefined"
             />
           </div>
+          <p v-if="registering" class="text-xs text-muted-foreground">
+            {{ passwordHint }}
+          </p>
           <p v-if="error" role="alert" class="error-message">{{ error }}</p>
           <p v-if="message" role="status" class="rounded-lg bg-secondary p-4">
             {{ message }}
@@ -161,8 +164,8 @@ async function submit() {
   grid-template-columns: 1fr 1fr;
 }
 .auth-story {
-  background: #204e3c;
-  color: #f3f3e9;
+  background: #111111;
+  color: #ffffff;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -179,7 +182,7 @@ async function submit() {
 .auth-story p {
   margin-top: 1.5rem;
   max-width: 36ch;
-  color: #d3e1d4;
+  color: #c4c4c4;
   font-size: 1.05rem;
 }
 .auth-form-wrap {
@@ -190,23 +193,29 @@ async function submit() {
 }
 @media (max-width: 760px) {
   .auth-layout {
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
   }
   .auth-story {
-    padding: 1.5rem;
-    gap: 2rem;
+    padding: 1rem 1.25rem;
+    gap: 0;
   }
-  .auth-story h1 {
-    font-size: 2rem;
-  }
-  .auth-story > div:last-child {
+  .auth-story > div {
     display: none;
   }
-  .auth-story p {
-    margin-top: 0.75rem;
-  }
   .auth-form-wrap {
-    padding: 2rem 1.5rem;
+    align-items: flex-start;
+    padding: 1.5rem 1.25rem max(1.5rem, env(safe-area-inset-bottom));
+  }
+  .auth-context {
+    margin-bottom: 1rem;
+  }
+  .auth-heading {
+    font-size: 1.5rem;
+    line-height: 2rem;
+  }
+  .auth-intro {
+    margin-bottom: 1.25rem;
   }
 }
 </style>

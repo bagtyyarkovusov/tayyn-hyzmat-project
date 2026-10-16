@@ -11,7 +11,6 @@ import {
   ChartNoAxesCombined,
   MessageSquare,
   LogOut,
-  Truck,
   UserRound,
   Navigation,
   Menu,
@@ -19,6 +18,7 @@ import {
   Moon,
   Monitor,
 } from "lucide-vue-next";
+import BrandLogo from "@/shared/BrandLogo.vue";
 import { Button } from "@/shared/ui/button";
 import { adminSession, driverSession } from "@/features/auth/session";
 import {
@@ -48,6 +48,14 @@ function resizeChat() {
     ? `${window.visualViewport.height}px`
     : undefined;
   viewportTop.value = `${window.visualViewport?.offsetTop ?? 0}px`;
+  document.documentElement.style.setProperty(
+    "--app-viewport-height",
+    viewportHeight.value ?? "100dvh",
+  );
+  document.documentElement.style.setProperty(
+    "--app-viewport-top",
+    viewportTop.value,
+  );
 }
 onMounted(() => {
   resizeChat();
@@ -63,6 +71,13 @@ const auth = computed(() =>
   ["/adminLogin", "/driverLogin", "/driverRegister"].includes(route.path),
 );
 const driver = computed(() => route.path.startsWith("/driver"));
+// Include portalled dialogs and login screens while leaving dispatcher text selectable.
+watch(
+  driver,
+  (active) => document.documentElement.classList.toggle("driver-app", active),
+  { immediate: true },
+);
+onUnmounted(() => document.documentElement.classList.remove("driver-app"));
 const session = computed(() => (driver.value ? driverSession : adminSession));
 const adminNav = [
   { to: "/adminDashboard", label: "Обзор", icon: LayoutDashboard },
@@ -107,10 +122,7 @@ async function logout() {
     ]"
   >
     <aside v-if="!driver" class="sidebar">
-      <RouterLink to="/adminDashboard" class="brand"
-        ><span class="brand-symbol">т</span
-        ><span>тайын хызмат</span></RouterLink
-      >
+      <RouterLink to="/adminDashboard" class="brand"><BrandLogo /></RouterLink>
       <p class="mt-7 mb-3 text-xs text-muted-foreground">
         Рабочее пространство
       </p>
@@ -147,10 +159,7 @@ async function logout() {
     <div class="min-w-0 flex-1">
       <header class="workspace-header">
         <div class="flex min-w-0 items-center gap-3">
-          <Truck v-if="driver" class="size-5 text-primary" /><span
-            class="font-semibold"
-            >Tayyn Hyzmat</span
-          ><span class="connection"
+          <BrandLogo compact /><span class="connection"
             ><i
               :class="{
                 online: driver
@@ -177,7 +186,11 @@ async function logout() {
         <div class="flex shrink-0 items-center gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger as-child
-              ><Button variant="ghost" size="icon" aria-label="Тема"
+              ><Button
+                variant="ghost"
+                size="icon"
+                class="size-11"
+                aria-label="Тема"
                 ><component
                   :is="
                     themePreference === 'system'
@@ -207,7 +220,12 @@ async function logout() {
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="ghost" size="icon" aria-label="Выйти" @click="logout"
+          <Button
+            variant="ghost"
+            size="icon"
+            class="size-11"
+            aria-label="Выйти"
+            @click="logout"
             ><LogOut class="size-4"
           /></Button>
         </div>
@@ -253,17 +271,6 @@ async function logout() {
   font-size: 1.1rem;
   font-weight: 700;
   letter-spacing: -0.03em;
-}
-.brand-symbol {
-  display: grid;
-  place-items: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  border: 1px solid currentColor;
-  border-radius: 0.6rem;
-  font-size: 1.7rem;
-  font-weight: 500;
-  line-height: 1;
 }
 .workspace {
   min-height: 100svh;
@@ -326,13 +333,13 @@ async function logout() {
 }
 .connection .online,
 .driver-workspace .connection .online {
-  background: var(--primary);
+  background: var(--success);
 }
 .connection-pulse::after {
   content: "";
   position: absolute;
   inset: -3px;
-  border: 1px solid var(--primary);
+  border: 1px solid var(--success);
   border-radius: inherit;
   pointer-events: none;
   animation: connection-ripple 2.8s ease-out infinite;
@@ -366,7 +373,7 @@ async function logout() {
 .driver-workspace .workspace-header {
   max-width: 960px;
   margin: auto;
-  background: transparent;
+  background: var(--card);
 }
 .driver-nav {
   position: fixed;
@@ -400,10 +407,10 @@ async function logout() {
 }
 @media (max-width: 1000px) {
   .sidebar {
-    width: 200px;
+    width: 220px;
   }
   .workspace:not(.driver-workspace) > div {
-    margin-left: 200px;
+    margin-left: 220px;
   }
   .admin-content {
     padding: 1.5rem;

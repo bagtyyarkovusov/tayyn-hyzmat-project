@@ -22,7 +22,9 @@ import {
   DialogDescription,
 } from "@/shared/ui/dialog";
 import { useDriver } from "./useDriver";
+import { useDriverAddress } from "./useDriverAddress";
 import { alertState, enableOrderAlerts, syncAlertPermission } from "./alerts";
+import { nativeAndroid } from "./nativeShift";
 import { money, statusLabels } from "./model";
 import IncomingOrder from "./components/IncomingOrder.vue";
 import DriverFeedback from "./components/DriverFeedback.vue";
@@ -36,6 +38,10 @@ const {
   dismissIncoming,
   declinePrivateOffer,
 } = useDriver();
+const address = useDriverAddress(
+  () => state.position,
+  () => state.profile?.id,
+);
 function closeIncoming() {
   if (state.incoming?.privateOfferExpiresAt) void declinePrivateOffer();
   else dismissIncoming();
@@ -44,7 +50,11 @@ const selected = ref<string | null>(null);
 const visibility = useDocumentVisibility();
 const networkOnline = useOnline();
 const connectionReady = computed(
-  () => networkOnline.value && session.state.connected,
+  () =>
+    networkOnline.value &&
+    (nativeAndroid && state.profile?.isOnline
+      ? state.nativeConnected
+      : session.state.connected),
 );
 const liveOnline = computed(
   () => !!state.profile?.isOnline && state.gpsReady && connectionReady.value,
@@ -64,7 +74,9 @@ const alertsReady = computed(
 const alertDescription = computed(() => {
   if (alertState.pending) return "Включаем уведомления и звук…";
   if (alertState.permission === "denied")
-    return "Уведомления заблокированы. Разрешите их в настройках браузера.";
+    return nativeAndroid
+      ? "Разрешите уведомления о заказах и сообщениях в настройках приложения."
+      : "Уведомления заблокированы. Разрешите их в настройках браузера.";
   if (alertState.permission === "unsupported")
     return "Системные уведомления недоступны в этом браузере.";
   if (alertState.permission === "granted")
@@ -127,15 +139,16 @@ const selectedDistrict = computed(() =>
 const ownRegion = computed(
   () =>
     state.districts.find((d) => d.id === state.profile?.districtId)?.name ||
-    "Район не определён",
+    "Вне районов",
 );
 const blockers = computed(() => {
   const messages: string[] = [];
   if (!state.gpsReady)
     messages.push(
-      state.gpsPending
-        ? "Получаем местоположение…"
-        : state.gpsError || "Включите GPS, чтобы принимать заказы.",
+      state.gpsError ||
+        (state.gpsPending
+          ? "Получаем местоположение…"
+          : "Включите GPS, чтобы принимать заказы."),
     );
   if (state.balance && Number(state.balance.amount) <= 0)
     messages.push("Для выхода на линию пополните баланс у диспетчера.");
@@ -182,7 +195,7 @@ watch(
               class="relative size-11 rounded-full"
               :class="
                 state.gpsReady
-                  ? 'bg-primary/10 text-primary'
+                  ? 'bg-success/10 text-success'
                   : state.gpsError
                     ? 'text-destructive'
                     : 'text-muted-foreground'
@@ -225,7 +238,7 @@ watch(
               class="relative size-11 rounded-full"
               :class="
                 alertsReady
-                  ? 'bg-primary/10 text-primary'
+                  ? 'bg-success/10 text-success'
                   : alertState.permission === 'denied' ||
                       alertState.permission === 'unsupported'
                     ? 'text-destructive'
@@ -289,6 +302,9 @@ watch(
             :aria-description="availabilityDescription"
             :title="availabilityDescription"
             :aria-pressed="!!state.profile?.isOnline"
+            :aria-describedby="
+              !state.gpsReady ? 'driver-gps-blocker' : undefined
+            "
             :aria-busy="state.busy"
             :disabled="
               state.busy ||
@@ -300,13 +316,13 @@ watch(
           >
             <span
               v-if="liveOnline && visibility === 'visible'"
-              class="online-beacon pointer-events-none absolute -inset-1 rounded-full border-2 border-primary"
+              class="online-beacon pointer-events-none absolute -inset-1 rounded-full border-2 border-success"
               aria-hidden="true"
             />
             <span
               v-if="availabilityPulse"
               :key="String(state.profile?.isOnline)"
-              class="availability-pulse pointer-events-none absolute -inset-1 rounded-full border-2 border-primary"
+              class="availability-pulse pointer-events-none absolute -inset-1 rounded-full border-2 border-success"
               aria-hidden="true"
               @animationend="availabilityPulse = false"
             />
@@ -326,15 +342,25 @@ watch(
           aria-label="Местоположение GPS"
         >
           <MapPin class="size-4 shrink-0 text-primary" />
-          <span class="min-w-0 truncate"
-            >{{ state.position ? ownRegion : "Ожидаем GPS"
-            }}<span
+          <span class="flex min-w-0 flex-col leading-snug">
+            <span class="truncate">{{
+              state.gpsReady
+                ? ownRegion
+                : state.position
+                  ? "Последнее положение"
+                  : "Ожидаем GPS"
+            }}</span>
+            <span
               v-if="state.position"
-              class="ml-2 text-xs text-muted-foreground"
-              >{{ state.position.lat.toFixed(4) }},
-              {{ state.position.lng.toFixed(4) }}</span
-            ></span
-          >
+              class="truncate text-xs text-muted-foreground"
+              :title="address || undefined"
+            >
+              {{
+                address ||
+                `${state.position.lat.toFixed(4)}, ${state.position.lng.toFixed(4)}`
+              }}
+            </span>
+          </span>
         </div>
       </div>
       <DriverFeedback
@@ -351,7 +377,7 @@ watch(
       @click="tripOpen = true"
     >
       <span
-        class="size-2 shrink-0 rounded-full bg-primary"
+        class="size-2 shrink-0 rounded-full bg-success"
         aria-hidden="true"
       />
       <span class="min-w-0 flex-1 truncate text-sm font-semibold"
@@ -363,7 +389,7 @@ watch(
       }}</span>
       <ChevronRight class="size-4 shrink-0" aria-hidden="true" />
     </button>
-    <p v-if="state.position" class="sr-only" role="status">
+    <p v-if="state.position && state.gpsReady" class="sr-only" role="status">
       GPS · точность {{ Math.round(state.position.accuracy) }} м
     </p>
     <p

@@ -2,7 +2,7 @@ name: Checks
 on:
   pull_request:
   push:
-    branches: [main, 'dev/**', 'modernize/**']
+    branches: [main, "dev/**", "modernize/**"]
 permissions:
   contents: read
 jobs:
@@ -26,6 +26,9 @@ jobs:
       - run: pnpm test:e2e
       - run: pnpm build
       - run: pnpm build:driver
+        env:
+          VITE_API_URL: https://api.example.invalid/api
+          VITE_SOCKET_URL: https://api.example.invalid
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -51,3 +54,25 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/test-container-startup.mjs
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: pnpm install --frozen-lockfile
+      # Build-only placeholders; device testing needs the matching isolated API and native CORS origin.
+      - run: pnpm cap:sync
+        env:
+          VITE_API_URL: https://api.example.invalid/api
+          VITE_SOCKET_URL: https://api.example.invalid
+      - run: cd android && sh ./gradlew :app:assembleDebug :app:testDebugUnitTest

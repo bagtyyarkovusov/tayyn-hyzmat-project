@@ -18,11 +18,11 @@ test("monitoring shows driver information on map hover, tap and keyboard selecti
   // All behavior below still uses real HTTP/Socket.IO and the disposable DB.
   const prisma = new PrismaClient();
   const admin = await prisma.user.findUniqueOrThrow({
-    where: { phone: "+10000000000" },
+    where: { phone: "+99360000000" },
     include: { admin: true },
   });
   const driver = await prisma.user.findUniqueOrThrow({
-    where: { phone: "+10000000102" },
+    where: { phone: "+99360000102" },
     include: { driver: true },
   });
   await prisma.$disconnect();

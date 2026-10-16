@@ -9,14 +9,14 @@ async function isolateBrowserClient(page: Page) {
   if (browserClients.has(context)) return;
   // Vite proxies all browsers through loopback. Model each browser as a
   // distinct client without weakening the API's production auth limiter.
-  const address = `198.18.0.${nextBrowserClient++}`;
+  const address = `198.18.${process.pid % 200}.${nextBrowserClient++}`;
   browserClients.set(context, address);
   await context.setExtraHTTPHeaders({ "X-Forwarded-For": address });
 }
 async function login(
   page: Page,
   role: "admin" | "driver",
-  driverPhone = "+10000000101",
+  driverPhone = "+99360000101",
 ) {
   await isolateBrowserClient(page);
   if (role === "driver")
@@ -29,7 +29,7 @@ async function login(
   await page.goto(role === "admin" ? "/adminLogin" : "/driverLogin");
   await page
     .getByLabel("Номер телефона")
-    .fill(role === "admin" ? "+10000000000" : driverPhone);
+    .fill(role === "admin" ? "+99360000000" : driverPhone);
   await page.getByLabel("Пароль", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Войти", exact: true }).click();
   await expect(page).toHaveURL(
@@ -49,12 +49,145 @@ async function startGps(page: Page) {
   await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
   expect((await report).ok()).toBe(true);
 }
+for (const role of ["driver", "admin"] as const) {
+  test(`${role} mobile login shows the form immediately and keeps it reachable in a short viewport`, async ({
+    page,
+  }) => {
+    for (const viewport of [
+      { width: 390, height: 844 },
+      { width: 320, height: 568 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await page.goto(role === "admin" ? "/adminLogin" : "/driverLogin");
+      await expect(
+        page.getByRole("link", { name: "Tayyn Hyzmat" }),
+      ).toBeVisible();
+      const phone = page.getByLabel("Номер телефона", { exact: true });
+      const phoneBox = await phone.boundingBox();
+      expect(phoneBox!.y).toBeLessThan(250);
+      await expect(
+        page.getByRole("button", { name: "Войти", exact: true }),
+      ).toBeInViewport();
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(viewport.width);
+    }
+    // A resized viewport checks reachability; real Android IME evidence is separate.
+    await page.setViewportSize({ width: 320, height: 300 });
+    await page.getByLabel("Пароль", { exact: true }).focus();
+    await expect(page.getByLabel("Пароль", { exact: true })).toBeInViewport();
+    const submit = page.getByRole("button", { name: "Войти", exact: true });
+    await submit.scrollIntoViewIfNeeded();
+    await expect(submit).toBeInViewport();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBe(320);
+  });
+}
+test("phone entry groups local digits and preserves middle edits and separator deletion", async ({
+  page,
+}) => {
+  await page.goto("/driverLogin");
+  const phone = page.getByLabel("Номер телефона", { exact: true });
+  await phone.pressSequentially("65995424");
+  await expect(phone).toHaveValue("65 99 54 24");
+  // Replace a middle digit through the native selection interface.
+  await phone.evaluate((node: HTMLInputElement) =>
+    node.setSelectionRange(3, 4),
+  );
+  await phone.pressSequentially("8");
+  await expect(phone).toHaveValue("65 89 54 24");
+  expect(
+    await phone.evaluate((node: HTMLInputElement) => node.selectionStart),
+  ).toBe(4);
+  // Backspace immediately after a generated space deletes the preceding digit.
+  await phone.evaluate((node: HTMLInputElement) =>
+    node.setSelectionRange(3, 3),
+  );
+  await phone.press("Backspace");
+  await expect(phone).toHaveValue("68 95 42 4");
+  expect(
+    await phone.evaluate((node: HTMLInputElement) => node.selectionStart),
+  ).toBe(1);
+  // Delete immediately before a generated space deletes the following digit.
+  await phone.fill("65 99 54 24");
+  await phone.evaluate((node: HTMLInputElement) =>
+    node.setSelectionRange(2, 2),
+  );
+  await phone.press("Delete");
+  await expect(phone).toHaveValue("65 95 42 4");
+  expect(
+    await phone.evaluate((node: HTMLInputElement) => node.selectionStart),
+  ).toBe(2);
+  await phone.fill("00993 65-99-54-24");
+  await expect(phone).toHaveValue("65 99 54 24");
+  await phone.press("ControlOrMeta+A");
+  await phone.press("Backspace");
+  await expect(phone).toHaveValue("");
+  await expect(phone).toHaveAttribute("placeholder", "Номер телефона");
+  await expect(page.getByText("+993", { exact: true })).toBeVisible();
+});
+test("phone country prefix stays fixed while login accepts local digits and canonical paste", async ({
+  page,
+}) => {
+  await isolateBrowserClient(page);
+  await page.goto("/adminLogin");
+  const phone = page.getByLabel("Номер телефона", { exact: true });
+  await expect(phone).toHaveValue("");
+  await expect(page.getByText("+993", { exact: true })).toBeVisible();
+  await phone.fill("+447700900123");
+  await expect(phone).toHaveAttribute("aria-invalid", "true");
+  await phone.fill("+99360000000");
+  await expect(phone).toHaveValue("60 00 00 00");
+  await phone.press("ControlOrMeta+A");
+  await phone.press("Backspace");
+  await expect(phone).toHaveValue("");
+  await expect(page.getByText("+993", { exact: true })).toBeVisible();
+  await phone.fill("60000000");
+  await page.getByLabel("Пароль", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Войти", exact: true }).click();
+  await expect(page).toHaveURL(/adminDashboard/);
+});
+test("driver registration validates a complete local phone and accepts a six-digit password", async ({
+  page,
+}) => {
+  await isolateBrowserClient(page);
+  await page.goto("/driverRegister");
+  const phone = page.getByLabel("Номер телефона", { exact: true });
+  await page.getByLabel("Имя и фамилия").fill("Регистрация с местным номером");
+  for (const invalid of ["+993619998877", "not-a-phone", "+447700900123"]) {
+    await phone.fill(invalid);
+    await expect(phone).toHaveValue(invalid);
+    await expect(phone).toHaveAttribute("aria-invalid", "true");
+    await expect(page.getByRole("alert")).toContainText(
+      "Введите 8 цифр номера после +993",
+    );
+  }
+  await phone.fill("61 999887");
+  await expect(phone).toHaveValue("61 99 98 87");
+  await page.getByLabel("Пароль", { exact: true }).fill("ж".repeat(37));
+  await page
+    .getByRole("button", { name: "Отправить заявку", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText("максимум 72 байта");
+  await page.getByLabel("Пароль", { exact: true }).fill("123456");
+  const registration = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/auth/register") &&
+      response.request().method() === "POST",
+  );
+  await page
+    .getByRole("button", { name: "Отправить заявку", exact: true })
+    .click();
+  expect((await registration).status()).toBe(201);
+  await expect(page.getByRole("status")).toContainText("Заявка отправлена");
+});
 test("protected deep links require login and a failed login gives a recoverable error", async ({
   page,
 }) => {
   await page.goto("/adminOrders");
   await expect(page).toHaveURL(/adminLogin/);
-  await page.getByLabel("Номер телефона").fill("+10000000000");
+  await page.getByLabel("Номер телефона").fill("+99360000000");
   await page.getByLabel("Пароль", { exact: true }).fill("wrong-password");
   await page.getByRole("button", { name: "Войти", exact: true }).click();
   await expect(page.getByRole("alert")).toBeVisible();
@@ -127,7 +260,7 @@ test("a driver must explicitly accept after five minutes, then completes a quote
       .getByLabel("Откуда", { exact: true })
       .fill("Тестовая улица 10");
     await dialog.getByLabel("Куда", { exact: true }).fill("Тестовая улица 20");
-    await dialog.getByLabel("Телефон клиента").fill("+10000000999");
+    await dialog.getByLabel("Телефон клиента").fill("+99360000999");
     await dialog.getByLabel("Стоимость, TMT").fill("10");
     await dialog
       .getByRole("button", { name: "Отправить водителям", exact: true })
@@ -142,7 +275,7 @@ test("a driver must explicitly accept after five minutes, then completes a quote
       driver.getByRole("heading", { name: "Текущая поездка" }),
     ).not.toBeVisible();
     await expect(
-      driver.getByRole("link", { name: "+10000000999", exact: true }),
+      driver.getByRole("link", { name: "+993 60 00 09 99", exact: true }),
     ).not.toBeVisible();
     await expect(driver.getByText(/500\s*TMT/).first()).toBeVisible();
     // Advancing the browser clock also expires GPS. Reacquire a real fix
@@ -164,7 +297,7 @@ test("a driver must explicitly accept after five minutes, then completes a quote
       driver.getByRole("heading", { name: "Текущая поездка" }),
     ).toBeVisible();
     await expect(
-      driver.getByRole("link", { name: "+10000000999", exact: true }),
+      driver.getByRole("link", { name: "+993 60 00 09 99", exact: true }),
     ).toBeVisible();
     await driver
       .getByRole("button", { name: "Я на месте", exact: true })
@@ -253,6 +386,9 @@ test("driver and dispatcher exchange real messages across separate role sessions
     await login(dispatcher, "admin");
     await login(driver, "driver");
     await driver.goto("/driverChat");
+    await expect(
+      driver.getByRole("button", { name: "Обновить сообщения" }),
+    ).toHaveCount(0);
     await driver
       .getByLabel("Сообщение диспетчеру")
       .fill("Тестовая связь с диспетчером");
@@ -502,6 +638,130 @@ test("driver and dispatcher exchange real messages across separate role sessions
     await b.close();
   }
 });
+test("driver history hides single-page navigation and resets the page when switching history", async ({
+  page,
+}) => {
+  await login(page, "admin");
+  const adminToken = await page.evaluate(() =>
+    localStorage.getItem("openride.admin.accessToken"),
+  );
+  const create = await page.request.post(
+    `${process.env.TEST_API_URL}/admin/drivers`,
+    {
+      headers: { Authorization: `Bearer ${adminToken}` },
+      data: {
+        fullName: "История без поездок",
+        phone: "+99360000301",
+        password,
+      },
+    },
+  );
+  expect(create.ok()).toBe(true);
+  await login(page, "driver", "+99360000301");
+  const driverToken = await page.evaluate(() =>
+    localStorage.getItem("openride.driver.accessToken"),
+  );
+  const headers = { Authorization: `Bearer ${adminToken}` };
+  const profile = await page.request.get(
+    `${process.env.TEST_API_URL}/driver/profile`,
+    { headers: { Authorization: `Bearer ${driverToken}` } },
+  );
+  const driverId = (await profile.json()).id;
+  await page.goto("/driverProfile");
+  await expect(
+    page.getByText("Поездок пока нет.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Далее", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Баланс", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Далее", exact: true }),
+  ).toHaveCount(0);
+  for (let i = 0; i < 21; i++) {
+    const response = await page.request.post(
+      `${process.env.TEST_API_URL}/admin/drivers/${driverId}/balance`,
+      {
+        headers,
+        data: { amount: 1, type: "TOPUP", note: `Проверка страниц ${i}` },
+      },
+    );
+    expect(response.ok()).toBe(true);
+  }
+  await page.reload();
+  await page.getByRole("button", { name: "Баланс", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Далее", exact: true }),
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Далее", exact: true }).click();
+  await expect(page.getByText("Страница 2", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Назад", exact: true }),
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Поездки", exact: true }).click();
+  await expect(
+    page.getByText("Поездок пока нет.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Страница 2", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Баланс", exact: true }).click();
+  await expect(page.getByText("Страница 1", { exact: true })).toBeVisible();
+});
+test("chat reconnect recovers more than fifty missed messages without losing the draft", async ({
+  browser,
+}) => {
+  const a = await browser.newContext();
+  const b = await browser.newContext();
+  try {
+    const dispatcher = await a.newPage();
+    const driver = await b.newPage();
+    await login(dispatcher, "admin");
+    await login(driver, "driver");
+    await driver.goto("/driverChat");
+    const composer = driver.getByLabel("Сообщение диспетчеру");
+    await composer.fill("Последнее известное сообщение");
+    await composer.press("Enter");
+    await expect(
+      driver.getByText("Последнее известное сообщение", { exact: true }),
+    ).toBeVisible();
+    await composer.fill("Сохранённый черновик");
+    await b.setOffline(true);
+    const adminToken = await dispatcher.evaluate(() =>
+      localStorage.getItem("openride.admin.accessToken"),
+    );
+    const driverToken = await driver.evaluate(() =>
+      localStorage.getItem("openride.driver.accessToken"),
+    );
+    const profile = await a.request.get(
+      `${process.env.TEST_API_URL}/driver/profile`,
+      { headers: { Authorization: `Bearer ${driverToken}` } },
+    );
+    const driverId = (await profile.json()).id;
+    for (let i = 0; i < 55; i++) {
+      const response = await a.request.post(
+        `${process.env.TEST_API_URL}/admin/messages`,
+        {
+          headers: { Authorization: `Bearer ${adminToken}` },
+          data: { driverId, body: `Пропущенное сообщение ${i}` },
+        },
+      );
+      expect(response.ok()).toBe(true);
+    }
+    await b.setOffline(false);
+    await expect(
+      driver.getByText("Пропущенное сообщение 54", { exact: true }),
+    ).toBeAttached();
+    await expect(
+      driver.getByText("Пропущенное сообщение 0", { exact: true }),
+    ).toBeAttached();
+    await expect(composer).toHaveValue("Сохранённый черновик");
+    await expect(
+      driver.getByRole("button", { name: "Обновить сообщения" }),
+    ).toHaveCount(0);
+  } finally {
+    await a.close();
+    await b.close();
+  }
+});
 test("logout wins over a delayed refresh response and keeps the other actor signed in", async ({
   page,
 }) => {
@@ -663,7 +923,7 @@ test("switching driver account without logout clears the previous GPS session", 
       history.pushState({}, "", "/driverLogin");
       dispatchEvent(new PopStateEvent("popstate"));
     });
-    await page.getByLabel("Номер телефона").fill("+10000000102");
+    await page.getByLabel("Номер телефона").fill("+99360000102");
     await page.getByLabel("Пароль", { exact: true }).fill(password);
     await page.getByRole("button", { name: "Войти", exact: true }).click();
     await expect(page).toHaveURL(/driverDashboard/);
@@ -684,7 +944,7 @@ test("dispatcher enters region, phone and price and the region modal closes afte
     driver = await b.newPage();
   try {
     await login(dispatcher, "admin");
-    await login(driver, "driver", "+10000000102");
+    await login(driver, "driver", "+99360000102");
     await startGps(driver);
     await driver
       .getByRole("button", { name: "Выйти на линию", exact: true })
@@ -700,8 +960,12 @@ test("dispatcher enters region, phone and price and the region modal closes afte
     await dialog
       .getByLabel("Район", { exact: true })
       .selectOption(process.env.TEST_REGION_ID!);
-    await expect(dialog.getByLabel("Телефон клиента")).toHaveValue("+993");
-    await dialog.getByLabel("Телефон клиента").fill("+10000000888");
+    await expect(dialog.getByLabel("Телефон клиента")).toHaveValue("");
+    await expect(dialog.getByText("+993", { exact: true })).toBeVisible();
+    await dialog.getByLabel("Телефон клиента").fill("+99360000888");
+    await expect(dialog.getByLabel("Телефон клиента")).toHaveValue(
+      "60 00 08 88",
+    );
     await dialog.getByLabel("Стоимость, TMT").fill("15");
     await expect(dialog.getByLabel("Откуда", { exact: true })).toBeVisible();
     await dialog
@@ -712,7 +976,7 @@ test("dispatcher enters region, phone and price and the region modal closes afte
       driver.getByText("Подача уточняется по телефону", { exact: true }),
     ).toBeVisible();
     await expect(
-      driver.getByRole("link", { name: "+10000000888", exact: true }),
+      driver.getByRole("link", { name: "+993 60 00 08 88", exact: true }),
     ).not.toBeVisible();
     await driver
       .getByRole("button", { name: "Скрыть предложение", exact: true })
@@ -727,7 +991,7 @@ test("dispatcher enters region, phone and price and the region modal closes afte
       .click();
     await expect(regionOrders).not.toBeVisible();
     await expect(
-      driver.getByRole("link", { name: "+10000000888", exact: true }),
+      driver.getByRole("link", { name: "+993 60 00 08 88", exact: true }),
     ).toBeVisible();
     await driver
       .getByRole("dialog", { name: "Управление поездкой", exact: true })
@@ -779,16 +1043,13 @@ test("dispatcher adds an approved driver and opens their zero TMT balance", asyn
     .getByRole("button", { name: "Добавить водителя", exact: true })
     .click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByLabel("Телефон", { exact: true })).toHaveValue(
-    "+993",
-  );
+  await expect(dialog.getByLabel("Телефон", { exact: true })).toHaveValue("");
+  await expect(dialog.getByText("+993", { exact: true })).toBeVisible();
   await dialog
     .getByLabel("Имя", { exact: true })
     .fill("Новый тестовый водитель");
-  await dialog.getByLabel("Телефон", { exact: true }).fill("+99361999888");
-  await dialog
-    .getByLabel("Пароль", { exact: true })
-    .fill("SyntheticBrowser123!");
+  await dialog.getByLabel("Телефон", { exact: true }).fill("61999888");
+  await dialog.getByLabel("Пароль", { exact: true }).fill("123456");
   await expect(dialog.getByLabel("Район", { exact: true })).toHaveCount(0);
   await dialog
     .getByRole("button", { name: "Добавить водителя", exact: true })
@@ -816,7 +1077,7 @@ async function openCredentialFixture(page: Page, phone: string) {
   const session = await page.request.post(
     `${process.env.TEST_API_URL}/auth/login`,
     {
-      data: { phone: "+10000000000", password },
+      data: { phone: "+99360000000", password },
     },
   );
   const { accessToken } = await session.json();
@@ -841,8 +1102,11 @@ test("dispatcher edits driver name and login phone", async ({ page }) => {
     .getByLabel("Имя водителя", { exact: true })
     .fill("Изменённый водитель");
   await page
-    .getByLabel("Телефон для входа", { exact: true })
-    .fill("+99361999889");
+    .getByLabel("Номер телефона", { exact: true })
+    .fill("0099361999889");
+  await expect(page.getByLabel("Номер телефона", { exact: true })).toHaveValue(
+    "61 99 98 89",
+  );
   await page
     .getByRole("button", { name: "Сохранить данные", exact: true })
     .click();
@@ -850,7 +1114,7 @@ test("dispatcher edits driver name and login phone", async ({ page }) => {
     page.getByRole("heading", { name: "Изменённый водитель", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "+99361999889", exact: true }),
+    page.getByRole("link", { name: "+993 61 99 98 89", exact: true }),
   ).toBeVisible();
 });
 test("dispatcher confirms password reset and the closed form forgets its password", async ({
@@ -860,9 +1124,7 @@ test("dispatcher confirms password reset and the closed form forgets its passwor
   await page
     .getByRole("button", { name: "Сбросить пароль", exact: true })
     .click();
-  await page
-    .getByLabel("Новый пароль", { exact: true })
-    .fill("Replacement123!");
+  await page.getByLabel("Новый пароль", { exact: true }).fill("123456");
   await page
     .getByLabel("Повторите пароль", { exact: true })
     .fill("Different123!");
@@ -870,9 +1132,7 @@ test("dispatcher confirms password reset and the closed form forgets its passwor
     .getByRole("button", { name: "Изменить пароль", exact: true })
     .click();
   await expect(page.getByRole("alert")).toContainText("Пароли не совпадают");
-  await page
-    .getByLabel("Повторите пароль", { exact: true })
-    .fill("Replacement123!");
+  await page.getByLabel("Повторите пароль", { exact: true }).fill("123456");
   await page
     .getByRole("button", { name: "Изменить пароль", exact: true })
     .click();
@@ -938,7 +1198,7 @@ test("regional queues and counts recover through updates, reconnect and reload",
   const driver = await b.newPage();
   try {
     await login(dispatcher, "admin");
-    await login(driver, "driver", "+10000000103");
+    await login(driver, "driver", "+99360000103");
     await startGps(driver);
     await driver
       .getByRole("button", { name: "Выйти на линию", exact: true })
@@ -985,7 +1245,7 @@ test("regional queues and counts recover through updates, reconnect and reload",
         headers,
         data: {
           districtId: other.id,
-          clientPhone: "+10000000777",
+          clientPhone: "+99360000777",
           priceEstimated: 12,
           pickupAddress,
         },
@@ -1048,7 +1308,7 @@ test("regional queues and counts recover through updates, reconnect and reload",
       .click();
     await expect(queue).not.toBeVisible();
     await expect(
-      driver.getByRole("link", { name: "+10000000777", exact: true }),
+      driver.getByRole("link", { name: "+993 60 00 07 77", exact: true }),
     ).toBeVisible();
     await driver.reload();
     const trip = driver.getByRole("dialog", {
@@ -1107,7 +1367,7 @@ test("regional queues and counts recover through updates, reconnect and reload",
           headers,
           data: {
             districtId: other.id,
-            clientPhone: "+10000000777",
+            clientPhone: "+99360000777",
             priceEstimated: 12,
           },
         });
@@ -1148,6 +1408,412 @@ test("regional queues and counts recover through updates, reconnect and reload",
   }
 });
 
+test("a transient GPS timeout keeps its blocker visible until an explicit retry receives a fresh server-acknowledged fix", async ({
+  page,
+}) => {
+  // A separate synthetic client exercises recovery without exhausting the login limiter used by earlier workflows.
+  await page.setExtraHTTPHeaders({ "X-Forwarded-For": "127.0.0.79" });
+  await page.context().grantPermissions(["geolocation"]);
+  await page.addInitScript(() => {
+    let watch: PositionCallback | undefined;
+    let failure: PositionErrorCallback | null | undefined;
+    const position = () =>
+      ({
+        coords: {
+          latitude: 37.96,
+          longitude: 58.32,
+          accuracy: 10,
+          heading: null,
+          speed: null,
+          altitude: null,
+          altitudeAccuracy: null,
+        },
+        timestamp: Date.now(),
+      }) as GeolocationPosition;
+    Object.defineProperty(navigator, "geolocation", {
+      configurable: true,
+      value: {
+        watchPosition(
+          success: PositionCallback,
+          failed?: PositionErrorCallback,
+        ) {
+          watch = success;
+          failure = failed;
+          setTimeout(() => watch?.(position()), 0);
+          return 1;
+        },
+        clearWatch() {
+          watch = undefined;
+        },
+        getCurrentPosition(success: PositionCallback) {
+          setTimeout(() => success(position()), 1500);
+        },
+      },
+    });
+    window.addEventListener("synthetic-gps-timeout", () =>
+      failure?.({
+        code: 3,
+        message: "Synthetic hardware timeout",
+        PERMISSION_DENIED: 1,
+        POSITION_UNAVAILABLE: 2,
+        TIMEOUT: 3,
+      }),
+    );
+  });
+  await login(page, "driver");
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  const power = page.getByRole("button", {
+    name: "Выйти на линию",
+    exact: true,
+  });
+  await expect(power).toBeEnabled();
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("synthetic-gps-timeout")),
+  );
+  await expect(power).toBeDisabled();
+  await expect(
+    page.getByText(/GPS.*(?:временно недоступен|не ответил)/).first(),
+  ).toBeAttached();
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect(
+    page.getByText(/GPS.*(?:временно недоступен|не ответил)/).first(),
+  ).toBeAttached();
+  await expect(power).toBeDisabled();
+  await expect(power).toBeEnabled({ timeout: 5000 });
+  await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+});
+
+async function emulateNativeBridge(page: Page, holdPermission: boolean) {
+  await page.addInitScript((holdPermission) => {
+    const bridge = window as unknown as {
+      CapacitorCustomPlatform: { name: string };
+      Capacitor: unknown;
+      releaseNativePermission?: () => void;
+      holdNativePermission: boolean;
+      holdNativeStart?: boolean;
+      releaseNativeStart?: () => void;
+      activeNativeUser?: string;
+      syntheticNativeStopped?: boolean;
+      syntheticNativeStopSequence?: number;
+      syntheticNativeStopAfterPermission?: boolean;
+    };
+    bridge.holdNativePermission = holdPermission;
+    bridge.CapacitorCustomPlatform = { name: "android" };
+    const status = {
+      running: false,
+      phase: "off",
+      userId: "",
+      lastReportAt: 0,
+      detail: "",
+      stopSequence: 0,
+    };
+    let activeToken = "";
+    bridge.Capacitor = {
+      PluginHeaders: [
+        {
+          name: "DriverShift",
+          methods: [
+            "permissions",
+            "status",
+            "location",
+            "stop",
+            "clear",
+            "notificationTarget",
+            "start",
+          ].map((name) => ({ name, rtype: "promise" })),
+        },
+      ],
+      nativePromise: async (
+        _plugin: string,
+        method: string,
+        options?: { shiftToken?: string; userId?: string },
+      ) => {
+        if (method === "start") {
+          activeToken = options?.shiftToken || "";
+          bridge.activeNativeUser = options?.userId;
+          if (bridge.holdNativeStart)
+            return new Promise<void>((resolve) => {
+              bridge.releaseNativeStart = resolve;
+            });
+          return {};
+        }
+        if (method === "stop") {
+          if (!options?.shiftToken || options.shiftToken === activeToken) {
+            activeToken = "";
+            bridge.activeNativeUser = "";
+          }
+          return {};
+        }
+        if (method === "permissions" && !bridge.holdNativePermission) {
+          if (bridge.syntheticNativeStopAfterPermission)
+            bridge.syntheticNativeStopped = true;
+          return {
+            ...status,
+            stopSequence: bridge.syntheticNativeStopped
+              ? (bridge.syntheticNativeStopSequence ?? 1)
+              : 0,
+            locationGranted: true,
+            ordersEnabled: true,
+            chatEnabled: true,
+          };
+        }
+        if (method === "permissions")
+          return new Promise((resolve) => {
+            bridge.releaseNativePermission = () =>
+              resolve({
+                locationGranted: true,
+                ordersEnabled: true,
+                chatEnabled: true,
+              });
+          });
+        if (method === "location")
+          return { lat: 0, lng: 0, accuracy: 10, timestamp: Date.now() };
+        if (method === "status")
+          return bridge.syntheticNativeStopped
+            ? {
+                ...status,
+                detail: "Смена завершена сервером",
+                stopSequence: bridge.syntheticNativeStopSequence ?? 1,
+              }
+            : status;
+        return {};
+      },
+    };
+  }, holdPermission);
+}
+
+test("an offline native driver sees the healthy dispatcher connection before starting a shift", async ({
+  page,
+}) => {
+  await emulateNativeBridge(page, false);
+  await login(page, "driver");
+  await expect(
+    page.getByText("Переподключаемся к диспетчеру…", { exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeEnabled();
+});
+
+test("a stopped native shift does not erase a newly confirmed GPS fix on later status reconciliation", async ({
+  page,
+}) => {
+  await emulateNativeBridge(page, false);
+  await page.addInitScript(() => {
+    (
+      window as unknown as { syntheticNativeStopped: boolean }
+    ).syntheticNativeStopped = true;
+  });
+  await login(page, "driver");
+  await expect(
+    page.getByText("Смена завершена сервером", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeEnabled();
+  await page.getByRole("link", { name: "Профиль", exact: true }).click();
+  await page.getByRole("link", { name: "Заказы", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeEnabled();
+  await expect(
+    page.getByText("Смена завершена сервером", { exact: true }),
+  ).toHaveCount(0);
+  await page.evaluate(() => {
+    (
+      window as unknown as { syntheticNativeStopSequence: number }
+    ).syntheticNativeStopSequence = 2;
+  });
+  await page.getByRole("link", { name: "Профиль", exact: true }).click();
+  await page.getByRole("link", { name: "Заказы", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByText("Смена завершена сервером", { exact: true }),
+  ).toBeVisible();
+});
+
+test("explicit native GPS acknowledges an old stop before its next status poll", async ({
+  page,
+}) => {
+  await emulateNativeBridge(page, false);
+  await login(page, "driver");
+  await page.evaluate(() => {
+    (
+      window as unknown as { syntheticNativeStopAfterPermission: boolean }
+    ).syntheticNativeStopAfterPermission = true;
+  });
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeEnabled();
+  await page.getByRole("link", { name: "Профиль", exact: true }).click();
+  await page.getByRole("link", { name: "Заказы", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeEnabled();
+});
+
+test("a native GPS permission callback from a previous driver cannot post the next driver's location", async ({
+  page,
+}) => {
+  await page.setExtraHTTPHeaders({ "X-Forwarded-For": "127.0.0.80" });
+  await emulateNativeBridge(page, true);
+  await login(page, "driver");
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Boolean(
+          (window as unknown as { releaseNativePermission?: unknown })
+            .releaseNativePermission,
+        ),
+      ),
+    )
+    .toBe(true);
+  await page.evaluate(() => {
+    history.pushState({}, "", "/driverLogin");
+    dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await page.getByLabel("Номер телефона").fill("+99360000102");
+  await page.getByLabel("Пароль", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Войти", exact: true }).click();
+  await expect(page).toHaveURL(/driverDashboard/);
+  let locationPosted = false;
+  await page.route("**/driver/location", async (route) => {
+    locationPosted = true;
+    await route.continue();
+  });
+  await page.evaluate(() =>
+    (
+      window as unknown as { releaseNativePermission: () => void }
+    ).releaseNativePermission(),
+  );
+  await expect(
+    page.getByRole("button", { name: "Включить GPS", exact: true }),
+  ).toBeEnabled();
+  // Wait for the released bridge promise and resulting network work to settle.
+  await page.waitForTimeout(300);
+  expect(locationPosted).toBe(false);
+  await expect(page.getByText(/GPS · точность/)).toHaveCount(0);
+});
+
+test("a cancelled native Online operation cannot offline a newly signed-in driver", async ({
+  page,
+}) => {
+  await page.setExtraHTTPHeaders({ "X-Forwarded-For": "127.0.0.81" });
+  await emulateNativeBridge(page, false);
+  await login(page, "driver");
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+  await page.evaluate(() => {
+    (
+      window as unknown as { holdNativePermission: boolean }
+    ).holdNativePermission = true;
+  });
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Boolean(
+          (window as unknown as { releaseNativePermission?: unknown })
+            .releaseNativePermission,
+        ),
+      ),
+    )
+    .toBe(true);
+  await page.evaluate(() => {
+    history.pushState({}, "", "/driverLogin");
+    dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await page.getByLabel("Номер телефона").fill("+99360000102");
+  await page.getByLabel("Пароль", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Войти", exact: true }).click();
+  await expect(page).toHaveURL(/driverDashboard/);
+  let statusPosted = false;
+  await page.route("**/driver/status", async (route) => {
+    statusPosted = true;
+    await route.continue();
+  });
+  await page.evaluate(() =>
+    (
+      window as unknown as { releaseNativePermission: () => void }
+    ).releaseNativePermission(),
+  );
+  await page.waitForTimeout(300);
+  expect(statusPosted).toBe(false);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("a delayed native start from the old account cannot stop the new account's shift", async ({
+  page,
+}) => {
+  await page.setExtraHTTPHeaders({ "X-Forwarded-For": "127.0.0.82" });
+  await emulateNativeBridge(page, false);
+  await login(page, "driver", "+99360000103");
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+  await page.evaluate(() => {
+    (window as unknown as { holdNativeStart: boolean }).holdNativeStart = true;
+  });
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Boolean(
+          (window as unknown as { releaseNativeStart?: unknown })
+            .releaseNativeStart,
+        ),
+      ),
+    )
+    .toBe(true);
+  await page.evaluate(() => {
+    history.pushState({}, "", "/driverLogin");
+    dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await page.getByLabel("Номер телефона").fill("+99360000102");
+  await page.getByLabel("Пароль", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Войти", exact: true }).click();
+  await expect(page).toHaveURL(/driverDashboard/);
+  await page.evaluate(() => {
+    (window as unknown as { holdNativeStart: boolean }).holdNativeStart = false;
+  });
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  const currentUser = await page.evaluate(
+    () => JSON.parse(localStorage.getItem("tayyn.driver.user")!).id as string,
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { activeNativeUser?: string }).activeNativeUser,
+      ),
+    )
+    .toBe(currentUser);
+  await page.evaluate(() =>
+    (
+      window as unknown as { releaseNativeStart: () => void }
+    ).releaseNativeStart(),
+  );
+  await page.waitForTimeout(300);
+  expect(
+    await page.evaluate(
+      () =>
+        (window as unknown as { activeNativeUser?: string }).activeNativeUser,
+    ),
+  ).toBe(currentUser);
+});
 test("permission controls distinguish confirmed GPS and enabled notification permission", async ({
   browser,
 }) => {
@@ -1170,7 +1836,7 @@ test("permission controls distinguish confirmed GPS and enabled notification per
       name: "Включить уведомления и звук",
       exact: true,
     });
-    await expect(gps).toHaveAttribute("data-state", "inactive");
+    await expect(gps).toHaveAttribute("data-state", /inactive|blocked/);
     await expect(alerts).toHaveAttribute("data-state", "inactive");
     let releaseReport!: () => void;
     const reportGate = new Promise<void>((resolve) => {
@@ -1289,7 +1955,7 @@ test("auth throttling blocks repeated attempts from one browser without blocking
     await isolateBrowserClient(await first.newPage());
     await isolateBrowserClient(await second.newPage());
     const invalidLogin = {
-      data: { phone: "+10000000000", password: "wrong-password" },
+      data: { phone: "+99360000000", password: "wrong-password" },
     };
     for (let attempt = 0; attempt < 20; attempt++) {
       const response = await first.request.post(
@@ -1397,4 +2063,150 @@ test("driver feedback shows blockers until recovery and action errors without an
     page.getByRole("button", { name: "Уйти с линии", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
   await expect(toast).toHaveCount(0);
+});
+
+test("driver labels feel native while the chat composer remains editable", async ({
+  page,
+}) => {
+  await login(page, "driver");
+  const region = page
+    .getByRole("group", { name: "Регионы", exact: true })
+    .getByRole("button")
+    .first();
+  await expect(region).toHaveCSS("user-select", "none");
+  await page.goto("/driverChat");
+  const composer = page.getByRole("textbox");
+  await composer.fill("Исправить сообщение");
+  await expect(composer).toHaveCSS("user-select", "text");
+  await composer.selectText();
+  await page.keyboard.type("Новое сообщение");
+  await expect(composer).toHaveValue("Новое сообщение");
+  await page.goto("/adminLogin");
+  await expect(page.locator("html")).not.toHaveClass(/driver-app/);
+});
+
+test("GPS outside every saved region keeps its actual coordinates and ignores a stale Yandex address", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    // Only the external geocoder boundary is simulated. GPS reports and
+    // dispatch-region matching still use the real API and disposable database.
+    const pending: Array<(value: unknown) => void> = [];
+    (window as any).addressReplies = pending;
+    (window as any).ymaps = {
+      ready: (callback: () => void) => callback(),
+      geocode: () => new Promise((resolve) => pending.push(resolve)),
+    };
+  });
+  await login(page, "driver");
+  await startGps(page);
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "ТЕСТ — Центральный",
+  );
+  await expect
+    .poll(() => page.evaluate(() => (window as any).addressReplies.length))
+    .toBe(1);
+  await page.evaluate(() =>
+    (window as any).addressReplies.shift()({
+      geoObjects: {
+        get: () => ({
+          getThoroughfare: () => "Гёроглы",
+          getPremiseNumber: () => "10",
+          getAddressLine: () => "Ашхабад, Гёроглы, 10",
+        }),
+      },
+    }),
+  );
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "Гёроглы, 10",
+  );
+  // A reload starts a fresh lookup; a late answer must not overwrite a newer GPS fix.
+  await page.reload();
+  await startGps(page);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).addressReplies.length))
+    .toBe(1);
+  await page
+    .context()
+    .setGeolocation({ latitude: 30.2328, longitude: 120.0398, accuracy: 10 });
+  const location = page.getByLabel("Местоположение GPS");
+  await expect(location).toContainText("30.2328, 120.0398");
+  await page.evaluate(() =>
+    (window as any).addressReplies.shift()({
+      geoObjects: {
+        get: () => ({
+          getThoroughfare: () => "Устаревший адрес",
+          getPremiseNumber: () => "1",
+        }),
+      },
+    }),
+  );
+  await expect(location).not.toContainText("Устаревший адрес");
+  await expect(location).toContainText("30.2328, 120.0398");
+  await page.waitForTimeout(10_100); // Production GPS report rate limit.
+  const report = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/driver/location") &&
+      response.request().method() === "POST",
+  );
+  await page
+    .context()
+    .setGeolocation({ latitude: 30.2329, longitude: 120.0399, accuracy: 10 });
+  expect((await report).ok()).toBe(true);
+  await expect(location).toContainText("Вне районов");
+  await expect(location).toContainText("30.2329, 120.0399");
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeEnabled();
+});
+
+test("a rejected Yandex lookup leaves GPS readiness and actual coordinates usable", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as any).ymaps = {
+      ready: (callback: () => void) => callback(),
+      geocode: () => Promise.reject(new Error("Invalid api key")),
+    };
+  });
+  await login(page, "driver");
+  await startGps(page);
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "37.9600, 58.3200",
+  );
+  await expect(
+    page.getByRole("button", { name: "Включить GPS", exact: true }),
+  ).toHaveAttribute("data-state", "ready");
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeEnabled();
+});
+
+test("dispatcher overview uses global counts and labels completed trip values as all-time", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const overview = page.waitForResponse((response) =>
+    response.url().endsWith("/admin/overview"),
+  );
+  await login(page, "admin");
+  expect((await overview).ok()).toBe(true);
+  await expect(
+    page.getByRole("heading", { name: "Обзор", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", {
+      name: "Завершённые поездки за всё время",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Средняя известная стоимость", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(/последние 100|Сумма последних/)).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
 });

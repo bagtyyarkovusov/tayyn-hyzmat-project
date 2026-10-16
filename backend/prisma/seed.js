@@ -11,7 +11,7 @@ const { seedDefaultRegions } = require('./default-regions.cjs');
 const prisma = new PrismaClient();
 
 async function main() {
-  const phone = process.env.SEED_ADMIN_PHONE || '+10000000000';
+  const phone = process.env.SEED_ADMIN_PHONE || '+99360000000';
   const password = process.env.SEED_ADMIN_PASSWORD || 'ChangeMe123!';
   const fullName = process.env.SEED_ADMIN_NAME || 'Super Admin';
 

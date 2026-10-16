@@ -1,4 +1,4 @@
-import type { Driver } from '@prisma/client';
+import type { Driver, Prisma } from '@prisma/client';
 import ApiError from '../../utils/ApiError';
 
 export const GPS_FRESHNESS_MS = 60_000;
@@ -20,4 +20,13 @@ export function assertFreshGps(driver: Driver): void {
 export function assertOrderEligibility(driver: Driver): void {
   assertFreshGps(driver);
   if (!driver.isOnline) throw ApiError.forbidden('Выйдите на линию, чтобы принимать заказы', { code: 'DRIVER_OFFLINE' });
+}
+
+// Shared by operational counts so stale or future GPS cannot appear as supply.
+export function onlineDriverWhere(now = new Date()): Prisma.DriverWhereInput {
+  return {
+    status: 'APPROVED', user: { status: 'ACTIVE' }, isOnline: true,
+    lastLat: { gte: -90, lte: 90 }, lastLng: { gte: -180, lte: 180 },
+    lastLocationAt: { gt: new Date(now.getTime() - GPS_FRESHNESS_MS), lte: now }
+  };
 }

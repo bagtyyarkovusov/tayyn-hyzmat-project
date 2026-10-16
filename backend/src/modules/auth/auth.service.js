@@ -8,6 +8,9 @@ const {
   parseDurationToMs
 } = require('../../utils/jwt');
 const env = require('../../config/env');
+const { getIO } = require('../../lib/socket');
+const rooms = require('../../sockets/rooms');
+const logger = require('../../config/logger');
 
 // How long a just-rotated refresh token keeps working - see refresh().
 const ROTATION_GRACE_MS = 60 * 1000;
@@ -46,6 +49,14 @@ async function registerDriver({ phone, fullName, password }) {
     return created;
   });
 
+  // Registration is already committed. Delivery failure must not turn it into
+  // a retryable HTTP failure, and only admins need this invalidation signal.
+  try {
+    getIO().to(rooms.admins()).emit('driver:registered', { driverId: user.driver.id });
+  } catch (err) {
+    logger.warn({ err }, 'Failed to broadcast driver registration');
+  }
+
   return {
     user: sanitizeUser(user),
     message: 'Регистрация прошла успешно. Ваш аккаунт ожидает подтверждения администратора.'
@@ -83,6 +94,7 @@ async function issueTokenPair(user) {
 // until its own short expiry - there's no way to invalidate that
 // instantly, only the refresh that would normally keep the session alive).
 async function revokeAllRefreshTokens(userId) {
+  await require('../native-shift/native-shift.service').revokeUserShift(userId);
   // Backdated deliberately, past ROTATION_GRACE_MS. refresh() lets a
   // just-rotated token through for a minute to survive concurrent refreshes
   // - but a force-logout must be immediate, otherwise the device being
@@ -230,6 +242,8 @@ async function refresh(refreshToken) {
 
 async function logout(refreshToken) {
   const tokenHash = hashRefreshToken(refreshToken);
+  const session = await prisma.refreshToken.findUnique({ where: { tokenHash } });
+  if (session) await require('../native-shift/native-shift.service').revokeUserShift(session.userId);
   await prisma.refreshToken.updateMany({
     where: { tokenHash, revokedAt: null },
     data: { revokedAt: new Date() }

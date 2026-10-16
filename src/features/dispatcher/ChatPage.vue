@@ -1,10 +1,12 @@
 <script setup lang="ts">
+import { formatPhone } from "@/shared/phone";
 import { onUnmounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import { ArrowLeft } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
 import { Label } from "@/shared/ui/label";
 import ChatComposer from "@/shared/ChatComposer.vue";
+import { useChatRecovery } from "@/shared/useChatRecovery";
 import { useChatScroll } from "@/shared/useChatScroll";
 import { Textarea } from "@/shared/ui/textarea";
 import {
@@ -88,6 +90,10 @@ const {
   null as { messages: Message[]; total: number; driver: Driver } | null,
   ["driver:message", "admin:message"],
 );
+useChatRecovery(() => {
+  void load();
+  void loadThread();
+});
 watch(
   () => props.driverId,
   () => {
@@ -154,9 +160,11 @@ async function send(all = false) {
         :class="driverId ? 'hidden lg:block' : ''"
       >
         <PageState
-          :loading="loading"
+          :loading="loading && !drivers.length"
           :error="error"
           :empty="!drivers.length"
+          empty-title="Диалогов пока нет"
+          empty-description="Добавленные водители появятся здесь."
           @retry="load"
         />
         <div class="overflow-hidden rounded-xl border bg-card">
@@ -171,7 +179,7 @@ async function send(all = false) {
                 {{ driver.user.fullName }}
               </p>
               <p class="mt-1 text-xs text-muted-foreground">
-                {{ driver.user.phone }}
+                {{ formatPhone(driver.user.phone) }}
               </p>
             </div>
             <span
@@ -186,7 +194,10 @@ async function send(all = false) {
         class="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border bg-card"
       >
         <div class="flex shrink-0 items-center gap-3 border-b p-3">
-          <RouterLink to="/adminChat" aria-label="Все диалоги" class="lg:hidden"
+          <RouterLink
+            to="/adminChat"
+            aria-label="Все диалоги"
+            class="flex size-11 shrink-0 items-center justify-center rounded-md hover:bg-muted lg:hidden"
             ><ArrowLeft class="size-4"
           /></RouterLink>
           <div>
@@ -216,7 +227,7 @@ async function send(all = false) {
           @scroll="track"
         >
           <PageState
-            :loading="threadLoading"
+            :loading="threadLoading && !thread"
             :error="threadError"
             @retry="loadThread"
           />

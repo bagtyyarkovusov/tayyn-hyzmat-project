@@ -28,6 +28,7 @@ export async function updateDriverProfile(
           where: { userId: driver.userId },
           data: { revokedAt: new Date(0) },
         });
+        await tx.$executeRaw`UPDATE native_shift_leases SET revoked_at = NOW() WHERE driver_id = ${id} AND revoked_at IS NULL`;
         await tx.driver.update({ where: { id }, data: { isOnline: false } });
       }
       return { id: driver.id, user, changed };
@@ -82,6 +83,7 @@ export async function resetDriverPassword(id: string, password: string) {
       where: { userId: driver.userId },
       data: { revokedAt: new Date(0) },
     });
+    await tx.$executeRaw`UPDATE native_shift_leases SET revoked_at = NOW() WHERE driver_id = ${id} AND revoked_at IS NULL`;
     await tx.driver.update({ where: { id }, data: { isOnline: false } });
   });
   await disconnectRevokedSessions(id);

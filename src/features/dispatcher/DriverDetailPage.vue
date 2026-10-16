@@ -1,9 +1,12 @@
 <script setup lang="ts">
+import { formatPhone } from "@/shared/phone";
 import { ref, watch, onUnmounted } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import { ArrowLeft } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
+import PhoneInput from "@/shared/ui/phone-input/PhoneInput.vue";
+import { passwordError, passwordHint } from "@/shared/password";
 import { Label } from "@/shared/ui/label";
 import { Badge } from "@/shared/ui/badge";
 import {
@@ -71,6 +74,13 @@ async function saveCredentials() {
     newPassword.value !== passwordConfirmation.value
   ) {
     credentialError.value = "Пароли не совпадают";
+    return;
+  }
+  if (
+    credentialDialog.value === "password" &&
+    passwordError(newPassword.value)
+  ) {
+    credentialError.value = passwordError(newPassword.value);
     return;
   }
   const generation = credentialGeneration;
@@ -206,7 +216,7 @@ function adjust(withdraw: boolean) {
           <a
             :href="`tel:${driver.user.phone}`"
             class="mt-2 inline-block text-muted-foreground"
-            >{{ driver.user.phone }}</a
+            >{{ formatPhone(driver.user.phone) }}</a
           >
         </div>
         <Badge
@@ -246,11 +256,16 @@ function adjust(withdraw: boolean) {
           >Сбросить пароль</Button
         >
       </div>
-      <section v-if="tab === 'info'" class="grid gap-5 xl:grid-cols-2">
-        <div class="space-y-5">
-          <div class="rounded-xl border bg-card p-5">
-            <h2 class="mb-4 font-semibold">На связи</h2>
-            <dl class="grid grid-cols-2 gap-4 text-sm">
+      <section
+        v-if="tab === 'info'"
+        class="grid gap-x-8 gap-y-6 xl:grid-cols-2"
+      >
+        <div class="space-y-6">
+          <div class="border-b pb-5">
+            <h2 class="mb-3 font-semibold">На связи</h2>
+            <dl
+              class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm [&_dd]:break-words"
+            >
               <div>
                 <dt class="text-muted-foreground">Район</dt>
                 <dd class="mt-1">{{ driver.district?.name || "Не выбран" }}</dd>
@@ -311,8 +326,18 @@ function adjust(withdraw: boolean) {
               >
             </div>
           </div>
-          <div class="rounded-xl border bg-card p-5">
-            <h2 class="font-semibold">Устройства и входы</h2>
+          <details
+            :open="Boolean(driver.pendingDeviceId)"
+            class="group border-b pb-5"
+          >
+            <summary
+              class="flex min-h-11 cursor-pointer items-center justify-between gap-3 font-semibold"
+            >
+              Устройства и входы
+              <span class="text-sm font-normal text-muted-foreground">{{
+                driver.pendingDeviceId ? "Ожидает подтверждения" : "Подробнее"
+              }}</span>
+            </summary>
             <p class="mt-2 text-sm text-muted-foreground">
               Текущее:
               {{ driver.currentDeviceLabel || "Неизвестное устройство" }}
@@ -354,14 +379,14 @@ function adjust(withdraw: boolean) {
                 date(device.lastLoginAt)
               }}</span>
             </div>
-          </div>
+          </details>
         </div>
-        <div class="space-y-5">
+        <div class="space-y-6">
           <form
-            class="space-y-4 rounded-xl border bg-card p-5"
+            class="grid gap-4 sm:grid-cols-2"
             @submit.prevent="act('vehicle', vehicle)"
           >
-            <h2 class="font-semibold">Автомобиль</h2>
+            <h2 class="font-semibold sm:col-span-2">Автомобиль</h2>
             <div
               v-for="field in [
                 { key: 'plateNumber' as const, label: 'Госномер' },
@@ -387,11 +412,14 @@ function adjust(withdraw: boolean) {
                 "
               />
             </div>
-            <Button type="submit" :disabled="pending"
+            <Button
+              type="submit"
+              class="justify-self-start sm:col-span-2"
+              :disabled="pending"
               >Сохранить автомобиль</Button
             >
           </form>
-          <div class="rounded-xl border border-destructive/30 p-5">
+          <div class="border-t border-destructive/30 pt-5">
             <h2 class="font-semibold text-destructive">Удаление аккаунта</h2>
             <p class="mt-2 text-sm text-muted-foreground">
               Личные данные, баланс и переписка будут удалены навсегда. Заказы
@@ -407,7 +435,7 @@ function adjust(withdraw: boolean) {
           </div>
         </div>
       </section>
-      <section v-if="tab === 'balance'" class="space-y-5">
+      <section v-if="tab === 'balance'" class="space-y-6">
         <div class="rounded-xl border bg-card p-5">
           <p class="text-sm text-muted-foreground">Баланс</p>
           <p class="mt-2 text-3xl font-semibold tabular-nums">
@@ -572,19 +600,17 @@ function adjust(withdraw: boolean) {
               />
             </div>
             <div class="space-y-2">
-              <Label for="driver-phone">Телефон для входа</Label
-              ><Input
+              <Label for="driver-phone">Номер телефона</Label
+              ><PhoneInput
                 id="driver-phone"
                 v-model="identity.phone"
-                type="tel"
                 required
-                pattern="\+[1-9][0-9]{7,14}"
-                autocomplete="tel"
                 :disabled="credentialPending"
               />
             </div>
           </template>
           <template v-else>
+            <p class="text-xs text-muted-foreground">{{ passwordHint }}</p>
             <div class="space-y-2">
               <Label for="driver-password">Новый пароль</Label
               ><Input
@@ -593,8 +619,8 @@ function adjust(withdraw: boolean) {
                 type="password"
                 autocomplete="new-password"
                 required
-                minlength="8"
-                maxlength="128"
+                minlength="6"
+                maxlength="72"
                 :disabled="credentialPending"
               />
             </div>
@@ -606,8 +632,8 @@ function adjust(withdraw: boolean) {
                 type="password"
                 autocomplete="new-password"
                 required
-                minlength="8"
-                maxlength="128"
+                minlength="6"
+                maxlength="72"
                 :disabled="credentialPending"
               />
             </div>
