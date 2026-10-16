@@ -88,40 +88,46 @@ watch(
   <div class="driver-home mx-auto flex h-full max-w-xl flex-col gap-2">
     <h1 class="sr-only">Заказы по районам</h1>
     <div class="driver-controls flex shrink-0 flex-col gap-2">
-      <header class="flex shrink-0 items-center gap-2">
+      <header class="flex min-h-14 shrink-0 items-center gap-3">
         <span
           class="mr-auto text-sm font-semibold tabular-nums"
-          aria-label="Тестовый баланс"
+          aria-label="Баланс"
           >{{ state.balance ? money(state.balance.amount) : "…" }}</span
         >
-        <div class="flex items-center justify-end gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            class="size-11"
-            :disabled="state.gpsPending"
-            aria-label="Включить GPS"
-            @click="enableGps"
+        <div class="flex shrink-0 items-center gap-3">
+          <div
+            role="group"
+            aria-label="Разрешения устройства"
+            class="flex items-center rounded-full bg-secondary/60 px-1"
           >
-            <LocateFixed
-              class="size-5"
-              :class="{
-                'text-primary': state.gpsReady,
-                'motion-safe:animate-pulse': state.gpsPending,
-              }"
-            />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            class="size-11"
-            aria-label="Включить уведомления и звук"
-            @click="enableOrderAlerts"
-            ><Bell class="size-5"
-          /></Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="size-11 rounded-full"
+              :disabled="state.gpsPending"
+              aria-label="Включить GPS"
+              @click="enableGps"
+            >
+              <LocateFixed
+                class="size-5"
+                :class="{
+                  'text-primary': state.gpsReady,
+                  'motion-safe:animate-pulse': state.gpsPending,
+                }"
+              />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="size-11 rounded-full"
+              aria-label="Включить уведомления и звук"
+              @click="enableOrderAlerts"
+              ><Bell class="size-5"
+            /></Button>
+          </div>
           <Button
             variant="outline"
-            class="relative size-12 shrink-0 overflow-visible rounded-full border-2 shadow-none [&_svg]:size-6 motion-safe:transition-[background-color,border-color,color,transform] motion-safe:duration-200 active:scale-95"
+            class="relative size-11 shrink-0 overflow-visible rounded-full border shadow-none [&_svg]:size-5 motion-safe:transition-[background-color,border-color,color,transform] motion-safe:duration-200 active:scale-95"
             :class="
               state.profile?.isOnline
                 ? 'border-emerald-300 bg-emerald-300 text-emerald-950 hover:bg-emerald-200 dark:border-emerald-400 dark:bg-emerald-400 dark:hover:bg-emerald-300'

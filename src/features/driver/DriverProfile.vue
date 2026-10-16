@@ -3,6 +3,7 @@ import IncomingOrder from "./components/IncomingOrder.vue";
 import { onMounted, ref } from "vue";
 import { Car, Wallet, ChevronLeft, ChevronRight } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
+import { Badge } from "@/shared/ui/badge";
 import { driverApi, errorMessage } from "@/shared/api";
 import { useDriver } from "./useDriver";
 import { date, money, statusLabels, type History } from "./model";
@@ -40,61 +41,80 @@ async function load(next = page.value) {
 onMounted(() => void load());
 </script>
 <template>
-  <div class="mx-auto max-w-3xl space-y-6">
-    <header>
-      <h1 class="page-heading">Профиль</h1>
-      <p class="muted mt-1">Ваш автомобиль, баланс и поездки.</p>
-    </header>
+  <div class="mx-auto max-w-xl space-y-4">
+    <h1 class="text-lg font-semibold">Профиль</h1>
     <IncomingOrder />
-    <p v-if="state.error" role="alert" class="text-destructive">
+    <p v-if="state.error" role="alert" class="text-sm text-destructive">
       {{ state.error }}
     </p>
-    <section class="panel">
-      <h2 class="text-xl font-semibold">
-        {{ state.profile?.user.fullName || "Загружаем профиль…" }}
-      </h2>
-      <p class="muted mt-1">{{ state.profile?.user.phone }}</p>
-      <p class="mt-3 text-sm">
-        Статус:
-        {{
-          state.profile?.status === "APPROVED"
-            ? "Допущен к работе"
-            : state.profile?.status || "Уточняем…"
-        }}
-      </p>
-    </section>
-    <div class="grid gap-4 sm:grid-cols-2">
-      <section class="panel">
-        <Wallet class="mb-3 size-5 text-primary" />
-        <h2 class="font-medium">Тестовый баланс</h2>
-        <p class="my-2 text-2xl font-semibold tabular-nums">
-          {{ state.balance ? money(state.balance.amount) : "Загружаем…" }}
-        </p>
-        <p class="muted text-sm">
-          Пополнение через диспетчера. Реальные платежи отключены.
-        </p>
-      </section>
-      <section class="panel">
-        <Car class="mb-3 size-5 text-primary" />
-        <h2 class="font-medium">Автомобиль</h2>
-        <template v-if="state.profile?.currentVehicle"
-          ><p class="my-2 text-lg font-semibold">
-            {{ state.profile.currentVehicle.plateNumber }}
-          </p>
-          <p class="muted text-sm">
-            {{ state.profile.currentVehicle.make }}
-            {{ state.profile.currentVehicle.model }}
-            {{ state.profile.currentVehicle.color }}
-          </p></template
+    <section
+      aria-label="Данные водителя"
+      class="divide-y overflow-hidden rounded-xl border bg-card"
+    >
+      <div class="flex flex-wrap items-start justify-between gap-2 p-4">
+        <div class="min-w-0">
+          <h2 class="break-words font-semibold">
+            {{ state.profile?.user.fullName || "Загружаем профиль…" }}
+          </h2>
+          <a
+            v-if="state.profile"
+            :href="`tel:${state.profile.user.phone}`"
+            class="mt-1 inline-block text-sm text-muted-foreground"
+          >
+            {{ state.profile.user.phone }}
+          </a>
+        </div>
+        <Badge
+          :variant="
+            state.profile?.status === 'BLOCKED' ? 'destructive' : 'secondary'
+          "
         >
-        <p v-else class="muted mt-2 text-sm">
-          Автомобиль ещё не назначен. Обратитесь к диспетчеру.
+          {{
+            state.profile?.status === "APPROVED"
+              ? "Допущен"
+              : state.profile?.status === "BLOCKED"
+                ? "Заблокирован"
+                : state.profile?.status === "PENDING"
+                  ? "На проверке"
+                  : "Загружаем…"
+          }}
+        </Badge>
+      </div>
+      <div class="flex items-center gap-3 px-4 py-3">
+        <Wallet class="size-4 shrink-0 text-primary" aria-hidden="true" />
+        <div class="min-w-0 flex-1">
+          <h2 class="text-sm font-medium">Баланс</h2>
+          <p class="mt-0.5 text-xs text-muted-foreground">
+            Пополнение через диспетчера
+          </p>
+        </div>
+        <p class="shrink-0 text-lg font-semibold tabular-nums">
+          {{ state.balance ? money(state.balance.amount) : "…" }}
         </p>
-      </section>
-    </div>
-    <section class="space-y-4">
+      </div>
+      <div class="flex items-start gap-3 px-4 py-3">
+        <Car class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+        <div class="min-w-0 flex-1">
+          <h2 class="text-sm font-medium">Автомобиль</h2>
+          <template v-if="state.profile?.currentVehicle">
+            <p class="mt-1 break-words text-sm font-semibold">
+              {{ state.profile.currentVehicle.plateNumber }}
+            </p>
+            <p class="break-words text-xs text-muted-foreground">
+              {{ state.profile.currentVehicle.make }}
+              {{ state.profile.currentVehicle.model }}
+              {{ state.profile.currentVehicle.color }}
+            </p>
+          </template>
+          <p v-else class="mt-0.5 text-xs text-muted-foreground">
+            Не назначен. Обратитесь к диспетчеру.
+          </p>
+        </div>
+      </div>
+    </section>
+    <section class="space-y-3">
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <h2 class="text-xl font-semibold">История</h2>
+        <h2 class="font-semibold">История</h2>
         <div class="flex gap-1" role="group" aria-label="Тип истории">
           <Button
             :variant="tab === 'orders' ? 'default' : 'outline'"
@@ -112,12 +132,15 @@ onMounted(() => void load());
       <p v-if="error" role="alert" class="text-destructive">
         {{ error }} <Button variant="link" @click="load()">Повторить</Button>
       </p>
-      <p v-if="loading" role="status" class="muted py-8 text-center">
+      <p v-if="loading" role="status" class="muted py-4 text-center text-sm">
         Загружаем историю…
       </p>
       <template v-else-if="history"
         ><div v-if="tab === 'orders'" class="divide-y rounded-xl border">
-          <p v-if="!history.orders.items.length" class="muted p-8 text-center">
+          <p
+            v-if="!history.orders.items.length"
+            class="muted p-4 text-center text-sm"
+          >
             Поездок пока нет.
           </p>
           <article
@@ -145,7 +168,7 @@ onMounted(() => void load());
         <div v-else class="divide-y rounded-xl border">
           <p
             v-if="!history.transactions.items.length"
-            class="muted p-8 text-center"
+            class="muted p-4 text-center text-sm"
           >
             Операций пока нет.
           </p>

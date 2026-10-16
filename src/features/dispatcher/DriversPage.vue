@@ -59,9 +59,7 @@ const visible = computed(() =>
         <h1 class="page-heading">
           Водители <span class="text-muted-foreground">{{ data.total }}</span>
         </h1>
-        <p class="mt-2 text-muted-foreground">
-          Доступ, автомобили и синтетические балансы.
-        </p>
+        <p class="mt-2 text-muted-foreground">Доступ, автомобили и балансы.</p>
       </div>
       <Button @click="create = true">Добавить водителя</Button>
     </header>

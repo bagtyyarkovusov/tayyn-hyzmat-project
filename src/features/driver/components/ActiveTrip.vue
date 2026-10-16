@@ -124,8 +124,8 @@ async function cancel() {
         ><DialogHeader
           ><DialogTitle>Отменить текущий заказ?</DialogTitle
           ><DialogDescription
-            >Заказ будет закрыт. Тестовое списание за принятие заказа вернётся
-            на баланс.</DialogDescription
+            >Заказ будет закрыт. Списание за принятие заказа вернётся на
+            баланс.</DialogDescription
           ></DialogHeader
         ><label for="cancel-reason" class="field-label">Причина отмены</label
         ><Textarea

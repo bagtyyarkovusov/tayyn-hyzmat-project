@@ -340,12 +340,12 @@ function adjust(withdraw: boolean) {
       </section>
       <section v-if="tab === 'balance'" class="space-y-5">
         <div class="rounded-xl border bg-card p-5">
-          <p class="text-sm text-muted-foreground">Синтетический баланс</p>
+          <p class="text-sm text-muted-foreground">Баланс</p>
           <p class="mt-2 text-3xl font-semibold tabular-nums">
             {{ money(driver.user.balance?.amount) }}
           </p>
           <p class="mt-2 text-xs text-muted-foreground">
-            Тестовая среда. Реальные платежи не выполняются.
+            Пополнение и корректировка через диспетчера.
           </p>
           <form
             class="mt-5 grid gap-3 sm:grid-cols-2"

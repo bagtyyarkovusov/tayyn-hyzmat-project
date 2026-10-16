@@ -973,7 +973,7 @@ test("regional queues and counts recover through updates, reconnect and reload",
       trip.getByText("Прибытие: 20 мин", { exact: true }),
     ).toBeVisible();
     await trip.getByRole("button", { name: "Close", exact: true }).click();
-    await expect(driver.getByLabel("Тестовый баланс")).toHaveText("488 TMT");
+    await expect(driver.getByLabel("Баланс")).toHaveText("488 TMT");
     await driver.screenshot({
       path: "test-results/driver-live-trip-strip.png",
       animations: "disabled",
@@ -983,7 +983,7 @@ test("regional queues and counts recover through updates, reconnect and reload",
     await driver.screenshot({ path: "test-results/driver-trip-dialog.png" });
     for (const name of ["Я на месте", "Начать поездку", "Завершить поездку"])
       await driver.getByRole("button", { name, exact: true }).click();
-    await expect(driver.getByLabel("Тестовый баланс")).toHaveText("488 TMT");
+    await expect(driver.getByLabel("Баланс")).toHaveText("488 TMT");
     await startGps(driver);
     await driver
       .getByRole("button", { name: "Выйти на линию", exact: true })
