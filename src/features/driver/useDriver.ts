@@ -389,7 +389,7 @@ async function acknowledgeCurrentLocation(generation: number) {
     state.locationSyncPending = true;
     const { data } = await driverApi.post<{ districtId: string | null }>(
       "/driver/location",
-      state.position,
+      { ...state.position, capturedAt: state.locationUpdatedAt },
     );
     if (generation !== sessionGeneration) return false;
     lastLocationSent = Date.now();
@@ -592,7 +592,7 @@ function enableGps() {
   const report = async (position: GeolocationPosition, requestId = 0) => {
     if (generation !== sessionGeneration || trackingEpoch !== gpsEpoch) return;
     if (requestId && requestId < latestGpsRequestResolved) return;
-    if (requestId) latestGpsRequestResolved = requestId;
+    latestGpsRequestResolved = requestId || ++gpsRequestSequence;
     const {
       latitude: lat,
       longitude: lng,
@@ -622,6 +622,7 @@ function enableGps() {
           lat,
           lng,
           accuracy,
+          capturedAt: position.timestamp,
           ...(heading !== null ? { heading } : {}),
           ...(speed !== null && speed >= 0 ? { speed } : {}),
         },

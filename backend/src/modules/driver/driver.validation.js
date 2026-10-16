@@ -5,7 +5,8 @@ const locationSchema = z.object({
   lng: z.number().min(-180).max(180),
   heading: z.number().min(0).max(360).optional(),
   speed: z.number().min(0).optional(),
-  accuracy: z.number().min(0).optional()
+  accuracy: z.number().min(0).optional(),
+  capturedAt: z.number().int().positive().optional()
 });
 
 const statusSchema = z.object({

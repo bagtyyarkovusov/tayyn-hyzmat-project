@@ -1601,3 +1601,15 @@ test('driver completion racing dispatcher resolution has one terminal winner wit
   assert.equal(history.transactions.total, 1);
   assert.equal(history.transactions.items[0].amount, '-10');
 });
+
+
+test('browser location timestamps reject stale and future fixes without replacing saved GPS', async () => {
+  const original = (await request('/driver/profile', driverToken)).data;
+  for (const capturedAt of [Date.now() - 61000, Date.now() + 10000]) {
+    assert.equal((await request('/driver/location', driverToken, { lat: 30, lng: 120, capturedAt })).status, 400);
+  }
+  const unchanged = (await request('/driver/profile', driverToken)).data;
+  assert.equal(unchanged.lastLocationAt, original.lastLocationAt);
+  assert.equal(unchanged.lastLat, original.lastLat);
+  assert.equal((await request('/driver/location', driverToken, { lat: 37.96, lng: 58.32, capturedAt: Date.now() })).status, 200);
+});

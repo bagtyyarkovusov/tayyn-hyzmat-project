@@ -1414,6 +1414,75 @@ test("regional queues and counts recover through updates, reconnect and reload",
   }
 });
 
+test("a delayed one-shot timeout cannot erase a newer successful GPS watch fix", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    let requests = 0;
+    let staleFailure: PositionErrorCallback | null | undefined;
+    const position = () =>
+      ({
+        coords: {
+          latitude: 37.96,
+          longitude: 58.32,
+          accuracy: 10,
+          heading: null,
+          speed: null,
+          altitude: null,
+          altitudeAccuracy: null,
+        },
+        timestamp: Date.now(),
+      }) as GeolocationPosition;
+    Object.defineProperty(navigator, "geolocation", {
+      configurable: true,
+      value: {
+        getCurrentPosition(
+          success: PositionCallback,
+          failure?: PositionErrorCallback,
+        ) {
+          if (++requests === 1) setTimeout(() => success(position()), 0);
+          else staleFailure = failure;
+        },
+        watchPosition(success: PositionCallback) {
+          setTimeout(() => success(position()), 0);
+          return 1;
+        },
+        clearWatch() {},
+      },
+    });
+    window.addEventListener("late-one-shot-timeout", () =>
+      staleFailure?.({
+        code: 3,
+        message: "Old request timeout",
+        PERMISSION_DENIED: 1,
+        POSITION_UNAVAILABLE: 2,
+        TIMEOUT: 3,
+      }),
+    );
+  });
+  await login(page, "driver");
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeEnabled();
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  const online = page.getByRole("button", {
+    name: "Уйти с линии",
+    exact: true,
+  });
+  await expect(online).toBeVisible();
+  await page.waitForTimeout(100);
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("late-one-shot-timeout")),
+  );
+  await expect(online).toBeEnabled();
+  await expect(
+    page.getByRole("button", { name: "Включить GPS", exact: true }),
+  ).toHaveAttribute("data-state", "ready");
+});
+
 test("a transient GPS timeout keeps its blocker visible until an explicit retry receives a fresh server-acknowledged fix", async ({
   page,
 }) => {

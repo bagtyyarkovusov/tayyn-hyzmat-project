@@ -55,7 +55,12 @@ function emitToInterestedRooms(driver, event, payload) {
 // reflect where drivers actually are right now, not where an admin last
 // filed them. See src/utils/geo.js for the nearest-center math.
 async function updateLocation(driver, data) {
-  const { lat, lng, heading, speed, accuracy } = data;
+  const { lat, lng, heading, speed, accuracy, capturedAt } = data;
+  const now = Date.now();
+  if (capturedAt !== undefined && (now - capturedAt >= 60000 || capturedAt - now > 5000)) {
+    throw ApiError.badRequest('GPS устарел. Обновите местоположение', { code: 'GPS_STALE' });
+  }
+  const recordedAt = new Date(capturedAt === undefined ? now : Math.min(now, capturedAt));
 
   const nearest = await districtsService.findDistrictForGpsPoint(lat, lng);
   const newDistrictId = nearest?.id ?? null;
@@ -69,7 +74,7 @@ async function updateLocation(driver, data) {
         lastLng: lng,
         lastHeading: heading,
         lastSpeed: speed,
-        lastLocationAt: new Date(),
+        lastLocationAt: recordedAt,
         ...(districtChanged ? { districtId: newDistrictId } : {})
       }
     }),
