@@ -65,6 +65,9 @@ async function socketEvent(client: Socket, event: string): Promise<any[]> {
 async function order(priceEstimated: number | null = 10) {
   const response = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: priceEstimated ?? 10, pickupAddress: 'Synthetic pickup', clientPhone: '+99360000999' });
   assert.equal(response.status, 201);
+  // Legacy lifecycle fixtures start after the regional offer window; timing
+  // behavior has dedicated HTTP/socket cases below.
+  await prisma.order.update({ where: { id: response.data.id }, data: { publicRegionOnlyUntil: null, publicReleasedGloballyAt: new Date() } });
   if (priceEstimated === null) {
     await prisma.order.update({ where: { id: response.data.id }, data: { priceEstimated: null } });
   }
@@ -1718,4 +1721,25 @@ test('tied chat timestamps keep unseen messages unread and keyset pages complete
   assert.ok((await request('/admin/messages/unread', adminToken)).data.driverIds.includes(driver.id));
   const adminOlder = (await request(`/admin/drivers/${driver.id}/messages?limit=2&beforeMessageId=${replies[0]}`, adminToken)).data;
   assert.deepEqual(adminOlder.items.map((item: { id: string }) => item.id), [ids[1], ids[2]]);
+});
+
+test('public orders stay regional until their persisted deadline then disappear for all drivers after a claim', async () => {
+  const regional = await socket(driverToken);
+  const outside = await socket(otherToken);
+  const created = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000' });
+  assert.equal(created.status, 201);
+  assert.ok(Date.parse(created.data.publicRegionOnlyUntil) - Date.now() > 18_000);
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, otherToken)).data.some((item: { id: string }) => item.id === created.data.id), false);
+  assert.equal((await request('/orders/accept', otherToken, { orderId: created.data.id })).status, 409);
+  const expanded = nextSocketEvent<{ id: string; clientPhone?: string }>(outside, 'order:new');
+  await prisma.order.update({ where: { id: created.data.id }, data: { publicRegionOnlyUntil: new Date(Date.now() - 1) } });
+  const available = await request(`/orders/available?districtId=${regionId}`, otherToken);
+  assert.equal((await expanded).id, created.data.id);
+  assert.equal(available.data[0].id, created.data.id);
+  assert.equal(available.data[0].clientPhone, undefined);
+  const removed = nextSocketEvent<{ orderId: string }>(outside, 'order:taken');
+  assert.equal((await request('/orders/accept', driverToken, { orderId: created.data.id })).status, 200);
+  assert.equal((await removed).orderId, created.data.id);
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, otherToken)).data.length, 0);
+  regional.disconnect(); outside.disconnect();
 });

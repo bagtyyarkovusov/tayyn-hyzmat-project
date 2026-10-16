@@ -106,10 +106,11 @@ export async function tick(token: string, fix: Fix) {
   const responseTime = new Date();
   const events: Event[] = [];
   const active = await prisma.order.findFirst({ where: { driverId: renewed.driver.id, status: { in: ['ACCEPTED', 'WAITING', 'STARTED'] } }, select: { id: true } });
+  await require('../orders/orders.service').expirePrivateOffers();
   if (!active && renewed.driver.isAvailable && renewed.balance > 0) {
     const orders = await prisma.order.findMany({
       where: { status: 'NEW', driverId: null, OR: [
-        { privateOfferDriverId: null, districtId: renewed.driver.districtId },
+        { privateOfferDriverId: null, privateOfferStoppedAt: null, OR: [{ districtId: renewed.driver.districtId }, { publicReleasedGloballyAt: { not: null } }] },
         { privateOfferDriverId: renewed.driver.id, privateOfferExpiresAt: { gt: responseTime } }
       ] },
       select: { id: true, privateOfferExpiresAt: true }, orderBy: { createdAt: 'asc' }, take: 100

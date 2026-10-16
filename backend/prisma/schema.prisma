@@ -292,6 +292,8 @@ model Order {
   // after its fixed 20-second window instead.
   broadcastAfterPrivateExpiry Boolean @default(true) @map("broadcast_after_private_expiry")
   privateOfferStoppedAt DateTime? @map("private_offer_stopped_at")
+  publicRegionOnlyUntil DateTime? @map("public_region_only_until")
+  publicReleasedGloballyAt DateTime? @map("public_released_globally_at")
   driverId    String? @map("driver_id")
   driver      Driver? @relation(fields: [driverId], references: [id])
   vehicleId   String? @map("vehicle_id")
