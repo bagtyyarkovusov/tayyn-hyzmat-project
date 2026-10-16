@@ -45,7 +45,7 @@ Before release, run the APK against the matching isolated API on intended Androi
 - Private-offer integration is covered at HTTP seams: reservation privacy, persisted 20-second deadlines, replay identity and removal after acceptance. A timezone regression was caught and fixed. Confirm notification taps and expiry while locked on the physical phone. No client may extend a server deadline.
 - Credential-management integration is covered at HTTP seams: leases capture credential versions, reset revokes leases, and the shared user lock prevents an in-flight old renewal/start from restoring availability. Repeat reset and account switching on the physical phone.
 
-The listed local emulator could not boot because its AVD files were unavailable. No emulator or physical-device runtime test, locked-screen/Doze test or release-signature verification has been performed for this branch.
+A local Android 16 emulator was cold-booted successfully. The preceding 1.7-test APK installed and opened to its login screen. This verifies installation and launch only; the updated candidate still needs emulator login and permission checks. Physical Android 14 background delivery, locked-screen/Doze behavior and release-signature verification remain untested.
 
 ## Isolated Infinix Android 14 test environment
 
