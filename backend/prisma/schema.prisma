@@ -288,6 +288,10 @@ model Order {
   clientPhone String? @map("client_phone")
   privateOfferDriverId String? @map("private_offer_driver_id")
   privateOfferExpiresAt DateTime? @map("private_offer_expires_at")
+  // Existing orders expand by default; dispatchers may stop a private offer
+  // after its fixed 20-second window instead.
+  broadcastAfterPrivateExpiry Boolean @default(true) @map("broadcast_after_private_expiry")
+  privateOfferStoppedAt DateTime? @map("private_offer_stopped_at")
   driverId    String? @map("driver_id")
   driver      Driver? @relation(fields: [driverId], references: [id])
   vehicleId   String? @map("vehicle_id")

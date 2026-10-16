@@ -908,6 +908,47 @@ test('private offer deadline survives recovery and expires to its regional queue
   assert.equal((await request('/driver/balance', otherToken)).data.amount, '500');
 });
 
+test('private expiry expansion is simultaneous across regions and any driver can claim once', async () => {
+  const selected = (await request('/driver/profile', driverToken)).data;
+  const regionalDriver = await socket(driverToken);
+  const outsideDriver = await socket(otherToken);
+  const publicEvent = nextSocketEvent<{ id: string }>(outsideDriver, 'order:new');
+  const created = await request('/admin/orders', adminToken, {
+    districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: selected.id
+  });
+  assert.equal(created.status, 201);
+  await prisma.order.update({ where: { id: created.data.id }, data: { privateOfferExpiresAt: new Date(Date.now() - 1) } });
+  const sweep = request(`/orders/available?districtId=${regionId}`, otherToken);
+  const event = await publicEvent;
+  assert.equal(event.id, created.data.id);
+  const available = await sweep;
+  assert.equal(available.data[0].id, created.data.id);
+  const accepted = await request('/orders/accept', otherToken, { orderId: created.data.id });
+  assert.equal(accepted.status, 200);
+  assert.equal(accepted.data.driverId, (await request('/driver/profile', otherToken)).data.id);
+  regionalDriver.disconnect();
+  outsideDriver.disconnect();
+});
+
+test('dispatcher can stop a private offer at expiry without public fanout', async () => {
+  const selected = (await request('/driver/profile', driverToken)).data;
+  const outsideDriver = await socket(otherToken);
+  const unexpected = new Promise<boolean>(resolve => {
+    const timer = setTimeout(() => resolve(false), 300);
+    outsideDriver.once('order:new', () => { clearTimeout(timer); resolve(true); });
+  });
+  const created = await request('/admin/orders', adminToken, {
+    districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: selected.id,
+    broadcastAfterPrivateExpiry: false
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.broadcastAfterPrivateExpiry, false);
+  await prisma.order.update({ where: { id: created.data.id }, data: { privateOfferExpiresAt: new Date(Date.now() - 1) } });
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, otherToken)).data.some((item: { id: string }) => item.id === created.data.id), false);
+  assert.equal(await unexpected, false);
+  outsideDriver.disconnect();
+});
+
 test('one driver cannot claim two different orders concurrently and a pending offer blocks public claims', async () => {
   const first = await order();
   const second = await order();

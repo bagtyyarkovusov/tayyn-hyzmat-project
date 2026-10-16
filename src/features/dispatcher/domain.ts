@@ -69,15 +69,8 @@ export interface Order {
   createdAt: string;
   privateOfferDriverId?: string | null;
   privateOfferExpiresAt?: string | null;
-  startedAt?: string | null;
-  startedAgeSeconds?: number | null;
-  needsCompletion?: boolean;
-  resolutionAudits?: {
-    action: string;
-    reason: string;
-    createdAt: string;
-    actor?: { fullName: string };
-  }[];
+  broadcastAfterPrivateExpiry?: boolean;
+  privateOfferStoppedAt?: string | null;
 }
 export interface Message {
   id: string;

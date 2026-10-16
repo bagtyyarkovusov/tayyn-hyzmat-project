@@ -31,6 +31,7 @@ const createOrderSchema = z.object({
   clientPhone: phoneSchema,
   districtId: z.string().uuid('Выберите район'),
   privateOfferDriverId: z.string().uuid().optional(),
+  broadcastAfterPrivateExpiry: z.boolean().default(true),
   note: z.string().trim().max(500).optional()
   });
 
