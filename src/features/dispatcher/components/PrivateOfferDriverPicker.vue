@@ -42,12 +42,16 @@ onUnmounted(() => {
 </script>
 <template>
   <div class="space-y-2">
-    <Label :for="id">Водитель</Label>
+    <div class="flex items-center gap-1">
+      <Label :for="id">Водитель</Label>
+      <span aria-hidden="true" class="text-destructive">*</span>
+    </div>
     <select
       :id="id"
       v-model="selected"
       class="native-select w-full"
       required
+      aria-required="true"
       :disabled="disabled || loading"
     >
       <option value="">
