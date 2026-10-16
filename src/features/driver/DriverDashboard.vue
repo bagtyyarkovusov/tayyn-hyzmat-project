@@ -56,8 +56,16 @@ const connectionReady = computed(
       ? state.nativeConnected
       : session.state.connected),
 );
+const locationReady = computed(() => state.gpsReady && connectionReady.value);
+const locationState = computed(() => {
+  if (state.gpsPending) return "pending";
+  if (!state.gpsFixReady && state.gpsError) return "blocked";
+  if (locationReady.value) return "ready";
+  if (state.gpsFixReady || state.locationSyncPending) return "connecting";
+  return "inactive";
+});
 const liveOnline = computed(
-  () => !!state.profile?.isOnline && state.gpsReady && connectionReady.value,
+  () => !!state.profile?.isOnline && locationReady.value,
 );
 const availabilityDescription = computed(() =>
   !state.profile?.isOnline
@@ -88,9 +96,20 @@ const alertDescription = computed(() => {
 const gpsDescription = computed(() =>
   state.gpsPending
     ? "Получаем местоположение…"
-    : state.gpsReady
-      ? "GPS работает. Местоположение передано диспетчеру."
-      : state.gpsError || "GPS не включён. Нажмите, чтобы включить.",
+    : locationReady.value
+      ? "GPS и связь с диспетчером подтверждены."
+      : state.gpsFixReady
+        ? state.locationSyncError ||
+          "GPS работает. Ожидаем связь с диспетчером…"
+        : state.gpsError || "GPS не включён. Нажмите, чтобы включить.",
+);
+const lastLocationDescription = computed(() =>
+  state.locationUpdatedAt
+    ? new Date(state.locationUpdatedAt).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "",
 );
 let permissionStatus: PermissionStatus | undefined;
 let disposed = false;
@@ -143,13 +162,15 @@ const ownRegion = computed(
 );
 const blockers = computed(() => {
   const messages: string[] = [];
-  if (!state.gpsReady)
+  if (!state.gpsFixReady)
     messages.push(
       state.gpsError ||
         (state.gpsPending
           ? "Получаем местоположение…"
           : "Включите GPS, чтобы принимать заказы."),
     );
+  else if (state.profile?.isOnline && !locationReady.value)
+    messages.push(gpsDescription.value);
   if (state.balance && Number(state.balance.amount) <= 0)
     messages.push("Для выхода на линию пополните баланс у диспетчера.");
   return messages;
@@ -194,21 +215,13 @@ watch(
               size="icon"
               class="relative size-11 rounded-full"
               :class="
-                state.gpsReady
+                locationState === 'ready'
                   ? 'bg-success/10 text-success'
-                  : state.gpsError
+                  : locationState === 'blocked'
                     ? 'text-destructive'
                     : 'text-muted-foreground'
               "
-              :data-state="
-                state.gpsPending
-                  ? 'pending'
-                  : state.gpsReady
-                    ? 'ready'
-                    : state.gpsError
-                      ? 'blocked'
-                      : 'inactive'
-              "
+              :data-state="locationState"
               :aria-description="gpsDescription"
               :title="gpsDescription"
               :disabled="state.gpsPending"
@@ -221,13 +234,13 @@ watch(
                 aria-hidden="true"
               />
               <MapPinOff
-                v-else-if="state.gpsError && !state.gpsReady"
+                v-else-if="locationState === 'blocked'"
                 class="size-5"
                 aria-hidden="true"
               />
               <LocateFixed v-else class="size-5" aria-hidden="true" />
               <Check
-                v-if="state.gpsReady"
+                v-if="locationState === 'ready'"
                 class="absolute bottom-1 right-1 size-3 rounded-full bg-background"
                 aria-hidden="true"
               />
@@ -303,14 +316,14 @@ watch(
             :title="availabilityDescription"
             :aria-pressed="!!state.profile?.isOnline"
             :aria-describedby="
-              !state.gpsReady ? 'driver-gps-blocker' : undefined
+              !state.gpsFixReady ? 'driver-gps-blocker' : undefined
             "
             :aria-busy="state.busy"
             :disabled="
               state.busy ||
               !state.profile ||
               (!state.profile.isOnline &&
-                (Number(state.balance?.amount ?? 0) <= 0 || !state.gpsReady))
+                (Number(state.balance?.amount ?? 0) <= 0 || !state.gpsFixReady))
             "
             @click="setOnline"
           >
@@ -344,7 +357,7 @@ watch(
           <MapPin class="size-4 shrink-0 text-primary" />
           <span class="flex min-w-0 flex-col leading-snug">
             <span class="truncate">{{
-              state.gpsReady
+              locationReady
                 ? ownRegion
                 : state.position
                   ? "Последнее положение"
@@ -359,6 +372,12 @@ watch(
                 address ||
                 `${state.position.lat.toFixed(4)}, ${state.position.lng.toFixed(4)}`
               }}
+            </span>
+            <span
+              v-if="!locationReady && lastLocationDescription"
+              class="text-[11px] text-muted-foreground"
+            >
+              Последнее обновление {{ lastLocationDescription }}
             </span>
           </span>
         </div>
@@ -389,13 +408,13 @@ watch(
       }}</span>
       <ChevronRight class="size-4 shrink-0" aria-hidden="true" />
     </button>
-    <p v-if="state.position && state.gpsReady" class="sr-only" role="status">
+    <p v-if="state.position && locationReady" class="sr-only" role="status">
       GPS · точность {{ Math.round(state.position.accuracy) }} м
     </p>
     <p
-      v-if="!connectionReady"
+      v-if="state.profile?.isOnline && !connectionReady"
       role="status"
-      class="shrink-0 text-xs text-destructive"
+      class="shrink-0 text-xs text-amber-700 dark:text-amber-300"
     >
       Переподключаемся к диспетчеру…
     </p>
