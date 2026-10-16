@@ -11,7 +11,6 @@ import {
   ChartNoAxesCombined,
   MessageSquare,
   LogOut,
-  Truck,
   UserRound,
   Navigation,
   Menu,
