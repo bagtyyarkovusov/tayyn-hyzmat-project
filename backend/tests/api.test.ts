@@ -1918,3 +1918,54 @@ test('stopped private orders remain unfinished in today cohort but leave the liv
   const expectedOldest = (Date.parse(result.asOf) - (start + 2)) / 1000;
   assert.ok(Math.abs(result.waiting.oldestSeconds - expectedOldest) < 0.01);
 });
+
+test('financial commands reject sub-cent, overflow and reversed direction amounts without writes', async () => {
+  const driver = await prisma.driver.findFirstOrThrow({ where: { user: { phone: '+99360000101' } } });
+  for (const body of [
+    { amount: 0.001, type: 'TOPUP' }, { amount: 0.005, type: 'TOPUP' },
+    { amount: 10000000000, type: 'TOPUP' }, { amount: 1e100, type: 'TOPUP' },
+    { amount: -10, type: 'TOPUP' }, { amount: 10, type: 'WITHDRAWAL' },
+    { amount: -10, type: 'BONUS' }, { amount: 0, type: 'ADJUSTMENT' }
+  ]) {
+    assert.equal((await request(`/admin/drivers/${driver.id}/balance`, adminToken, body)).status, 400, JSON.stringify(body));
+  }
+  for (const priceEstimated of [0.001, 0.005, 100000000, 1e100]) {
+    assert.equal((await request('/admin/orders', adminToken, { districtId: regionId, clientPhone: '+99365000000', priceEstimated })).status, 400);
+  }
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
+  assert.equal((await request(`/admin/drivers/${driver.id}/history`, adminToken)).data.transactions.total, 0);
+});
+
+test('cent amounts match balance, history and socket and wallet overflow leaves no ledger entry', async () => {
+  const driver = await prisma.driver.findFirstOrThrow({ where: { user: { phone: '+99360000101' } } });
+  const admin = await socket(adminToken);
+  const event = nextSocketEvent<{ amount: string }>(admin, 'balance:updated');
+  const credited = await request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 0.01, type: 'TOPUP' });
+  assert.equal(credited.status, 200);
+  assert.equal(credited.data.balance.amount, '500.01');
+  assert.equal(credited.data.transaction.amount, '0.01');
+  assert.equal(credited.data.transaction.balanceAfter, '500.01');
+  assert.equal((await event).amount, '500.01');
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '500.01');
+  await prisma.balance.update({ where: { userId: driver.userId }, data: { amount: '9999999999.99' } });
+  assert.equal((await request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 0.01, type: 'TOPUP' })).status, 400);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '9999999999.99');
+  assert.equal((await request(`/admin/drivers/${driver.id}/history`, adminToken)).data.transactions.total, 1);
+  const order = await request('/admin/orders', adminToken, { districtId: regionId, clientPhone: '+99365000000', priceEstimated: 99999999.99 });
+  assert.equal(order.status, 201);
+  assert.equal(order.data.priceEstimated, '99999999.99');
+});
+
+
+test('topups preserve headroom for an active trip refund', async () => {
+  const driver = await prisma.driver.findFirstOrThrow({ where: { user: { phone: '+99360000101' } } });
+  const created = await order(30);
+  assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 200);
+  assert.equal((await request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 9999999529.99, type: 'TOPUP' })).status, 400);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '470');
+  assert.equal((await request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 9999999499.99, type: 'TOPUP' })).status, 200);
+  assert.equal((await request(`/admin/orders/${created.id}/cancel`, adminToken, { reason: 'Synthetic headroom proof' })).status, 200);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '9999999999.99');
+  const history = await request(`/admin/drivers/${driver.id}/history`, adminToken);
+  assert.equal(history.data.transactions.total, 3);
+});

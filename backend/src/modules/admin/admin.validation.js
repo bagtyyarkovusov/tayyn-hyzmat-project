@@ -1,4 +1,5 @@
 const { z } = require('zod');
+const { moneySchema } = require('../../utils/money-policy');
 const { registerDriverSchema } = require('../auth/auth.validation');
 const createDriverSchema = registerDriverSchema;
 
@@ -25,10 +26,13 @@ const resolveOrderSchema = z.object({
 });
 
 const balanceAdjustSchema = z.object({
-  amount: z.number().refine((v) => v !== 0, 'Сумма не может быть равна нулю'),
+  amount: moneySchema('9999999999.99').refine((v) => v !== 0, 'Сумма не может быть равна нулю'),
   type: z.enum(['TOPUP', 'WITHDRAWAL', 'ADJUSTMENT', 'BONUS']).default('ADJUSTMENT'),
   note: z.string().trim().max(500).optional()
-});
+}).refine(({ amount, type }) =>
+  type === 'ADJUSTMENT' || (type === 'WITHDRAWAL' ? amount < 0 : amount > 0),
+  { message: 'Пополнение и бонус должны быть положительными, списание отрицательным', path: ['amount'] }
+);
 
 const historyQuerySchema = z.object({
   beforeMessageId: z.string().uuid().optional(),
