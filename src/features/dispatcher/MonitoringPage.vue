@@ -14,10 +14,10 @@ import MapDriverOffer from "./components/MapDriverOffer.vue";
 import { canOfferToDriver } from "./private-offers";
 import DriverMapInfo from "./components/DriverMapInfo.vue";
 import { RouterLink } from "vue-router";
-import { errorMessage } from "@/shared/api";
+import { adminApi, errorMessage } from "@/shared/api";
 
 import { hasYandexMapsApiKey, loadYandexMaps } from "@/shared/maps/yandex";
-import { type Driver } from "./domain";
+import { type District, type Driver } from "./domain";
 import { useMonitoringFleet } from "./useMonitoringFleet";
 import MonitoringRoster from "./components/MonitoringRoster.vue";
 import PageState from "./components/PageState.vue";
@@ -33,12 +33,14 @@ function focusSelectedDetails(event: Event) {
   event.preventDefault();
   document.getElementById("selected-driver-close")?.focus();
 }
+const configuredRegions = ref<District[]>([]);
 const regions = computed(() =>
   [
     ...new Map(
-      data.value
-        .filter((d) => d.district)
-        .map((d) => [d.district!.id, d.district!]),
+      [
+        ...configuredRegions.value,
+        ...data.value.flatMap((d) => (d.district ? [d.district] : [])),
+      ].map((district) => [district.id, district] as const),
     ).values(),
   ].sort((a, b) => a.name.localeCompare(b.name, "ru")),
 );
@@ -153,6 +155,14 @@ function render() {
 watch([data, now], render);
 
 onMounted(async () => {
+  void adminApi
+    .get<District[]>("/admin/districts")
+    .then(({ data: districts }) => {
+      configuredRegions.value = districts;
+    })
+    .catch(() => {
+      // Driver-provided districts remain available if the configuration request fails.
+    });
   if (!hasYandexMapsApiKey()) {
     mapError.value = "Карта недоступна: не задан ключ Yandex Maps API";
     return;
