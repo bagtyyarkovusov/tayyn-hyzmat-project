@@ -94,9 +94,7 @@ router.post(
 router.post('/orders/:id/private-offer', validate({ params: orderIdParamSchema, body: privateOfferSchema }), controller.privateOffer);
 router.post('/orders', validate({ body: createOrderSchema }), controller.createOrder);
 router.get('/orders', validate({ query: listOrdersQuerySchema }), controller.listOrders);
-// Admin cancel - unlike POST /orders/cancel (driver-only, ACCEPTED/WAITING
-// on their own order), this works on any not-yet-finished order, assigned
-// or not - see orders.service.js#adminCancel.
+// Dispatcher cancellation is available only before STARTED; completion is audited separately.
 router.post('/orders/:id/cancel', validate({ params: orderIdParamSchema, body: blockSchema }), controller.cancelOrder);
 router.post('/orders/:id/force-resolve', validate({ params: orderIdParamSchema, body: resolveOrderSchema }), controller.forceResolveOrder);
 

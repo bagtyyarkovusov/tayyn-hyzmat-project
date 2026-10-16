@@ -231,8 +231,9 @@ async function confirmResolve() {
         ><DialogHeader
           ><DialogTitle>Завершить поездку вручную?</DialogTitle
           ><DialogDescription
-            >Используйте после проверки поездки. Заказ останется за водителем в
-            истории, а списание не изменится.</DialogDescription
+            >Завершение подтверждает оказанную поездку: списание сохраняется,
+            возврата нет. Причина обязательна и сохраняется в журнале.
+            Исключительный возврат разбирается отдельно.</DialogDescription
           ></DialogHeader
         ><Label for="resolve-reason">Причина обязательна</Label
         ><Textarea

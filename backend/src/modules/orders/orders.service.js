@@ -545,13 +545,8 @@ async function createOrder(data) {
   return order;
 }
 
-// Admin dispatch cancel - unlike the driver's own `cancel` above (which only
-// works ACCEPTED/WAITING on that driver's own order, and is reachable at
-// POST /orders/cancel behind requireRole('DRIVER')), an admin needs to be
-// able to pull any order that hasn't finished yet, whether or not a driver
-// has even accepted it. NEW/ACCEPTED/WAITING/STARTED are all cancellable;
-// COMPLETED/CANCELLED are terminal and rejected the same way the driver
-// endpoint rejects an already-wrong status.
+// Dispatcher cancellation is a pre-start recovery action. It refunds the debit
+// and frees the driver. A started drive must use audited completion instead.
 async function adminCancel(orderId, reason) {
   // Read only to choose the lock order. Revalidate after locking: a concurrent
   // claim of a NEW order must not be cancelled using its stale unassigned state.
@@ -563,7 +558,7 @@ async function adminCancel(orderId, reason) {
     if (order.driverId !== observed.driverId) {
       throw ApiError.conflict('Заказ изменился. Повторите отмену');
     }
-    if (['COMPLETED', 'CANCELLED'].includes(order.status)) {
+    if (!['NEW', 'ACCEPTED', 'WAITING'].includes(order.status)) {
       throw ApiError.conflict('Невозможно отменить заказ в текущем статусе', { status: order.status });
     }
     const updated = await tx.order.update({
