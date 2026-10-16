@@ -128,7 +128,7 @@ function beforeInput(event: Event) {
     >
       <span
         aria-hidden="true"
-        class="select-none pl-3 text-sm text-muted-foreground"
+        class="phone-prefix select-none pl-3 text-sm text-muted-foreground"
         >+993</span
       >
       <Input

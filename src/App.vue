@@ -67,9 +67,7 @@ onUnmounted(() => {
   window.visualViewport?.removeEventListener("scroll", resizeChat);
 });
 const router = useRouter();
-const auth = computed(() =>
-  ["/adminLogin", "/driverLogin", "/driverRegister"].includes(route.path),
-);
+const auth = computed(() => route.meta.layout === "auth");
 const driver = computed(() => route.path.startsWith("/driver"));
 // Include portalled dialogs and login screens while leaving dispatcher text selectable.
 watch(

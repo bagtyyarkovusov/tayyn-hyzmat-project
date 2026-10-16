@@ -19,8 +19,10 @@ import { errorMessage, publicRequest } from "@/shared/api";
 const route = useRoute();
 const development = import.meta.env.DEV;
 const router = useRouter();
-const isAdmin = computed(() => route.path === "/adminLogin");
-const registering = computed(() => route.path === "/driverRegister");
+const isAdmin = computed(() => route.path.replace(/\/$/, "") === "/adminLogin");
+const registering = computed(
+  () => route.path.replace(/\/$/, "") === "/driverRegister",
+);
 const phone = ref("+993");
 const password = ref("");
 const fullName = ref("");
