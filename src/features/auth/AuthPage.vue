@@ -55,7 +55,7 @@ async function submit() {
 </script>
 <template>
   <div class="auth-layout">
-    <section class="auth-story" aria-label="Тайын Хызмат">
+    <section class="auth-story" aria-label="Tayyn Hyzmat">
       <RouterLink to="/" class="brand"
         ><span class="brand-symbol">т</span
         ><span>тайын хызмат</span></RouterLink
