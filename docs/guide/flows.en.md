@@ -101,6 +101,7 @@ stateDiagram-v2
   Started --> Completed: driver completes
   Started --> Completed: dispatcher force-completes with reason
   Accepted --> Cancelled: dispatcher cancellation
+  Started --> Cancelled: current dispatcher API, refunds charge
   Completed --> [*]
   Cancelled --> [*]
 ```

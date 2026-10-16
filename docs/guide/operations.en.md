@@ -63,7 +63,7 @@ The normal sequence is:
 4. The driver starts the trip after the customer boards.
 5. The driver completes the trip.
 
-The approved rule is driver cancellation only while waiting for the customer. The current API also permits cancellation in `ACCEPTED`; that is a known gap and should not be treated as the intended rule. Once the trip has started, the driver cannot cancel. After 15 minutes, a started trip shows a Needs completion warning. The dispatcher can force-complete a stuck started trip with a required reason. This keeps its assignment and original charge and records who resolved it. The resolution is recorded and does not silently auto-complete a trip. PR #80 (`e821397`) is merged and deployed with this behavior.
+The approved rule is driver cancellation only while waiting for the customer. The current API also permits cancellation in `ACCEPTED`; that is a known gap and should not be treated as the intended rule. Once the trip has started, the driver cannot cancel. The current dispatcher API can still cancel a started order, which marks it cancelled and refunds the original charge. This is different from completing a trip, which keeps the charge. Changing that dispatcher rule is awaiting a decision. After 15 minutes, a started trip shows a Needs completion warning. The dispatcher can force-complete a stuck started trip with a required reason. This keeps its assignment and original charge and records who resolved it. The resolution is recorded and does not silently auto-complete a trip. PR #80 (`e821397`) is merged and deployed with this behavior.
 
 If a driver loses network after acceptance, the trip remains assigned. New offers stop until the lease and GPS rules allow work again. A dispatcher sees the last location with its age; a stale point is not treated as live eligibility.
 
@@ -79,7 +79,7 @@ GPS and polygon matching decide eligibility. Address lookup only adds a street o
 
 ## Analytics
 
-The compact Today view uses Asia/Ashgabat time for orders created today. It keeps all currently waiting orders in a separate live section, including orders created earlier. The first measures are waiting count, oldest waiting age, median and p90 acceptance time, completed count/rate, and cancelled count/rate. The analytics PR remains pending merge and integration checks. Private-offer conversion and shift utilisation need more history and are later work.
+The compact Today view uses Asia/Ashgabat time for orders created today. It keeps all currently waiting orders in a separate live section, including orders created earlier. The first measures are waiting count, oldest waiting age, median and p90 acceptance time, completed count/rate, and cancelled count/rate. PR #67 is merged after all CI checks passed. Private-offer conversion and shift utilisation need more history and are later work.
 
 ## Recovery and safety
 
