@@ -67,6 +67,19 @@ The approved rule is driver cancellation only while waiting for the customer. Th
 
 If a driver loses network after acceptance, the trip remains assigned. New offers stop until the lease and GPS rules allow work again. A dispatcher sees the last location with its age; a stale point is not treated as live eligibility.
 
+## Choosing a trip action
+
+The following is the approved dispatcher contract; STARTED cancellation protection is pending PR #105 until its merge is recorded.
+
+| Order state | Dispatcher action | What happens to the balance |
+| --- | --- | --- |
+| NEW | Cancel an unassigned order | No acceptance charge exists to refund |
+| ACCEPTED or WAITING | Cancel before the trip starts | Refund the original recorded charge once and free the driver |
+| STARTED | Complete manually after checking the trip | Keep the existing charge, record the reason and who completed it |
+| COMPLETED or CANCELLED | Review history | No repeated completion, cancellation or extra debit |
+
+Manual completion confirms that the drive was provided. It is available for a started trip; the 15-minute warning only draws attention to an unfinished trip. Call the driver first. Enter a useful reason such as "Driver confirmed customer arrived; app connection failed." The reason and dispatcher identity remain in the record. Completion counts as completed work and does not refund the order price. Exceptional refunds need a separate reviewed recovery process.
+
 ## Notifications and chat
 
 The browser uses Socket.IO while the app is open and reconnects or reconciles state when it returns to the foreground. A closed browser cannot guarantee delivery. The Android test service polls a stable inbox every 10 seconds and uses separate order and chat notification channels. It hides customer phones and chat bodies on the lock screen. Notification taps open the relevant screen and the server remains the source of truth.
@@ -95,4 +108,4 @@ Chat recovery (#87), shared address budgeting (#68), and consistent locking for 
 
 Readiness-state separation (#85, `2095f56`) and audience expansion (#79, `715b648`) are merged.
 
-Pending: Today analytics (#67); provider activation checks; physical Infinix Android 14 background/Doze verification; and release signing/update policy. The compact driver feed (#95) and canonical busy-driver availability (#94) are merged. The separate client-facing progress brief is linked from the guide index.
+Today analytics (#67) is merged. Pending: provider activation checks; physical Infinix Android 14 background/Doze verification; and release signing/update policy. The compact driver feed (#95) and canonical busy-driver availability (#94) are merged. The separate client-facing progress brief is linked from the guide index.

@@ -39,7 +39,7 @@ The reviewed implementation holds a new public order in its original region for 
 
 ## Other follow-ups
 
-- PR #67 adds the Ashgabat created-today cohort and all-date live waiting measurements. Rebased head `eebfcc2` preserves merged balance and trip-resolution work. Typecheck, five unit tests, formatting, and modern build passed locally. Full integration/browser verification depends on CI because local Docker was unavailable. Rebased head `fe59566` excludes stopped private orders from live waiting while preserving held regional public orders as waiting and stopped orders in the created-today cohort. The regression failed with 3 public orders instead of 1 before the correction. All 103 HTTP/Socket/geocoder tests pass on disposable loopback PostgreSQL 18 and the focused Today browser check passes. Standard Docker PostgreSQL 17 CI remains the merge gate.
+- PR #67 adds the Ashgabat created-today cohort and all-date live waiting measurements. Rebased head `eebfcc2` preserves merged balance and trip-resolution work. Typecheck, five unit tests, formatting, and modern build passed locally. Full integration/browser verification depends on CI because local Docker was unavailable. Rebased head `fe59566` excludes stopped private orders from live waiting while preserving held regional public orders as waiting and stopped orders in the created-today cohort. The regression failed with 3 public orders instead of 1 before the correction. All 103 HTTP/Socket/geocoder tests pass on disposable loopback PostgreSQL 18 and the focused Today browser check passes. Final rebased head `2e07c0e` passed all three CI jobs, including the standard Docker PostgreSQL 17 integration suite, and #67 is merged.
 - PR #68 is merged as `cf8bf84`. Optional Yandex lookup uses a shared server budget and keeps the original resolution time when reusing cached addresses. Driver eligibility still depends on GPS and saved regions. It retains the unique Yandex setup research from the superseded PR #50. Provider key, confirmed quota, reset timezone, retention policy, and live provider checks remain separate from code correctness.
 - PR #87 addresses older-message pagination, read-cursor safety, background read visibility, and duplicate sends. Independent review of `7544706` and test isolation follow-up `79445bd` found no remaining blocker: reads and pagination use composite `(sentAt,id)` cursors, including native inbox recovery, with tied-timestamp regressions. The final integration is `2935991`, with full CI green and independent review. The earlier index concern was withdrawn.
 - GitHub hygiene closed superseded PRs #50, #55, and #82 without merging older snapshots. Active follow-ups remain open.
@@ -62,8 +62,38 @@ Keep screenshots, APK version/hash, API commit, phone model/OS, and observed res
 
 ## Finance decisions retained for release
 
-Balance adjustment `operationId` is required. Old dispatcher tabs must refresh; a missing operation ID returns 400 rather than accepting an unguarded adjustment. Retries must not duplicate credits or withdrawals. Account removal soft-deactivates while preserving ledger and order history. Confirmed issues #39, #40 and #41 remain production blockers until the separate reviewed fixes merge and pass CI. These decisions must not be changed back to optional IDs during integration.
+Balance adjustment `operationId` is required. Old dispatcher tabs must refresh; a missing operation ID returns 400 rather than accepting an unguarded adjustment. Retries must not duplicate credits or withdrawals. Account removal soft-deactivates while preserving ledger and order history. PR #99 merged as `5d51e2e` after review and CI, guarding representable TMT amounts and preserving room for refunds. PR #100 merged as `41cba82` after review and CI, soft-deactivating accounts while preserving balances, ledger and orders. Required-operation-ID adjustment idempotency in PR #101 remains the financial release gate until reviewed merge and CI. These decisions must not be changed back to optional IDs during integration.
 
 ## Client guide exports
 
 The English and Russian standalone HTML/PDF tutorials include rendered flow diagrams, dispatcher and driver walkthroughs and pilot limits. They contain no credentials or internal record IDs. Export files are under `docs/guide/export/`; the release copies are also available under `output/release-guide/` in the project workspace.
+
+## Requirement-to-evidence checklist
+
+| Requirement | Code and automated evidence | Release evidence still needed |
+| --- | --- | --- |
+| Saved regions survive new environments | Canonical region fixture and isolated seed; no geometry changes in this batch | Compare deployed region list with approved saved boundaries |
+| Only one driver accepts an order | Locked public/private acceptance, conditional assignment and competing-claim regressions | Two physical phones claiming at the same time |
+| One charge and one allowed refund | Charge ledger, funded-acceptance and terminal-race integration tests | Check visible balance and ledger in fresh APK against matching API |
+| Busy driver never offered second work | #94 HTTP/socket tests for ACCEPTED, WAITING, STARTED and delayed monitoring snapshot regression | Dispatcher map/roster while phone reconnects during trip |
+| Private 20-second expiry ON/OFF | #79 persisted deadline, queue/claim/inbox/socket tests | Locked-screen countdown and delivery latency on Infinix |
+| GPS and address fallback are separate | #85 readiness and #68 budget tests with external-provider fixture | Actual Android GPS permission/settings changes and live Yandex activation |
+| Live chat and reconnect | #87 composite cursors and retry identity tests | Wi-Fi/mobile loss and locked-screen chat delivery |
+| Started trip resolution is recorded | #80 reason-required completion and #90 lock-order race tests | Dispatcher resolves a real test trip, driver sees completion without another debit |
+| Compact order form and optional map | #103 desktop/mobile/landscape API-backed browser tests | Soft keyboard and real map SDK on target phone |
+| Honest daily measurements | #67 Ashgabat cohort, live waiting, missing samples, p90 and empty/failure checks | Compare dashboard with a small recorded test day |
+| No duplicate balance adjustment | Required operation ID finance follow-up | Final reviewed finance PR merge plus retry/old-tab checks |
+| Release binary matches service | Build and Android unit CI checks | Signed APK version/hash/API commit and successful physical install/update |
+
+## Native endpoint contract
+
+The isolated APK API is a direct backend, so its base URL is `https://apk-api-apk-test.up.railway.app`, without `/api`. Native requests append paths such as `/auth/login` and `/districts`. The direct backend does not expose `/api/auth/login`. The web service uses `/api` as its Nginx proxy path; that web proxy convention must not be copied onto the direct native API base. Socket.IO uses the direct backend origin too. Record the actual build-time endpoint values with the APK hash and matching API commit.
+
+## GPS architecture audit limits
+
+- Foreground browser GPS uses `watchPosition`, throttles successful server uploads to at most one per 10 seconds, and checks freshness on a 10-second timer. Driver GPS expires after 60 seconds. A green local fix does not prove the dispatcher received it.
+- Android requests location updates at a nominal 10-second cadence and checks its canonical order/chat inbox on shift. Lease renewal requires a hardware fix no older than 30 seconds; the server lease lasts 60 seconds and cannot be revived after expiry. These are requested intervals, not guarantees under Doze or manufacturer battery restrictions.
+- Each accepted browser/native location report updates the current position and appends `DriverLocation` history. The existing `(driverId, recordedAt)` index supports per-driver chronology. History currently has no bounded retention or scheduled pruning. Agree retention, estimate storage at the expected shift cadence, and verify history queries/indexes before wider rollout. Deferred GPS retention/query work is tracked in [#106](https://github.com/bagtyyarkovusov/tayyn-hyzmat-project/issues/106).
+- Browser REST location persistence has no durable outbox for its Socket.IO publication. A saved update may not reach an already-open dispatcher screen if publication fails; roster reconciliation on reconnect, foreground return and its periodic read repairs that view. A durable publication/replay design remains an operational follow-up, not implemented proof; live recovery follow-ups remain tracked in [#25](https://github.com/bagtyyarkovusov/tayyn-hyzmat-project/issues/25).
+- Locked/background Android delivery requires the native foreground service. Browser timers, browser GPS and Socket.IO alone cannot meet that requirement. Target-phone permission, network loss, Doze, battery, locked-screen latency and shift-termination checks remain release gates.
+- Reverse address lookup is separate from GPS reporting and region matching. Its five-minute/150-metre gate, fleet cap and coordinates fallback do not slow location reporting or block trip controls.
