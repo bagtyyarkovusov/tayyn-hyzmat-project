@@ -49,6 +49,41 @@ async function startGps(page: Page) {
   await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
   expect((await report).ok()).toBe(true);
 }
+for (const role of ["driver", "admin"] as const) {
+  test(`${role} mobile login shows the form immediately and keeps it reachable in a short viewport`, async ({
+    page,
+  }) => {
+    for (const viewport of [
+      { width: 390, height: 844 },
+      { width: 320, height: 568 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await page.goto(role === "admin" ? "/adminLogin" : "/driverLogin");
+      await expect(
+        page.getByRole("link", { name: "Tayyn Hyzmat" }),
+      ).toBeVisible();
+      const phone = page.getByLabel("Номер телефона", { exact: true });
+      const phoneBox = await phone.boundingBox();
+      expect(phoneBox!.y).toBeLessThan(250);
+      await expect(
+        page.getByRole("button", { name: "Войти", exact: true }),
+      ).toBeInViewport();
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(viewport.width);
+    }
+    // A resized viewport checks reachability; real Android IME evidence is separate.
+    await page.setViewportSize({ width: 320, height: 300 });
+    await page.getByLabel("Пароль", { exact: true }).focus();
+    await expect(page.getByLabel("Пароль", { exact: true })).toBeInViewport();
+    const submit = page.getByRole("button", { name: "Войти", exact: true });
+    await submit.scrollIntoViewIfNeeded();
+    await expect(submit).toBeInViewport();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBe(320);
+  });
+}
 test("phone entry groups local digits and preserves middle edits and separator deletion", async ({
   page,
 }) => {

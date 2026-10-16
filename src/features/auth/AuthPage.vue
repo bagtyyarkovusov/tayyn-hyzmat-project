@@ -87,15 +87,17 @@ async function submit() {
     </section>
     <section class="auth-form-wrap">
       <div class="w-full max-w-sm">
-        <div class="mb-8 flex items-center gap-2 text-sm text-muted-foreground">
+        <div
+          class="auth-context mb-8 flex items-center gap-2 text-sm text-muted-foreground"
+        >
           <component :is="isAdmin ? Users : Truck" class="size-5" />{{
             isAdmin ? "Рабочее место диспетчера" : "Приложение водителя"
           }}
         </div>
-        <h2 class="mb-2 text-3xl font-semibold tracking-tight">
+        <h2 class="auth-heading mb-2 text-3xl font-semibold tracking-tight">
           {{ registering ? "Стать водителем" : "С возвращением" }}
         </h2>
-        <p class="mb-8 text-muted-foreground">
+        <p class="auth-intro mb-8 text-muted-foreground">
           {{
             registering
               ? "Создайте аккаунт и дождитесь одобрения диспетчера."
@@ -191,23 +193,29 @@ async function submit() {
 }
 @media (max-width: 760px) {
   .auth-layout {
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
   }
   .auth-story {
-    padding: 1.5rem;
-    gap: 2rem;
+    padding: 1rem 1.25rem;
+    gap: 0;
   }
-  .auth-story h1 {
-    font-size: 2rem;
-  }
-  .auth-story > div:last-child {
+  .auth-story > div {
     display: none;
   }
-  .auth-story p {
-    margin-top: 0.75rem;
-  }
   .auth-form-wrap {
-    padding: 2rem 1.5rem;
+    align-items: flex-start;
+    padding: 1.5rem 1.25rem max(1.5rem, env(safe-area-inset-bottom));
+  }
+  .auth-context {
+    margin-bottom: 1rem;
+  }
+  .auth-heading {
+    font-size: 1.5rem;
+    line-height: 2rem;
+  }
+  .auth-intro {
+    margin-bottom: 1.25rem;
   }
 }
 </style>
