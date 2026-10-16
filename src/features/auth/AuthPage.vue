@@ -8,6 +8,7 @@ import {
   Truck,
   Users,
 } from "lucide-vue-next";
+import BrandLogo from "@/shared/BrandLogo.vue";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { Label } from "@/shared/ui/label";
@@ -57,10 +58,7 @@ async function submit() {
 <template>
   <div class="auth-layout">
     <section class="auth-story" aria-label="Tayyn Hyzmat">
-      <RouterLink to="/" class="brand"
-        ><span class="brand-symbol">т</span
-        ><span>Tayyn Hyzmat</span></RouterLink
-      >
+      <RouterLink to="/" class="brand"><BrandLogo /></RouterLink>
       <div>
         <h1>
           {{
@@ -161,8 +159,8 @@ async function submit() {
   grid-template-columns: 1fr 1fr;
 }
 .auth-story {
-  background: #204e3c;
-  color: #f3f3e9;
+  background: #111111;
+  color: #ffffff;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -179,7 +177,7 @@ async function submit() {
 .auth-story p {
   margin-top: 1.5rem;
   max-width: 36ch;
-  color: #d3e1d4;
+  color: #c4c4c4;
   font-size: 1.05rem;
 }
 .auth-form-wrap {

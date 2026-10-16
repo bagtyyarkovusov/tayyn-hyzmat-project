@@ -10,6 +10,9 @@ function apply() {
     themePreference.value === "dark" ||
     (themePreference.value === "system" && system.matches);
   document.documentElement.classList.toggle("dark", dark);
+  document
+    .querySelector('meta[name="theme-color"]')
+    ?.setAttribute("content", dark ? "#111111" : "#ffffff");
 }
 export function setTheme(value: ThemePreference) {
   themePreference.value = value;

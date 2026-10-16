@@ -18,7 +18,7 @@
   --color-accent: var(--secondary);
   --color-accent-foreground: var(--foreground);
   --color-destructive: var(--destructive);
-  --color-destructive-foreground: #fff;
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-input: var(--border);
   --color-ring: var(--primary);
@@ -28,28 +28,36 @@
   --radius-xl: 1rem;
 }
 :root {
-  --background: #f7fcf8;
-  --foreground: #193c29;
+  --background: #f6f6f6;
+  --foreground: #141414;
   --card: #fff;
-  --primary: #00843d;
+  --primary: #111111;
   --primary-foreground: #fff;
-  --secondary: #e8f6ec;
-  --muted-foreground: #516b5a;
-  --destructive: #b63b30;
-  --border: #d3e7d9;
+  --secondary: #ebebeb;
+  --muted-foreground: #5c5c5c;
+  --destructive: #b42318;
+  --destructive-foreground: #fff;
+  --success: #137333;
+  --shadow-overlay: 0 12px 40px rgb(0 0 0 / 0.14), 0 2px 8px rgb(0 0 0 / 0.08);
+  --border: #dcdcdc;
   font-family: "Manrope Variable", sans-serif;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
   color-scheme: light;
 }
 .dark {
-  --background: #112219;
-  --foreground: #edf8ef;
-  --card: #1a3023;
-  --primary: #8fe0aa;
-  --primary-foreground: #103720;
-  --secondary: #244330;
-  --muted-foreground: #b3cbb9;
-  --destructive: #ee8f83;
-  --border: #3c6049;
+  --background: #111111;
+  --foreground: #f5f5f5;
+  --card: #1c1c1c;
+  --primary: #f5f5f5;
+  --primary-foreground: #111111;
+  --secondary: #292929;
+  --muted-foreground: #b8b8b8;
+  --destructive: #ffb4ab;
+  --destructive-foreground: #4a0903;
+  --success: #8bd5a5;
+  --shadow-overlay: 0 12px 40px rgb(0 0 0 / 0.45), 0 2px 8px rgb(0 0 0 / 0.24);
+  --border: #404040;
   color-scheme: dark;
 }
 @layer base {
@@ -126,13 +134,13 @@
   select {
     appearance: none;
     padding-inline-end: 2.5rem;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23516b5a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%235c5c5c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 0.75rem center;
     background-size: 1rem;
   }
   .dark select {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23b3cbb9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23b8b8b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   }
   .native-select {
     @apply h-10 w-full min-w-0 rounded-md border bg-card ps-3 pe-10 text-sm;
@@ -187,4 +195,58 @@
 .driver-app .select-text * {
   -webkit-user-select: text;
   user-select: text;
+}
+
+/* Elevation distinguishes temporary layers; working panels stay flat. */
+.app-dialog-content {
+  box-shadow: var(--shadow-overlay);
+}
+
+/* A translucent navigation layer keeps content beneath it in context.
+   Solid fallbacks are the default; safety controls and forms stay opaque. */
+:root {
+  --glass-surface: rgb(255 255 255 / 0.88);
+  --glass-edge: rgb(255 255 255 / 0.8);
+  --shadow-navigation: 0 4px 18px rgb(0 0 0 / 0.045);
+}
+.dark {
+  --glass-surface: rgb(28 28 28 / 0.9);
+  --glass-edge: rgb(255 255 255 / 0.07);
+  --shadow-navigation: 0 4px 18px rgb(0 0 0 / 0.18);
+}
+.workspace-header,
+.driver-nav,
+.sidebar {
+  background: var(--card);
+}
+.driver-nav {
+  box-shadow: 0 -4px 20px rgb(0 0 0 / 0.06);
+}
+@supports (
+  (backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px))
+) {
+  .workspace-header,
+  .driver-workspace .workspace-header,
+  .driver-nav,
+  .sidebar {
+    background: var(--glass-surface);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    box-shadow:
+      var(--shadow-navigation),
+      inset 0 1px var(--glass-edge);
+  }
+}
+@media (prefers-reduced-transparency: reduce),
+  (prefers-contrast: more),
+  (forced-colors: active) {
+  .workspace-header,
+  .driver-workspace .workspace-header,
+  .driver-nav,
+  .sidebar {
+    background: var(--card);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    box-shadow: none;
+  }
 }

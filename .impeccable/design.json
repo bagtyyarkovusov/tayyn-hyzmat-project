@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-16T03:00:00Z",
+  "title": "Design system: Tayyn Hyzmat",
+  "extensions": {
+    "shadows": [
+      {
+        "name": "overlay-light",
+        "value": "0 12px 40px rgb(0 0 0 / 0.14), 0 2px 8px rgb(0 0 0 / 0.08)",
+        "purpose": "Floating dialogs, not flat content panels"
+      },
+      {
+        "name": "overlay-dark",
+        "value": "0 12px 40px rgb(0 0 0 / 0.45), 0 2px 8px rgb(0 0 0 / 0.24)",
+        "purpose": "Floating dialogs in dark mode"
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "mobile-shell",
+        "value": "760px"
+      }
+    ],
+    "materials": [
+      {
+        "name": "navigation-light",
+        "value": "rgb(255 255 255 / 0.88)",
+        "backdropFilter": "blur(12px)"
+      },
+      {
+        "name": "navigation-dark",
+        "value": "rgb(28 28 28 / 0.9)",
+        "backdropFilter": "blur(12px)"
+      }
+    ],
+    "rules": [
+      "Opaque operational content and forms",
+      "Translucent navigation only",
+      "Solid fallback for unsupported WebViews and accessibility preferences",
+      "Business state colors carry labels or icons"
+    ]
+  },
+  "components": []
+}

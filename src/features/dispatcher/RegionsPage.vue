@@ -21,7 +21,7 @@ const { data, loading, error, load } = useResource(
           Спрос и доступность водителей по городу.
         </p>
       </div>
-      <Button as-child
+      <Button as-child class="min-h-11"
         ><RouterLink to="/adminDistricts/boundaries"
           ><MapPin class="size-4" />Границы районов</RouterLink
         ></Button
@@ -33,38 +33,52 @@ const { data, loading, error, load } = useResource(
       :empty="!data.length"
       @retry="load"
     />
-    <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    <div v-if="data.length" class="overflow-hidden rounded-lg border bg-card">
+      <div class="region-row bg-secondary/40 text-xs text-muted-foreground">
+        <span>Район</span><span class="text-right">Заказы</span
+        ><span class="text-right">Свободны</span
+        ><span class="sr-only">Граница</span>
+      </div>
       <article
         v-for="district in data"
         :key="district.id"
-        class="rounded-xl border bg-card p-5"
+        class="region-row text-sm"
       >
-        <div class="flex items-start justify-between gap-3">
-          <h2 class="font-semibold">{{ district.name }}</h2>
-          <MapPin class="size-4 shrink-0 text-primary" />
-        </div>
-        <div class="mt-6 grid grid-cols-2 gap-3">
-          <div>
-            <p class="text-2xl font-semibold tabular-nums">
-              {{ district.activeOrders }}
-            </p>
-            <p class="mt-1 text-xs text-muted-foreground">активных заказов</p>
-          </div>
-          <div>
-            <p class="text-2xl font-semibold tabular-nums">
-              {{ district.freeDrivers }}
-            </p>
-            <p class="mt-1 text-xs text-muted-foreground">
-              свободных водителей
-            </p>
-          </div>
-        </div>
+        <h2 class="min-w-0 break-words font-medium">{{ district.name }}</h2>
+        <span class="text-right tabular-nums"
+          >{{ district.activeOrders
+          }}<span class="sr-only"> активных заказов</span></span
+        >
+        <span class="text-right tabular-nums"
+          >{{ district.freeDrivers
+          }}<span class="sr-only"> свободных водителей</span></span
+        >
         <RouterLink
           :to="`/adminDistricts/boundaries?district=${district.id}`"
-          class="mt-5 flex items-center justify-between border-t pt-4 text-sm text-primary"
-          >Посмотреть границу<ArrowUpRight class="size-4"
+          class="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-secondary focus-visible:ring-2 focus-visible:ring-ring"
+          :aria-label="`Посмотреть границу: ${district.name}`"
+          ><ArrowUpRight class="size-4"
         /></RouterLink>
       </article>
     </div>
   </div>
 </template>
+<style scoped>
+.region-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 56px 64px 44px;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+.region-row:last-child {
+  border-bottom: 0;
+}
+@media (min-width: 640px) {
+  .region-row {
+    grid-template-columns: minmax(0, 1fr) 140px 140px 44px;
+    padding-inline: 1rem;
+  }
+}
+</style>

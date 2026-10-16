@@ -1,6 +1,6 @@
 {
-  "name": "Tayyn hyzmat",
-  "short_name": "Tayyn hyzmat",
+  "name": "Tayyn Hyzmat",
+  "short_name": "Tayyn Hyzmat",
   "icons": [
     {
       "src": "img/icons/favicon-192x192.png",
@@ -13,8 +13,9 @@
       "type": "image/png"
     }
   ],
-  "start_url": "index.html",
+  "start_url": "/",
   "display": "standalone",
-  "background_color": "#d7ffe8",
-  "theme_color": "#2196F3"
+  "background_color": "#ffffff",
+  "theme_color": "#111111",
+  "scope": "/"
 }
