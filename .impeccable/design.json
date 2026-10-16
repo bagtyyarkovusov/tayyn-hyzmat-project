@@ -42,7 +42,13 @@
       "Translucent navigation only",
       "Solid fallback for unsupported WebViews and accessibility preferences",
       "Business state colors carry labels or icons"
-    ]
+    ],
+    "brandAssets": {
+      "light": "public/brand/mark-light.png",
+      "dark": "public/brand/mark-dark.png",
+      "sources": "public/brand/source/",
+      "provenance": "User-supplied ChatGPT-generated final H-and-swoosh artwork"
+    }
   },
   "components": []
 }

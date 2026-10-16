@@ -4,10 +4,10 @@ withDefaults(defineProps<{ compact?: boolean }>(), { compact: false });
 
 <template>
   <span class="brand-lockup" :class="{ 'brand-lockup-compact': compact }">
-    <svg class="brand-mark" viewBox="0 0 80 80" fill="none" aria-hidden="true">
-      <rect width="80" height="80" rx="16" fill="currentColor" />
-      <path d="M18 21H62V31H45V62H35V31H18V21Z" class="brand-letter" />
-    </svg>
+    <span class="brand-mark" aria-hidden="true">
+      <img class="brand-light" src="/brand/mark-light.png" alt="" />
+      <img class="brand-dark" src="/brand/mark-dark.png" alt="" />
+    </span>
     <span class="brand-name">Tayyn Hyzmat</span>
   </span>
 </template>
@@ -21,12 +21,25 @@ withDefaults(defineProps<{ compact?: boolean }>(), { compact: false });
   color: inherit;
 }
 .brand-mark {
-  width: 2.25rem;
-  height: 2.25rem;
+  width: 2.75rem;
+  height: 2.75rem;
   flex-shrink: 0;
 }
-.brand-letter {
-  fill: var(--card);
+.brand-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.brand-dark {
+  display: none;
+}
+:global(.dark) .brand-light,
+:global(.auth-story) .brand-light {
+  display: none;
+}
+:global(.dark) .brand-dark,
+:global(.auth-story) .brand-dark {
+  display: block;
 }
 .brand-name {
   font-size: 1rem;
@@ -36,13 +49,10 @@ withDefaults(defineProps<{ compact?: boolean }>(), { compact: false });
   white-space: nowrap;
 }
 .brand-lockup-compact .brand-mark {
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 2.25rem;
+  height: 2.25rem;
 }
 .brand-lockup-compact .brand-name {
   font-size: 0.875rem;
-}
-:global(.auth-story) .brand-letter {
-  fill: #111;
 }
 </style>
