@@ -478,6 +478,8 @@ async function checkNativeLocationPermission() {
   if (generation !== sessionGeneration) return;
   if (!permission.locationGranted) {
     await loseGps("Разрешите точный GPS в настройках приложения.");
+  } else if (permission.locationEnabled !== true) {
+    await loseGps("Включите GPS в настройках телефона.");
   }
 }
 async function synchronizeNative() {
@@ -532,6 +534,8 @@ async function enableNativeGps() {
       handledNativeStop = permissions.stopSequence;
     if (!permissions.locationGranted)
       throw new Error("Разрешите точный GPS в настройках приложения.");
+    if (permissions.locationEnabled !== true)
+      throw new Error("Включите GPS в настройках телефона.");
     const position = await nativeShift.location();
     if (!account.current()) return;
     state.position = position;

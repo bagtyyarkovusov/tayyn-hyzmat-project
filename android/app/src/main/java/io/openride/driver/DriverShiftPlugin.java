@@ -49,6 +49,10 @@ public class DriverShiftPlugin extends Plugin {
   private void permissionResult(PluginCall call) {
     JSObject result = nativeStatus();
     result.put("locationGranted", getPermissionState("location") == PermissionState.GRANTED);
+    LocationManager locations =
+        (LocationManager) getContext().getSystemService(Context.LOCATION_SERVICE);
+    result.put("locationEnabled",
+        locations != null && locations.isProviderEnabled(LocationManager.GPS_PROVIDER));
     call.resolve(result);
   }
 

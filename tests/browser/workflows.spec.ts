@@ -1507,6 +1507,7 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
       syntheticNativeStopSequence?: number;
       syntheticNativeStopAfterPermission?: boolean;
       syntheticNativePermissionDenied?: boolean;
+      syntheticNativeGpsDisabled?: boolean;
     };
     bridge.holdNativePermission = holdPermission;
     bridge.CapacitorCustomPlatform = { name: "android" };
@@ -1564,6 +1565,7 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
               ? (bridge.syntheticNativeStopSequence ?? 1)
               : 0,
             locationGranted: !bridge.syntheticNativePermissionDenied,
+            locationEnabled: !bridge.syntheticNativeGpsDisabled,
             ordersEnabled: true,
             chatEnabled: true,
           };
@@ -1573,6 +1575,7 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
             bridge.releaseNativePermission = () =>
               resolve({
                 locationGranted: true,
+                locationEnabled: true,
                 ordersEnabled: true,
                 chatEnabled: true,
               });
@@ -1612,6 +1615,34 @@ test("native foreground detects revoked GPS permission while the shift is off", 
     page.getByRole("button", { name: "Выйти на линию", exact: true }),
   ).toBeDisabled();
 });
+
+for (const foreground of [true, false]) {
+  test(`native GPS system switch is checked ${foreground ? "on foreground" : "before going online"} independently of permission`, async ({
+    page,
+  }) => {
+    await emulateNativeBridge(page, false);
+    await login(page, "driver");
+    const gps = page.getByRole("button", { name: "Включить GPS", exact: true });
+    await gps.click();
+    await expect(gps).toHaveAttribute("data-state", "ready");
+    await page.evaluate((foreground) => {
+      (
+        window as unknown as { syntheticNativeGpsDisabled: boolean }
+      ).syntheticNativeGpsDisabled = true;
+      if (foreground) window.dispatchEvent(new Event("focus"));
+    }, foreground);
+    const power = page.getByRole("button", {
+      name: "Выйти на линию",
+      exact: true,
+    });
+    if (!foreground) await power.click();
+    await expect(gps).toHaveAttribute("data-state", "blocked");
+    await expect(power).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Уйти с линии", exact: true }),
+    ).toHaveCount(0);
+  });
+}
 
 test("an offline native driver sees the healthy dispatcher connection before starting a shift", async ({
   page,
