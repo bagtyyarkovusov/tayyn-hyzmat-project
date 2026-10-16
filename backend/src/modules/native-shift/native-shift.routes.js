@@ -9,7 +9,7 @@ const authenticatedRoutes = Router();
 const nativeRoutes = Router();
 const startSchema = z.object({ deviceId: z.string().min(1).max(200), refreshToken: z.string().min(20).max(1000) });
 authenticatedRoutes.post('/', validate({ body: startSchema }), asyncHandler(async (req, res) => {
-  res.status(201).json(await service.start(req.driver, req.body.deviceId, req.body.refreshToken));
+  res.status(201).json(await service.start(req.driver, req.body.deviceId, req.body.refreshToken, req.user.credentialVersion));
 }));
 authenticatedRoutes.post('/stop', asyncHandler(async (req, res) => { await service.stop(req.driver); res.status(204).send(); }));
 function token(req) {

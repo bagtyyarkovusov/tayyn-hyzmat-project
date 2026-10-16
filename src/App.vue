@@ -35,6 +35,7 @@ import {
 } from "@/shared/ui/dropdown-menu";
 import { driverState } from "@/features/driver/useDriver";
 const route = useRoute();
+const development = import.meta.env.DEV;
 const visibility = useDocumentVisibility();
 const networkOnline = useOnline();
 const chat = computed(
@@ -130,7 +131,10 @@ async function logout() {
           }}</RouterLink
         >
       </nav>
-      <div class="mt-auto border-t pt-5 text-xs text-muted-foreground">
+      <div
+        v-if="development"
+        class="mt-auto border-t pt-5 text-xs text-muted-foreground"
+      >
         <p>Тестовая среда</p>
         <p class="mt-1">Синтетические балансы · TMT</p>
         <a
@@ -145,7 +149,7 @@ async function logout() {
         <div class="flex min-w-0 items-center gap-3">
           <Truck v-if="driver" class="size-5 text-primary" /><span
             class="font-semibold"
-            >{{ driver ? "Тайын Хызмат" : "Диспетчерская" }}</span
+            >Tayyn Hyzmat</span
           ><span class="connection"
             ><i
               :class="{

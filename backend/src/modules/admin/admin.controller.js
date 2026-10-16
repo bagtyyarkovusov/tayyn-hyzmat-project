@@ -117,7 +117,9 @@ const updateDistrictBoundary = asyncHandler(async (req, res) => {
   res.json(district);
 });
 
+const privateOffer = asyncHandler(async (req, res) => res.json(await ordersService.offerPrivately(req.params.id, req.body.driverId)));
 module.exports = {
+  privateOffer,
   createDriver,
   listDrivers,
   getDriver,

@@ -99,16 +99,9 @@ async function updateLocation(driver, data) {
   return updatedDriver;
 }
 
-async function setStatus(driver, data) {
-  if (data.isOnline === false) await require('../native-shift/native-shift.service').revokeDriverShift(driver.id);
-  if (data.isOnline === true) assertFreshGps(driver);
-  const updated = await prisma.driver.update({
-    where: { id: driver.id },
-    data: {
-      ...(data.isOnline !== undefined ? { isOnline: data.isOnline } : {}),
-      ...(data.isAvailable !== undefined ? { isAvailable: data.isAvailable } : {})
-    }
-  });
+async function setStatus(driver, data, credentialVersion) {
+  const { updateCredentialedStatus } = require('./credentialed-status');
+  const updated = await updateCredentialedStatus(driver.id, driver.userId, credentialVersion, data);
 
   try {
     emitToInterestedRooms(updated, 'driver:status', {

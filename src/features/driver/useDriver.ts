@@ -25,6 +25,7 @@ const state = reactive({
   gpsReady: false,
   nativeRunning: false,
   nativeConnected: false,
+  offerSeconds: 0,
   position: null as { lat: number; lng: number; accuracy: number } | null,
 });
 export const driverState = readonly(state);
@@ -40,6 +41,8 @@ let gpsTimer: ReturnType<typeof setInterval> | undefined;
 let lastFixAt = 0;
 let offlinePending = false;
 let gpsEpoch = 0;
+let offerTimer: ReturnType<typeof setInterval> | undefined;
+let offerVersion = 0;
 const GPS_MAX_AGE_MS = 60000;
 function hasCurrentGps() {
   return (
@@ -76,8 +79,86 @@ async function loseGps(message: string) {
   }
 }
 function dismissIncoming() {
+  offerVersion++;
+  if (offerTimer !== undefined) clearInterval(offerTimer);
+  offerTimer = undefined;
+  state.offerSeconds = 0;
   closeOrderAlerts();
   state.incoming = null;
+}
+
+function receivePrivateOffer(order: Order, sound = true) {
+  if (
+    !order.privateOfferExpiresAt ||
+    !hasCurrentGps() ||
+    !state.profile?.isOnline ||
+    state.active
+  )
+    return;
+  const expiresAt = Date.parse(order.privateOfferExpiresAt);
+  const remainingMs = order.privateOfferRemainingMs;
+  if (
+    !Number.isFinite(expiresAt) ||
+    typeof remainingMs !== "number" ||
+    !Number.isFinite(remainingMs) ||
+    remainingMs <= 0
+  )
+    return;
+  const until = performance.now() + Math.min(20_000, remainingMs);
+  if (
+    state.incoming?.id === order.id &&
+    state.incoming.privateOfferExpiresAt === order.privateOfferExpiresAt
+  )
+    return;
+  dismissIncoming();
+  state.incoming = order;
+  const tick = () => {
+    state.offerSeconds = Math.max(
+      0,
+      Math.ceil((until - performance.now()) / 1000),
+    );
+    if (!state.offerSeconds) dismissIncoming();
+  };
+  tick();
+  offerTimer = setInterval(tick, 250);
+  if (sound) notifyOrder(order);
+}
+async function recoverPrivateOffer() {
+  const version = ++offerVersion;
+  const generation = sessionGeneration;
+  try {
+    const { data } = await driverApi.get<Order | null>("/orders/private-offer");
+    if (
+      generation !== sessionGeneration ||
+      version !== offerVersion ||
+      !driverSession.state.accessToken
+    )
+      return;
+    if (data) receivePrivateOffer(data, false);
+    else if (state.incoming?.privateOfferExpiresAt) dismissIncoming();
+  } catch (error) {
+    if (generation === sessionGeneration && version === offerVersion)
+      state.error = errorMessage(error);
+  }
+}
+async function declinePrivateOffer() {
+  const orderId = state.incoming?.id;
+  if (!orderId || !state.incoming?.privateOfferExpiresAt) return;
+  const generation = sessionGeneration;
+  const privateOfferExpiresAt = state.incoming.privateOfferExpiresAt;
+  await act(async () => {
+    await driverApi.post("/orders/private-offer/decline", {
+      orderId,
+      privateOfferExpiresAt,
+    });
+    if (generation !== sessionGeneration) return;
+    if (
+      state.incoming?.id === orderId &&
+      state.incoming.privateOfferExpiresAt === privateOfferExpiresAt
+    )
+      dismissIncoming();
+    await refresh();
+  });
 }
 
 // Session cleanup outlives route components, including navigation to login.
@@ -142,6 +223,8 @@ async function refresh() {
       hideAvailableOrders();
       if (state.profile.isOnline && !state.nativeRunning)
         void loseGps("Включите GPS перед выходом на линию.");
+    } else if (state.profile.isOnline && !state.active) {
+      await recoverPrivateOffer();
     }
   } catch (error) {
     if (current()) state.error = errorMessage(error);
@@ -173,13 +256,22 @@ async function accept(orderId: string, etaMinutes: number) {
     dismissIncoming();
     return;
   }
+  const generation = sessionGeneration;
+  const privateOfferExpiresAt =
+    state.incoming?.id === orderId
+      ? state.incoming.privateOfferExpiresAt
+      : undefined;
   await act(async () => {
+    const { data } = await driverApi.post<Order>(
+      privateOfferExpiresAt ? "/orders/private-offer/accept" : "/orders/accept",
+      {
+        ...(privateOfferExpiresAt ? { privateOfferExpiresAt } : {}),
+        orderId,
+        etaMinutes,
+      },
+    );
+    if (generation !== sessionGeneration) return;
     dismissIncoming();
-    const { data } = await driverApi.post<Order>("/orders/accept", {
-      orderId,
-      etaMinutes,
-    });
-    closeOrderAlerts();
     state.active = data;
     await refresh();
   });
@@ -376,7 +468,9 @@ function enableGps() {
       lastFixAt = position.timestamp;
       lastLocationSent = Date.now();
       state.gpsPending = false;
+      const firstFix = !state.gpsReady;
       state.gpsReady = true;
+      if (firstFix && state.profile?.isOnline) void recoverPrivateOffer();
       state.gpsError = "";
       if (state.profile) state.profile.districtId = data.districtId;
     } catch (error) {
@@ -454,6 +548,20 @@ function start() {
       state.districts = payload as District[];
     }
   });
+  on("order:private-offer", (payload) => receivePrivateOffer(payload as Order));
+  on("order:private-offer-ended", (payload) => {
+    offerVersion++;
+    const ended = payload as {
+      orderId: string;
+      privateOfferExpiresAt?: string;
+    };
+    if (
+      state.incoming?.id === ended.orderId &&
+      state.incoming.privateOfferExpiresAt === ended.privateOfferExpiresAt
+    )
+      dismissIncoming();
+    void refresh();
+  });
   on("order:new", (payload) => {
     const order = payload as Order;
     if (
@@ -512,6 +620,7 @@ export function useDriver() {
     setDistrict,
     enableGps,
     dismissIncoming,
+    declinePrivateOffer,
     session: driverSession,
   };
 }

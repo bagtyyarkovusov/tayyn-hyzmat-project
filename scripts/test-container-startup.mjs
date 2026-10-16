@@ -14,8 +14,8 @@ function docker(...args) {
     throw new Error(result.stderr || "Docker command failed");
   return result.stdout.trim();
 }
-async function response(url) {
-  for (let attempt = 0; attempt < 80; attempt++) {
+async function response(url, attempts = 80) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       const result = await fetch(url, { signal: AbortSignal.timeout(2000) });
       if (result.ok) return result;
@@ -27,25 +27,28 @@ async function response(url) {
 try {
   docker("network", "create", network);
   networkCreated = true;
+  function startApi(api) {
+    docker(
+      "run",
+      "-d",
+      "--name",
+      api,
+      "--network",
+      network,
+      "--network-alias",
+      "api",
+      "-e",
+      "DATABASE_URL=postgresql://unused:unused@127.0.0.1:1/unused",
+      "-e",
+      `JWT_ACCESS_SECRET=${randomBytes(32).toString("hex")}`,
+      "-e",
+      `JWT_REFRESH_SECRET=${randomBytes(32).toString("hex")}`,
+      "tayyn-api-check",
+    );
+    containers.push(api);
+  }
   const api = `tayyn-api-${id}`;
-  docker(
-    "run",
-    "-d",
-    "--name",
-    api,
-    "--network",
-    network,
-    "--network-alias",
-    "api",
-    "-e",
-    "DATABASE_URL=postgresql://unused:unused@127.0.0.1:1/unused",
-    "-e",
-    `JWT_ACCESS_SECRET=${randomBytes(32).toString("hex")}`,
-    "-e",
-    `JWT_REFRESH_SECRET=${randomBytes(32).toString("hex")}`,
-    "tayyn-api-check",
-  );
-  containers.push(api);
+  startApi(api);
   const web = `tayyn-web-${id}`;
   docker(
     "run",
@@ -82,8 +85,86 @@ try {
     await response(`${base}/socket.io/?EIO=4&transport=polling`)
   ).text();
   assert.ok(socket.startsWith("0{"), "Nginx forwards the Socket.IO handshake");
+  async function checkProxy() {
+    assert.equal((await response(`${base}/health`)).status, 200);
+    const unknown = await fetch(`${base}/api/proxy-check?encoded=a%2Fb&n=2`);
+    assert.equal(unknown.status, 404);
+    assert.match(
+      (await unknown.json()).message,
+      /GET \/proxy-check\?encoded=a%2Fb&n=2 /,
+    );
+    const invalidLogin = await fetch(`${base}/api/auth/login?proxy=checked`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(
+      invalidLogin.status,
+      400,
+      "API prefix, query and POST reach auth validation",
+    );
+    const socket = new WebSocket(
+      `${base.replace("http:", "ws:")}/socket.io/?EIO=4&transport=websocket`,
+    );
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        socket.close();
+        reject(new Error("WebSocket handshake timed out"));
+      }, 5000);
+      socket.addEventListener(
+        "message",
+        (event) => {
+          clearTimeout(timeout);
+          try {
+            assert.ok(String(event.data).startsWith("0{"));
+            socket.close();
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        },
+        { once: true },
+      );
+      socket.addEventListener(
+        "error",
+        () => {
+          clearTimeout(timeout);
+          reject(new Error("WebSocket upgrade failed"));
+        },
+        { once: true },
+      );
+    });
+  }
+  await checkProxy();
+  const replacement = `tayyn-api-replacement-${id}`;
+  startApi(replacement);
+  const address = (name) =>
+    docker(
+      "inspect",
+      "--format",
+      `{{with index .NetworkSettings.Networks "${network}"}}{{.IPAddress}}{{end}}`,
+      name,
+    );
+  assert.notEqual(address(api), address(replacement));
+  docker("network", "disconnect", network, api);
+  docker("stop", api);
+  // The web container must recover without a reload or restart when API DNS changes.
+  assert.equal(
+    (await (await response(`${base}/api/health`, 12)).json()).status,
+    "ok",
+  );
+  await checkProxy();
+  docker("network", "disconnect", network, replacement);
+  const unavailable = await fetch(`${base}/health`, {
+    signal: AbortSignal.timeout(10000),
+  });
+  assert.ok(
+    [502, 504].includes(unavailable.status),
+    `Web readiness fails when its API is unavailable, got ${unavailable.status}`,
+  );
+  assert.equal((await fetch(`${base}/driverProfile`)).status, 200);
   console.log(
-    "Container startup, API proxy, actor/legacy routes and Socket.IO handshake pass.",
+    "Container startup, API replacement recovery, routes, POST and Socket.IO polling/WebSocket pass.",
   );
 } finally {
   const cleanup = containers.reverse().map((name) => ["rm", "-f", name]);

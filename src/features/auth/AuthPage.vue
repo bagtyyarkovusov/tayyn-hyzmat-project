@@ -14,6 +14,7 @@ import { Label } from "@/shared/ui/label";
 import { adminSession, driverSession } from "./session";
 import { errorMessage, publicRequest } from "@/shared/api";
 const route = useRoute();
+const development = import.meta.env.DEV;
 const router = useRouter();
 const isAdmin = computed(() => route.path === "/adminLogin");
 const registering = computed(() => route.path === "/driverRegister");
@@ -55,10 +56,10 @@ async function submit() {
 </script>
 <template>
   <div class="auth-layout">
-    <section class="auth-story" aria-label="Тайын Хызмат">
+    <section class="auth-story" aria-label="Tayyn Hyzmat">
       <RouterLink to="/" class="brand"
         ><span class="brand-symbol">т</span
-        ><span>тайын хызмат</span></RouterLink
+        ><span>Tayyn Hyzmat</span></RouterLink
       >
       <div>
         <h1>
@@ -76,7 +77,7 @@ async function submit() {
           }}
         </p>
       </div>
-      <div class="flex items-center gap-3 text-sm">
+      <div v-if="development" class="flex items-center gap-3 text-sm">
         <ShieldCheck class="size-5" />Тестовая среда · расчёты только в TMT
       </div>
     </section>
@@ -149,11 +150,6 @@ async function submit() {
             >{{ registering ? "Войти" : "Подать заявку" }}</RouterLink
           >
         </p>
-        <RouterLink
-          :to="isAdmin ? '/driverLogin' : '/adminLogin'"
-          class="mt-10 inline-block text-sm text-muted-foreground underline underline-offset-4"
-          >{{ isAdmin ? "Я водитель" : "Вход для диспетчера" }}</RouterLink
-        >
       </div>
     </section>
   </div>

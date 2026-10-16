@@ -3,8 +3,8 @@ import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { MapPin, ArrowDown, Phone } from "lucide-vue-next";
 import { date, money, statusLabel, type Order } from "../domain";
-defineProps<{ order: Order; cancellable?: boolean }>();
-defineEmits<{ cancel: [Order] }>();
+defineProps<{ order: Order; cancellable?: boolean; offerable?: boolean }>();
+defineEmits<{ cancel: [Order]; offer: [Order] }>();
 </script>
 <template>
   <article class="rounded-xl border bg-card p-4 sm:p-5">
@@ -37,6 +37,12 @@ defineEmits<{ cancel: [Order] }>();
           {{ order.district?.name || "Район не указан" }} ·
           {{ date(order.createdAt) }}
         </p>
+        <p v-if="order.privateOfferDriverId && order.privateOfferExpiresAt">
+          Личное предложение до
+          {{
+            new Date(order.privateOfferExpiresAt).toLocaleTimeString("ru-RU")
+          }}
+        </p>
         <p v-if="order.driver">{{ order.driver.user.fullName }}</p>
         <a
           v-if="order.clientPhone"
@@ -46,6 +52,15 @@ defineEmits<{ cancel: [Order] }>();
         >
         <p v-if="order.note">{{ order.note }}</p>
       </div>
+      <Button
+        v-if="
+          offerable && order.status === 'NEW' && !order.privateOfferDriverId
+        "
+        variant="outline"
+        size="sm"
+        @click="$emit('offer', order)"
+        >Предложить водителю</Button
+      >
       <Button
         v-if="cancellable && !['CANCELLED', 'COMPLETED'].includes(order.status)"
         variant="outline"

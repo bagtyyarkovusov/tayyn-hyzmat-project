@@ -18,11 +18,13 @@ import type { Order, Page } from "./domain";
 import { useResource } from "./useResource";
 import OrderCard from "./components/OrderCard.vue";
 import PageState from "./components/PageState.vue";
+import PrivateOfferForm from "./components/PrivateOfferForm.vue";
 import CreateOrderForm from "./components/CreateOrderForm.vue";
 const route = useRoute();
 const filter = ref("active"),
   page = ref(1),
   create = ref(route.query.create === "1"),
+  offer = ref<Order | null>(null),
   cancel = ref<Order | null>(null),
   reason = ref(""),
   pending = ref(false),
@@ -44,6 +46,9 @@ const { data, loading, error, load } = useResource(
   { items: [], total: 0, page: 1, limit: 20 },
   [
     "order:new",
+    "order:private-offer",
+    "order:updated",
+    "order:private-offer-ended",
     "order:accepted",
     "order:waiting",
     "order:started",
@@ -111,6 +116,8 @@ async function confirmCancel() {
         :key="order.id"
         :order="order"
         cancellable
+        offerable
+        @offer="offer = $event"
         @cancel="
           cancel = $event;
           actionError = '';
@@ -132,6 +139,22 @@ async function confirmCancel() {
         >Далее</Button
       >
     </div>
+    <Dialog :open="!!offer" @update:open="!$event && (offer = null)"
+      ><DialogContent
+        ><DialogHeader
+          ><DialogTitle>Предложить заказ водителю</DialogTitle
+          ><DialogDescription
+            >Заказ будет доступен выбранному водителю 20 секунд. При отказе или
+            без ответа вернётся в свой район.</DialogDescription
+          ></DialogHeader
+        ><PrivateOfferForm
+          v-if="offer"
+          :order-id="offer.id"
+          @offered="
+            offer = null;
+            load();
+          " /></DialogContent
+    ></Dialog>
     <Dialog v-model:open="create"
       ><DialogContent class="max-h-[90dvh] overflow-y-auto sm:max-w-2xl"
         ><DialogHeader

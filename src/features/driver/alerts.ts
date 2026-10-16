@@ -1,49 +1,79 @@
 import { reactive, readonly } from "vue";
 import type { Order } from "./model";
 import { nativeAndroid, nativeShift } from "./nativeShift";
-const permissionState = reactive({ message: "", blocked: false });
-export const alertPermission = readonly(permissionState);
 let audio: HTMLAudioElement | null = null;
 let notification: Notification | null = null;
 function player() {
   return (audio ??= new Audio("/notification.mp3"));
 }
-export async function enableOrderAlerts() {
-  permissionState.message = "";
-  permissionState.blocked = false;
+const state = reactive({
+  permission: "unsupported" as NotificationPermission | "unsupported",
+  soundReady: false,
+  pending: false,
+});
+export const alertState = readonly(state);
+export function syncAlertPermission() {
   if (nativeAndroid) {
-    const result = await nativeShift.permissions().catch(() => null);
-    permissionState.blocked = !result?.ordersEnabled || !result?.chatEnabled;
-    permissionState.message = permissionState.blocked
-      ? "Разрешите уведомления о заказах и сообщениях в настройках приложения."
-      : "Уведомления о заказах и сообщениях включены.";
+    void nativeShift
+      .status()
+      .then((result) => {
+        state.permission =
+          result.ordersEnabled && result.chatEnabled ? "granted" : "denied";
+        state.soundReady = state.permission === "granted";
+      })
+      .catch(() => {
+        state.permission = "denied";
+        state.soundReady = false;
+      });
     return;
   }
-  try {
-    const sound = player();
-    await sound.play();
-    sound.pause();
-    sound.currentTime = 0;
-  } catch {
-    permissionState.message =
-      "Браузер не разрешил звук. Нажмите колокольчик ещё раз.";
-  }
-  if (typeof Notification === "undefined") {
-    permissionState.message ||=
-      "Этот браузер не поддерживает системные уведомления. Держите приложение открытым.";
-    return;
-  }
-  const permission =
-    Notification.permission === "default"
-      ? await Notification.requestPermission()
+  state.permission =
+    typeof Notification === "undefined"
+      ? "unsupported"
       : Notification.permission;
-  permissionState.blocked = permission !== "granted";
-  permissionState.message ||= permissionState.blocked
-    ? "Разрешите уведомления в настройках сайта. В браузере держите приложение открытым."
-    : "Уведомления включены. В браузере держите приложение открытым.";
 }
-export async function openNotificationSettings() {
-  if (nativeAndroid) await nativeShift.settings();
+export async function enableOrderAlerts() {
+  if (state.pending) return;
+  state.pending = true;
+  if (nativeAndroid) {
+    try {
+      const result = await nativeShift.permissions();
+      state.permission =
+        result.ordersEnabled && result.chatEnabled ? "granted" : "denied";
+      state.soundReady = state.permission === "granted";
+    } catch {
+      state.permission = "denied";
+      state.soundReady = false;
+    } finally {
+      state.pending = false;
+    }
+    return;
+  }
+  const sound = player();
+  // Start both requests during the user gesture; neither grants the other.
+  const audioReady = sound
+    .play()
+    .then(() => {
+      sound.pause();
+      sound.currentTime = 0;
+      state.soundReady = true;
+    })
+    .catch(() => {
+      state.soundReady = false;
+    });
+  try {
+    if (
+      typeof Notification !== "undefined" &&
+      Notification.permission === "default"
+    )
+      await Notification.requestPermission();
+    await audioReady;
+  } catch {
+    await audioReady;
+  } finally {
+    syncAlertPermission();
+    state.pending = false;
+  }
 }
 export function closeOrderAlerts() {
   if (nativeAndroid) void nativeShift.clear({ channel: "orders" });
@@ -58,7 +88,9 @@ export function notifyOrder(order: Order) {
   if (nativeAndroid) return;
   void player()
     .play()
-    .catch(() => {});
+    .catch(() => {
+      state.soundReady = false;
+    });
   if (
     document.hidden &&
     typeof Notification !== "undefined" &&
@@ -102,4 +134,8 @@ export function notifyChat() {
       /* Mobile browser may require a service worker; permission status explains foreground limitation. */
     }
   }
+}
+
+export async function openNotificationSettings() {
+  if (nativeAndroid) await nativeShift.settings();
 }

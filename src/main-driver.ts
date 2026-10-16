@@ -5,7 +5,8 @@ import { makeRouter } from "./app-router";
 import "./shared/theme.css";
 import "./shared/theme";
 const router = makeRouter(true);
-createApp(App).use(router).mount("#app");
+const app = createApp(App).use(router);
+void router.isReady().then(() => app.mount("#app"));
 async function openNotification() {
   if (!nativeAndroid) return;
   const target = await nativeShift.notificationTarget();

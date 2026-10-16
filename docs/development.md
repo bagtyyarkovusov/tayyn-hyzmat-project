@@ -20,7 +20,7 @@ Fresh checkouts need a private `.local/zone-test.env` based on `.env.example` an
 
 ## Railway
 
-The shared development URL is https://web-development-d17b.up.railway.app. GitHub pushes merged into `main` trigger automatic Railway builds. Feature branches do not deploy this shared environment. The API builds from `backend/`, runs Prisma migrations before deployment, and connects to Railway PostgreSQL. The web builds with `deploy/Dockerfile.web` and proxies to the API.
+The shared development URL is https://web-development-d17b.up.railway.app. GitHub pushes merged into `main` trigger automatic Railway builds. Feature branches do not deploy this shared environment. The API builds from `backend/`, runs Prisma migrations before deployment, and connects to Railway PostgreSQL. The web builds with `deploy/Dockerfile.web` and proxies to the API. Its nginx entrypoint reads the container DNS nameservers from `/etc/resolv.conf`, then re-resolves API addresses with a one-second DNS cache so independent API deployments do not require restarting web. `/health` checks the API dependency, not just static file serving. A brief in-flight failure remains possible while an API instance stops; requests that change state are not automatically replayed. The container smoke test replaces the API at a different private IP and checks recovery without restarting web.
 
 Configure secrets in Railway variables and ignored local environment files. The Yandex Maps key is a browser build variable, `VUE_APP_YANDEX_MAPS_API_KEY`, so changes require a web rebuild. API JWT secrets stay on the backend. Never copy development database contents into production.
 
