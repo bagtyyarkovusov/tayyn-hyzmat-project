@@ -1133,3 +1133,242 @@ test("a transient GPS timeout keeps its blocker visible until an explicit retry 
   await expect(power).toBeEnabled({ timeout: 5000 });
   await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
 });
+
+async function emulateNativeBridge(page: Page, holdPermission: boolean) {
+  await page.addInitScript((holdPermission) => {
+    const bridge = window as unknown as {
+      CapacitorCustomPlatform: { name: string };
+      Capacitor: unknown;
+      releaseNativePermission?: () => void;
+      holdNativePermission: boolean;
+      holdNativeStart?: boolean;
+      releaseNativeStart?: () => void;
+      activeNativeUser?: string;
+    };
+    bridge.holdNativePermission = holdPermission;
+    bridge.CapacitorCustomPlatform = { name: "android" };
+    const status = {
+      running: false,
+      phase: "off",
+      userId: "",
+      lastReportAt: 0,
+      detail: "",
+    };
+    let activeToken = "";
+    bridge.Capacitor = {
+      PluginHeaders: [
+        {
+          name: "DriverShift",
+          methods: [
+            "permissions",
+            "status",
+            "location",
+            "stop",
+            "clear",
+            "notificationTarget",
+            "start",
+          ].map((name) => ({ name, rtype: "promise" })),
+        },
+      ],
+      nativePromise: async (
+        _plugin: string,
+        method: string,
+        options?: { shiftToken?: string; userId?: string },
+      ) => {
+        if (method === "start") {
+          activeToken = options?.shiftToken || "";
+          bridge.activeNativeUser = options?.userId;
+          if (bridge.holdNativeStart)
+            return new Promise<void>((resolve) => {
+              bridge.releaseNativeStart = resolve;
+            });
+          return {};
+        }
+        if (method === "stop") {
+          if (!options?.shiftToken || options.shiftToken === activeToken) {
+            activeToken = "";
+            bridge.activeNativeUser = "";
+          }
+          return {};
+        }
+        if (method === "permissions" && !bridge.holdNativePermission)
+          return {
+            locationGranted: true,
+            ordersEnabled: true,
+            chatEnabled: true,
+          };
+        if (method === "permissions")
+          return new Promise((resolve) => {
+            bridge.releaseNativePermission = () =>
+              resolve({
+                locationGranted: true,
+                ordersEnabled: true,
+                chatEnabled: true,
+              });
+          });
+        if (method === "location")
+          return { lat: 0, lng: 0, accuracy: 10, timestamp: Date.now() };
+        if (method === "status") return status;
+        return {};
+      },
+    };
+  }, holdPermission);
+}
+
+test("a native GPS permission callback from a previous driver cannot post the next driver's location", async ({
+  page,
+}) => {
+  await page.setExtraHTTPHeaders({ "X-Forwarded-For": "127.0.0.80" });
+  await emulateNativeBridge(page, true);
+  await login(page, "driver");
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Boolean(
+          (window as unknown as { releaseNativePermission?: unknown })
+            .releaseNativePermission,
+        ),
+      ),
+    )
+    .toBe(true);
+  await page.evaluate(() => {
+    history.pushState({}, "", "/driverLogin");
+    dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await page.getByLabel("Номер телефона").fill("+10000000102");
+  await page.getByLabel("Пароль", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Войти", exact: true }).click();
+  await expect(page).toHaveURL(/driverDashboard/);
+  let locationPosted = false;
+  await page.route("**/driver/location", async (route) => {
+    locationPosted = true;
+    await route.continue();
+  });
+  await page.evaluate(() =>
+    (
+      window as unknown as { releaseNativePermission: () => void }
+    ).releaseNativePermission(),
+  );
+  await expect(
+    page.getByRole("button", { name: "Включить GPS", exact: true }),
+  ).toBeEnabled();
+  // Wait for the released bridge promise and resulting network work to settle.
+  await page.waitForTimeout(300);
+  expect(locationPosted).toBe(false);
+  await expect(page.getByText(/GPS · точность/)).toHaveCount(0);
+});
+
+test("a cancelled native Online operation cannot offline a newly signed-in driver", async ({
+  page,
+}) => {
+  await page.setExtraHTTPHeaders({ "X-Forwarded-For": "127.0.0.81" });
+  await emulateNativeBridge(page, false);
+  await login(page, "driver");
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+  await page.evaluate(() => {
+    (
+      window as unknown as { holdNativePermission: boolean }
+    ).holdNativePermission = true;
+  });
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Boolean(
+          (window as unknown as { releaseNativePermission?: unknown })
+            .releaseNativePermission,
+        ),
+      ),
+    )
+    .toBe(true);
+  await page.evaluate(() => {
+    history.pushState({}, "", "/driverLogin");
+    dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await page.getByLabel("Номер телефона").fill("+10000000102");
+  await page.getByLabel("Пароль", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Войти", exact: true }).click();
+  await expect(page).toHaveURL(/driverDashboard/);
+  let statusPosted = false;
+  await page.route("**/driver/status", async (route) => {
+    statusPosted = true;
+    await route.continue();
+  });
+  await page.evaluate(() =>
+    (
+      window as unknown as { releaseNativePermission: () => void }
+    ).releaseNativePermission(),
+  );
+  await page.waitForTimeout(300);
+  expect(statusPosted).toBe(false);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("a delayed native start from the old account cannot stop the new account's shift", async ({
+  page,
+}) => {
+  await page.setExtraHTTPHeaders({ "X-Forwarded-For": "127.0.0.82" });
+  await emulateNativeBridge(page, false);
+  await login(page, "driver", "+10000000103");
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+  await page.evaluate(() => {
+    (window as unknown as { holdNativeStart: boolean }).holdNativeStart = true;
+  });
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Boolean(
+          (window as unknown as { releaseNativeStart?: unknown })
+            .releaseNativeStart,
+        ),
+      ),
+    )
+    .toBe(true);
+  await page.evaluate(() => {
+    history.pushState({}, "", "/driverLogin");
+    dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await page.getByLabel("Номер телефона").fill("+10000000102");
+  await page.getByLabel("Пароль", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Войти", exact: true }).click();
+  await expect(page).toHaveURL(/driverDashboard/);
+  await page.evaluate(() => {
+    (window as unknown as { holdNativeStart: boolean }).holdNativeStart = false;
+  });
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  const currentUser = await page.evaluate(
+    () => JSON.parse(localStorage.getItem("tayyn.driver.user")!).id as string,
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { activeNativeUser?: string }).activeNativeUser,
+      ),
+    )
+    .toBe(currentUser);
+  await page.evaluate(() =>
+    (
+      window as unknown as { releaseNativeStart: () => void }
+    ).releaseNativeStart(),
+  );
+  await page.waitForTimeout(300);
+  expect(
+    await page.evaluate(
+      () =>
+        (window as unknown as { activeNativeUser?: string }).activeNativeUser,
+    ),
+  ).toBe(currentUser);
+});

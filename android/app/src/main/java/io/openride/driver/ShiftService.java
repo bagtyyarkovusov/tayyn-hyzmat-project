@@ -104,7 +104,12 @@ public final class ShiftService extends Service {
   }
 
   public static void end(Context context) {
+    end(context, null);
+  }
+
+  public static void end(Context context, String expectedToken) {
     ShiftService service = instance;
+    if (expectedToken != null && (service == null || !expectedToken.equals(service.token))) return;
     if (service != null) service.finishShift("");
     else context.stopService(new Intent(context, ShiftService.class));
   }

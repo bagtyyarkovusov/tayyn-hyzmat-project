@@ -407,7 +407,7 @@ test('canonical bootstrap fills a missing boundary without changing an existing 
   assert.equal(restored[0].boundary[0].length, 26);
 });
 
-test('native shift renews with fresh GPS and returns stable safe order and chat notifications until explicitly stopped', async () => {
+test('native inbox safely replays notifications and removes consumed orders and chats', async () => {
   const island = await prisma.district.create({ data: { name: 'Native synthetic island', centerLat: 0, centerLng: 0 } });
   const auth = await request('/auth/login', '', { phone: '+10000000101', password, deviceId: 'native-test-device' });
   await request('/driver/location', auth.data.accessToken, { lat: 0, lng: 0 });
@@ -433,18 +433,22 @@ test('native shift renews with fresh GPS and returns stable safe order and chat 
   assert.equal((await request('/orders/accept', auth.data.accessToken, { orderId: created.id })).status, 200);
   const consumed = await request('/native-shift/tick', started.data.shiftToken, fix);
   assert.deepEqual(consumed.data.events, []);
+});
+
+test('native chat inbox includes the newest unread message when more than one hundred are pending', async () => {
+  const auth = await request('/auth/login', '', { phone: '+10000000101', password, deviceId: 'native-test-device' });
+  await request('/driver/location', auth.data.accessToken, { lat: 37.96, lng: 58.32 });
+  await request('/driver/status', auth.data.accessToken, { isOnline: true });
+  const started = await request('/driver/shift', auth.data.accessToken, { deviceId: 'native-test-device', refreshToken: auth.data.refreshToken });
+  assert.equal(started.status, 201);
+  const fix = { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() };
   const sender = await prisma.user.findUniqueOrThrow({ where: { phone: '+10000000000' } });
   const sentAt = new Date(Date.now() + 1);
   await prisma.message.createMany({ data: Array.from({ length: 100 }, (_, i) => ({ id: `native-chat-overflow-${i}`, senderId: sender.id, receiverId: auth.data.user.id, body: 'Synthetic older unread', sentAt })) });
   await prisma.message.create({ data: { id: 'native-chat-newest', senderId: sender.id, receiverId: auth.data.user.id, body: 'Synthetic newest unread', sentAt: new Date(sentAt.getTime() + 1) } });
   const overflow = await request('/native-shift/tick', started.data.shiftToken, fix);
   assert.ok(overflow.data.events.some((event: { messageId?: string }) => event.messageId === 'native-chat-newest'));
-  assert.equal((await request('/driver/shift/stop', auth.data.accessToken, {})).status, 204);
-  assert.equal((await request('/native-shift/tick', started.data.shiftToken, fix)).status, 401);
-  assert.equal((await request('/driver/profile', auth.data.accessToken)).data.isOnline, false);
-  await request('/driver/status', auth.data.accessToken, { isOnline: true });
-  await request('/native-shift/stop', started.data.shiftToken, {});
-  assert.equal((await request('/driver/profile', auth.data.accessToken)).data.isOnline, true);
+
 });
 
 
@@ -469,4 +473,40 @@ test('native shift cannot start without matching device and GPS or renew with a 
   await request('/auth/logout', '', { refreshToken: auth.data.refreshToken });
   assert.equal((await request('/native-shift/tick', second.data.shiftToken, fix)).status, 401);
   assert.equal((await request('/driver/profile', auth.data.accessToken)).data.isOnline, false);
+});
+
+test('native task stop publishes persisted offline state to the driver and dispatcher', async () => {
+  const auth = await request('/auth/login', '', { phone: '+10000000101', password, deviceId: 'native-test-device' });
+  await request('/driver/location', auth.data.accessToken, { lat: 37.96, lng: 58.32 });
+  await request('/driver/status', auth.data.accessToken, { isOnline: true });
+  const started = await request('/driver/shift', auth.data.accessToken, { deviceId: 'native-test-device', refreshToken: auth.data.refreshToken });
+  assert.equal(started.status, 201);
+  const driver = await socket(auth.data.accessToken);
+  const admin = await socket(adminToken);
+  const stopped = (client: Socket) => new Promise<Record<string, unknown>>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Offline shift status was not broadcast')), 1500);
+    client.on('driver:status', event => {
+      if (event.driverId !== auth.data.user.driver.id || event.isOnline !== false) return;
+      clearTimeout(timer);
+      resolve(event);
+    });
+  });
+  const observed = Promise.all([stopped(driver), stopped(admin)]);
+  const result = await request('/native-shift/stop', started.data.shiftToken, {});
+  assert.equal(result.status, 204);
+  for (const event of await observed) assert.equal(event.reason, 'SHIFT_ENDED');
+  assert.equal((await request('/driver/profile', auth.data.accessToken)).data.isOnline, false);
+});
+
+test('explicit shift stop revokes its credential and a later replay cannot offline the driver', async () => {
+  const auth = await request('/auth/login', '', { phone: '+10000000101', password, deviceId: 'native-test-device' });
+  const started = await request('/driver/shift', auth.data.accessToken, { deviceId: 'native-test-device', refreshToken: auth.data.refreshToken });
+  assert.equal(started.status, 201);
+  assert.equal((await request('/driver/shift/stop', auth.data.accessToken, {})).status, 204);
+  const fix = { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() };
+  assert.equal((await request('/native-shift/tick', started.data.shiftToken, fix)).status, 401);
+  assert.equal((await request('/driver/profile', auth.data.accessToken)).data.isOnline, false);
+  assert.equal((await request('/driver/status', auth.data.accessToken, { isOnline: true })).status, 200);
+  assert.equal((await request('/native-shift/stop', started.data.shiftToken, {})).status, 204);
+  assert.equal((await request('/driver/profile', auth.data.accessToken)).data.isOnline, true);
 });

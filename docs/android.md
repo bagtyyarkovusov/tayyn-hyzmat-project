@@ -33,7 +33,7 @@ The artifact is `android/app/build/outputs/apk/debug/TayynHyzmat-debug.apk`. A d
 
 ## Verification and remaining release gates
 
-On 2026-10-15, the isolated branch passed 24 public HTTP/Socket.IO tests, 5 backend unit tests, 15 Chromium actor workflows, TypeScript checks and app-only Android debug assembly/JUnit tests. Public regressions showed transient GPS retry, revoked native stop credentials and unread chat overflow fail before fixes and pass afterward. The two Java notification-boundary tests cover deduplication, canonical removal/expiry and channel-specific clearing. These checks do not establish native phone behavior.
+On 2026-10-15, the isolated branch passed 27 public HTTP/Socket.IO tests, 5 backend unit tests, 18 Chromium actor workflows, TypeScript checks and app-only Android debug assembly/JUnit tests. Public regressions showed transient GPS retry, revoked native stop credentials, unread chat overflow, native shift status broadcasts and account-switch races fail before fixes and pass afterward. The two Java notification-boundary tests cover deduplication, canonical removal/expiry and channel-specific clearing. These checks do not establish native phone behavior.
 
 Before release, run the APK against the matching isolated API on intended Android phones and record:
 
@@ -45,4 +45,4 @@ Before release, run the APK against the matching isolated API on intended Androi
 - Combined private-offer integration: reservation privacy, original 20-second deadline, fallback and event identity across reconnect. No client may extend a server deadline.
 - Combined credential-management integration: captured credential version on leases and immediate invalidation on phone/password reset. `revokeUserShift` is the existing explicit invalidation hook; this independent branch has no credential-version model and does not claim that integration is complete.
 
-No emulator or physical-device runtime test, locked-screen/Doze test or release-signature verification has been performed for this branch.
+The listed local emulator could not boot because its AVD files were unavailable. No emulator or physical-device runtime test, locked-screen/Doze test or release-signature verification has been performed for this branch.

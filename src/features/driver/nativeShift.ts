@@ -32,7 +32,7 @@ interface NativeShiftPlugin {
     leaseDurationMs: number;
     userId: string;
   }): Promise<void>;
-  stop(): Promise<void>;
+  stop(options?: { shiftToken: string }): Promise<void>;
   clear(options: { channel: "orders" | "chat" }): Promise<void>;
   settings(): Promise<void>;
   notificationTarget(): Promise<{ channel: string }>;
@@ -113,7 +113,7 @@ export async function startNativeShift() {
       userId: storedUserId() || "",
     });
     if (current !== generation) {
-      await nativeShift.stop();
+      await nativeShift.stop({ shiftToken: data.shiftToken });
       await revokeCredential();
     }
   } catch (error) {

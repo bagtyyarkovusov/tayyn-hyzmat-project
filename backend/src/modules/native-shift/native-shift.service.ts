@@ -15,6 +15,16 @@ type Fix = { lat: number; lng: number; recordedAt: string; accuracy?: number };
 type Event = { id: string; channel: 'orders' | 'chat'; title: string; body: string; expiresAt: string; orderId?: string; messageId?: string };
 const digest = (token: string) => createHash('sha256').update(token).digest('hex');
 
+async function broadcastStopped(driverId: string): Promise<void> {
+  const driver = await prisma.driver.findUnique({ where: { id: driverId } });
+  if (!driver || driver.isOnline) return;
+  try {
+    getIO().to(rooms.driver(driverId)).to(rooms.admins()).emit('driver:status', {
+      driverId, isOnline: false, isAvailable: driver.isAvailable,
+      updatedAt: driver.updatedAt.toISOString(), reason: 'SHIFT_ENDED'
+    });
+  } catch (err) { logger.warn({ err }, 'Failed to broadcast native shift stop'); }
+}
 export async function revokeDriverShift(driverId: string): Promise<void> {
   await prisma.$executeRaw`UPDATE native_shift_leases SET revoked_at = NOW() WHERE driver_id = ${driverId} AND revoked_at IS NULL`;
 }
@@ -22,7 +32,7 @@ export async function revokeUserShift(userId: string): Promise<void> {
   await prisma.$executeRaw`UPDATE native_shift_leases SET revoked_at = NOW() WHERE driver_id IN (SELECT id FROM drivers WHERE user_id = ${userId}) AND revoked_at IS NULL`;
   await prisma.driver.updateMany({ where: { userId }, data: { isOnline: false } });
   const driver = await prisma.driver.findUnique({ where: { userId } });
-  if (driver) { await syncDriverDistrictRoom(driver.id); await districts.broadcastDistrictStats(); }
+  if (driver) { await broadcastStopped(driver.id); await syncDriverDistrictRoom(driver.id); await districts.broadcastDistrictStats(); }
 }
 export async function start(driver: Driver, deviceId: string, refreshToken: string) {
   assertOrderEligibility(driver);
@@ -39,6 +49,7 @@ export async function start(driver: Driver, deviceId: string, refreshToken: stri
 export async function stop(driver: Driver): Promise<void> {
   await revokeDriverShift(driver.id);
   await prisma.driver.updateMany({ where: { id: driver.id }, data: { isOnline: false } });
+  await broadcastStopped(driver.id);
   await syncDriverDistrictRoom(driver.id);
   await districts.broadcastDistrictStats();
 }
@@ -51,7 +62,7 @@ export async function stopToken(token: string): Promise<void> {
     await tx.driver.updateMany({ where: { id: lease.driver_id }, data: { isOnline: false } });
     return lease.driver_id;
   });
-  if (stopped) { await syncDriverDistrictRoom(stopped); await districts.broadcastDistrictStats(); }
+  if (stopped) { await broadcastStopped(stopped); await syncDriverDistrictRoom(stopped); await districts.broadcastDistrictStats(); }
 }
 export async function tick(token: string, fix: Fix) {
   const now = new Date();

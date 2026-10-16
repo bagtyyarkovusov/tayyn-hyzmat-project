@@ -199,7 +199,7 @@ public class DriverShiftPlugin extends Plugin {
 
   @PluginMethod
   public void stop(PluginCall call) {
-    ShiftService.end(getContext());
+    ShiftService.end(getContext(), call.getString("shiftToken"));
     call.resolve();
   }
 

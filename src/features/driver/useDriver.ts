@@ -1,5 +1,5 @@
 import { onMounted, onUnmounted, reactive, readonly, watch } from "vue";
-import { driverApi, errorMessage } from "@/shared/api";
+import { driverApi, errorMessage, apiBase, tokens } from "@/shared/api";
 import { driverSession } from "@/features/auth/session";
 import { closeOrderAlerts, notifyOrder, notifyChat } from "./alerts";
 import type { Balance, District, DriverProfile, Order } from "./model";
@@ -95,6 +95,7 @@ watch(
     state.error = "";
     state.notice = "";
     state.loading = false;
+    state.busy = false;
     state.position = null;
     state.gpsReady = false;
     state.nativeRunning = false;
@@ -150,15 +151,16 @@ async function refresh() {
 }
 async function act(work: () => Promise<void>) {
   if (state.busy) return;
+  const generation = sessionGeneration;
   state.busy = true;
   state.error = "";
   state.notice = "";
   try {
     await work();
   } catch (error) {
-    state.error = errorMessage(error);
+    if (generation === sessionGeneration) state.error = errorMessage(error);
   } finally {
-    state.busy = false;
+    if (generation === sessionGeneration) state.busy = false;
   }
 }
 async function accept(orderId: string, etaMinutes: number) {
@@ -198,6 +200,35 @@ async function transition(
     if (action === "cancel") state.notice = "Заказ отменён.";
   });
 }
+function nativeAccountRequest() {
+  const generation = sessionGeneration;
+  const accessToken = tokens.access("driver");
+  const current = () => generation === sessionGeneration;
+  return {
+    current,
+    async post<T>(path: string, body: unknown): Promise<{ data: T }> {
+      if (!current()) throw new Error("Сессия уже изменена.");
+      const response = await fetch(`${apiBase}${path}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!current()) throw new Error("Сессия уже изменена.");
+      const data = await response.json().catch(() => null);
+      if (!response.ok)
+        throw new Error(
+          data?.message ||
+            data?.error?.message ||
+            "Не удалось выполнить запрос.",
+        );
+      return { data: data as T };
+    },
+  };
+}
 async function setOnline() {
   if (!state.profile) return;
   const isOnline = !state.profile.isOnline;
@@ -205,20 +236,27 @@ async function setOnline() {
     state.gpsError = "Включите GPS перед выходом на линию.";
     return;
   }
+  const account = nativeAccountRequest();
   await act(async () => {
     if (!isOnline) await stopNativeShift();
-    await driverApi.post("/driver/status", { isOnline, isAvailable: isOnline });
+    if (!account.current()) return;
+    await (nativeAndroid ? account : driverApi).post("/driver/status", {
+      isOnline,
+      isAvailable: isOnline,
+    });
+    if (!account.current()) return;
     if (isOnline && nativeAndroid) {
       try {
         await startNativeShift();
       } catch (error) {
-        await driverApi
+        if (!account.current()) return;
+        await account
           .post("/driver/status", { isOnline: false })
           .catch(() => {});
         throw error;
       }
     }
-    await refresh();
+    if (account.current()) await refresh();
   });
 }
 async function setDistrict(districtId: string) {
@@ -262,13 +300,16 @@ async function synchronizeNative() {
 }
 async function enableNativeGps() {
   const generation = sessionGeneration;
+  const account = nativeAccountRequest();
   state.gpsPending = true;
   try {
     const permissions = await nativeShift.permissions();
+    if (!account.current()) return;
     if (!permissions.locationGranted)
       throw new Error("Разрешите точный GPS в настройках приложения.");
     const position = await nativeShift.location();
-    const { data } = await driverApi.post<{ districtId: string | null }>(
+    if (!account.current()) return;
+    const { data } = await account.post<{ districtId: string | null }>(
       "/driver/location",
       position,
     );
