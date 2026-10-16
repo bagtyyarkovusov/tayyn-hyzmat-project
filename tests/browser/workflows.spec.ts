@@ -3061,3 +3061,78 @@ test("today overview stays compact on mobile and separates request failure from 
     await expect(today).toBeVisible();
   }
 });
+
+test("driver cancellation is visible only while waiting for the passenger", async ({
+  browser,
+}) => {
+  const adminContext = await browser.newContext(),
+    driverContext = await browser.newContext();
+  try {
+    const admin = await adminContext.newPage(),
+      driver = await driverContext.newPage();
+    await login(admin, "admin");
+    await login(driver, "driver");
+    await startGps(driver);
+    await driver
+      .getByRole("button", { name: "Выйти на линию", exact: true })
+      .click();
+    const adminToken = await admin.evaluate(() =>
+      localStorage.getItem("openride.admin.accessToken"),
+    );
+    const driverToken = await driver.evaluate(() =>
+      localStorage.getItem("openride.driver.accessToken"),
+    );
+    const created = await admin.request.post(
+      `${process.env.TEST_API_URL}/admin/orders`,
+      {
+        headers: { Authorization: `Bearer ${adminToken}` },
+        data: {
+          districtId: process.env.TEST_REGION_ID,
+          clientPhone: "+99365000000",
+          priceEstimated: 10,
+        },
+      },
+    );
+    expect(created.ok()).toBe(true);
+    const orderId = (await created.json()).id;
+    expect(
+      (
+        await driver.request.post(`${process.env.TEST_API_URL}/orders/accept`, {
+          headers: { Authorization: `Bearer ${driverToken}` },
+          data: { orderId },
+        })
+      ).ok(),
+    ).toBe(true);
+    const trip = driver.getByRole("dialog", {
+      name: "Управление поездкой",
+      exact: true,
+    });
+    await expect(trip).toBeVisible();
+    await expect(
+      trip.getByRole("button", { name: "Отменить заказ", exact: true }),
+    ).toHaveCount(0);
+    await trip.getByRole("button", { name: "Я на месте", exact: true }).click();
+    await expect(
+      trip.getByRole("button", { name: "Отменить заказ", exact: true }),
+    ).toBeVisible();
+    await trip
+      .getByRole("button", { name: "Начать поездку", exact: true })
+      .click();
+    await expect(
+      trip.getByRole("button", { name: "Отменить заказ", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      trip.getByRole("button", { name: "Завершить поездку", exact: true }),
+    ).toBeEnabled();
+    await trip
+      .getByRole("button", { name: "Завершить поездку", exact: true })
+      .click();
+    await expect(trip).toBeHidden();
+    await driver
+      .getByRole("button", { name: "Уйти с линии", exact: true })
+      .click();
+  } finally {
+    await adminContext.close();
+    await driverContext.close();
+  }
+});
