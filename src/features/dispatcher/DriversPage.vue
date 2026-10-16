@@ -89,23 +89,33 @@ const visible = computed(() =>
       :loading="loading"
       :error="error"
       :empty="!visible.length"
+      :empty-title="
+        search || filter ? 'Водители не найдены' : 'Водителей пока нет'
+      "
+      :empty-description="
+        search || filter
+          ? 'Измените поиск или статус.'
+          : 'Добавьте водителя, чтобы начать работу.'
+      "
       @retry="load"
     />
     <div
-      v-if="!loading && !error"
+      v-if="!loading && !error && visible.length"
       class="overflow-hidden rounded-xl border bg-card"
     >
       <RouterLink
         v-for="driver in visible"
         :key="driver.id"
         :to="`/adminDrivers/${driver.id}`"
-        class="flex items-center gap-4 border-b p-4 transition-colors last:border-0 hover:bg-muted/60"
+        class="grid grid-cols-[2.5rem_minmax(0,1fr)] items-start gap-x-3 gap-y-2 border-b p-4 transition-colors last:border-0 hover:bg-muted/60 sm:flex sm:items-center sm:gap-4"
         ><span
-          class="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 font-semibold text-primary"
+          class="row-span-2 flex size-10 shrink-0 self-center items-center justify-center rounded-full bg-primary/10 font-semibold text-primary"
           >{{ driver.user.fullName?.slice(0, 1) || "В" }}</span
         >
         <div class="min-w-0 flex-1">
-          <p class="truncate font-medium">{{ driver.user.fullName }}</p>
+          <p class="line-clamp-2 break-words font-medium">
+            {{ driver.user.fullName }}
+          </p>
           <p class="text-xs text-muted-foreground">
             {{ driver.user.phone }} ·
             {{ driver.currentVehicle?.plateNumber || "Нет автомобиля" }}
@@ -114,7 +124,9 @@ const visible = computed(() =>
             {{ driver.district?.name || "Без района" }}
           </p>
         </div>
-        <div class="space-y-2 text-right">
+        <div
+          class="col-start-2 flex flex-wrap items-center gap-x-3 gap-y-1 sm:block sm:shrink-0 sm:space-y-2 sm:text-right"
+        >
           <Badge
             :variant="driver.status === 'BLOCKED' ? 'destructive' : 'secondary'"
             >{{ statusLabel(driver.status) }}</Badge
@@ -149,7 +161,7 @@ const visible = computed(() =>
         <DialogHeader
           ><DialogTitle>Новый водитель</DialogTitle
           ><DialogDescription
-            >Укажите имя, телефон, пароль и район.</DialogDescription
+            >Укажите имя, телефон и пароль.</DialogDescription
           ></DialogHeader
         >
         <CreateDriverForm
