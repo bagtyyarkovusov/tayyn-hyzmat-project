@@ -393,9 +393,11 @@ model Transaction {
   currency     String             @default("TMT")
   status       TransactionStatus  @default(COMPLETED)
   note         String?
+  operationId  String?            @map("operation_id")
   createdBy    String?            @map("created_by") // admin id, if manually adjusted
   createdAt    DateTime           @default(now()) @map("created_at")
 
+  @@unique([createdBy, operationId])
   @@index([balanceId])
   @@index([orderId])
   @@map("transactions")

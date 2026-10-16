@@ -26,6 +26,7 @@ const resolveOrderSchema = z.object({
 });
 
 const balanceAdjustSchema = z.object({
+  operationId: z.string({ required_error: 'Обновите страницу диспетчера и повторите операцию' }).uuid(),
   amount: moneySchema('9999999999.99').refine((v) => v !== 0, 'Сумма не может быть равна нулю'),
   type: z.enum(['TOPUP', 'WITHDRAWAL', 'ADJUSTMENT', 'BONUS']).default('ADJUSTMENT'),
   note: z.string().trim().max(500).optional()

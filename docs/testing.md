@@ -23,3 +23,11 @@ Order prices allow positive TMT amounts through 99,999,999.99 with at most two d
 ### Driver deactivation
 
 The dispatcher account-removal command now deactivates access. User/driver IDs, wallet, ledger entries, chats and order attribution remain available to the dispatcher. An ACCEPTED, WAITING or STARTED trip rejects deactivation with409 before any changes. Successful deactivation blocks the user, increments its credential generation, revokes refresh tokens/native leases and disconnects sockets. Driver approval, unblocking, password changes and device approval cannot clear the user-level block.
+
+### Retrying balance adjustments
+
+Every dispatcher balance-adjustment command requires a UUID `operationId`. Old dispatcher tabs must refresh after this deployment; missing IDs return400 with refresh guidance. The UI retains an ID when the response is uncertain and reuses it on retry. Changing driver, amount, direction or note starts a different intent; confirmed success clears the previous ID.
+
+The ledger stores each actor/operation pair once. Parallel retries serialize before locking the driver/wallet. Matching retries return the original committed transaction and its resulting balance, even after later changes; mismatched driver, amount, type or note returns409. A replay never broadcasts the old balance. Different dispatchers have separate operation scopes. Failed ledger writes roll back balance and operation ID, so the same command can retry safely. Post-commit room/stat broadcasts log failures without turning a committed change into an HTTP failure.
+
+The schema change is additive: nullable operation IDs preserve existing ledger entries. The column and concurrent unique index are separate Prisma migrations so PostgreSQL executes the index outside an implicit multi-statement transaction. Keep IDs/index on an application rollback; removing them would lose retry history.

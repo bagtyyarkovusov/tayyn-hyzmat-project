@@ -201,6 +201,7 @@ async function act(action: string, body?: unknown) {
       return;
     }
     await adminApi.post(`/admin/drivers/${props.driverId}/${action}`, body);
+    if (action === "balance") walletIntent = null;
     confirm.value = "";
     notice.value = "Изменения сохранены";
     await Promise.all([load(), loadHistory()]);
@@ -210,14 +211,27 @@ async function act(action: string, body?: unknown) {
     pending.value = false;
   }
 }
+// Keep one durable command ID across a lost response or a deliberate retry.
+let walletIntent: { fingerprint: string; operationId: string } | null = null;
+watch([() => props.driverId, amount, note], () => {
+  walletIntent = null;
+});
 function adjust(withdraw: boolean) {
-  if (!Number.isFinite(Number(amount.value)) || Number(amount.value) <= 0)
+  if (
+    pending.value ||
+    !Number.isFinite(Number(amount.value)) ||
+    Number(amount.value) <= 0
+  )
     return;
-  void act("balance", {
+  const body = {
     amount: Number(amount.value) * (withdraw ? -1 : 1),
     type: withdraw ? "WITHDRAWAL" : "TOPUP",
     note: note.value,
-  });
+  };
+  const fingerprint = JSON.stringify({ driverId: props.driverId, ...body });
+  if (!walletIntent || walletIntent.fingerprint !== fingerprint)
+    walletIntent = { fingerprint, operationId: crypto.randomUUID() };
+  void act("balance", { ...body, operationId: walletIntent.operationId });
 }
 </script>
 <template>

@@ -305,10 +305,23 @@ async function deleteDriver(driverId, actorId) {
   return { id: driverId };
 }
 
-async function adjustBalance(driverId, { amount, type, note }, actorId) {
+async function adjustBalance(driverId, { amount, type, note, operationId }, actorId) {
   const driver = await findDriverOrThrow(driverId);
 
   const result = await prisma.$transaction(async (tx) => {
+    // Serialize one actor intent even if a mistaken retry names a different driver.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`${actorId}:${operationId}`}, 0))`;
+    const previous = await tx.transaction.findUnique({
+      where: { createdBy_operationId: { createdBy: actorId, operationId } }, include: { balance: true }
+    });
+    if (previous) {
+      if (previous.balance.userId !== driver.userId || previous.type !== type ||
+          !D(previous.amount).eq(amount) || (previous.note || '') !== (note || '')) {
+        throw ApiError.conflict('Идентификатор операции уже использован для другого действия');
+      }
+      const { balance: savedBalance, ...transaction } = previous;
+      return { balance: { ...savedBalance, amount: previous.balanceAfter }, transaction, replayed: true };
+    }
     // Same lock order as order mutations: driver, optional order, wallet.
     await tx.$queryRaw`SELECT id FROM drivers WHERE id = ${driverId} FOR UPDATE`;
     const balance = await lockedBalance(tx, driver.userId);
@@ -336,12 +349,15 @@ async function adjustBalance(driverId, { amount, type, note }, actorId) {
         amount: D(amount),
         balanceAfter: newAmount,
         note,
-        createdBy: actorId
+        createdBy: actorId,
+        operationId
       }
     });
 
     return { balance: { ...balance, amount: newAmount }, transaction };
   });
+
+  if (result.replayed) return result;
 
   safeEmit((io) => {
     // Also to admins: a live driver list ("Синхронизируй всё с админ
@@ -359,10 +375,12 @@ async function adjustBalance(driverId, { amount, type, note }, actorId) {
   // evaluated from the database directly in sockets/index.js). Crossing
   // zero either grants or revokes "receives new order broadcasts" without
   // requiring the driver to reconnect.
-  await syncDriverDistrictRoom(driverId);
+  try { await syncDriverDistrictRoom(driverId); }
+  catch (err) { logger.warn({ err, driverId }, 'Failed to synchronize wallet room after commit'); }
   // A driver crossing zero balance drops out of (or back into) their
   // district's "free drivers" count.
-  await districtsService.broadcastDistrictStats();
+  try { await districtsService.broadcastDistrictStats(); }
+  catch (err) { logger.warn({ err, driverId }, 'Failed to broadcast wallet update after commit'); }
 
   logger.info({ driverId, actorId, amount, type }, 'Driver balance adjusted');
   return result;
