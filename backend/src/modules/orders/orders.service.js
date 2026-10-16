@@ -7,6 +7,7 @@ const logger = require('../../config/logger');
 const districtsService = require('../districts/districts.service');
 const { haversineDistanceKm } = require('../../utils/geo');
 const { recordOrderCharge } = require('./order-charge');
+const { lockedBalance } = require('../balance/locked-balance');
 const { assertOrderEligibility } = require('../driver/gps-eligibility');
 const { refreshOrderRecipients } = require('../../sockets/roomSync');
 
@@ -150,6 +151,10 @@ async function accept(orderId, driver, etaMinutes) {
     const currentDriver = await tx.driver.findUnique({ where: { id: driver.id } });
     if (!currentDriver) throw ApiError.notFound('Профиль водителя не найден');
     assertOrderEligibility(currentDriver);
+    const balance = await lockedBalance(tx, currentDriver.userId);
+    if (!balance.amount.greaterThan(0)) {
+      throw ApiError.forbidden('Пополните баланс, чтобы принимать заказы');
+    }
     // A driver can only have one order in progress at a time - this used to
     // be implicitly true because the only way to accept was the "Новый
     // заказ" popup (order.js#applyNewOrder never shows it while an order is

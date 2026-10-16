@@ -10,6 +10,8 @@ const driverService = require('../driver/driver.service');
 const authService = require('../auth/auth.service');
 const { hashPassword } = require('../../utils/password');
 
+const { lockedBalance } = require('../balance/locked-balance');
+
 const D = (value) => new Prisma.Decimal(value ?? 0);
 
 function safeEmit(fn) {
@@ -293,11 +295,9 @@ async function adjustBalance(driverId, { amount, type, note }, actorId) {
   const driver = await findDriverOrThrow(driverId);
 
   const result = await prisma.$transaction(async (tx) => {
-    const balance = await tx.balance.upsert({
-      where: { userId: driver.userId },
-      update: {},
-      create: { userId: driver.userId, amount: 0 }
-    });
+    // Same lock order as order mutations: driver, optional order, wallet.
+    await tx.$queryRaw`SELECT id FROM drivers WHERE id = ${driverId} FOR UPDATE`;
+    const balance = await lockedBalance(tx, driver.userId);
 
     const newAmount = D(balance.amount).add(amount);
     if (newAmount.isNegative()) {

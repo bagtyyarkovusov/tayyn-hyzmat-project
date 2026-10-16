@@ -548,3 +548,125 @@ test('a claim racing dispatcher cancellation never leaves an unpaid active trip'
     assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
   }
 });
+
+test('concurrent topups preserve every credit and its ledger balance', async () => {
+  const driver = (await request('/driver/profile', driverToken)).data;
+  for (let batch = 0; batch < 10; batch++) {
+    const responses = await Promise.all(Array.from({ length: 8 }, () =>
+      request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 1, type: 'TOPUP' })
+    ));
+    assert.ok(responses.every(response => response.status === 200));
+  }
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '580');
+  const history = (await request('/driver/history?limit=100', driverToken)).data.transactions;
+  assert.equal(history.total, 80);
+  assert.equal(history.items.reduce((sum: number, entry: { amount: string }) => sum + Number(entry.amount), 0), 80);
+  assert.deepEqual(history.items.map((entry: { balanceAfter: string }) => Number(entry.balanceAfter)).sort((a: number, b: number) => a - b), Array.from({ length: 80 }, (_, index) => 501 + index));
+});
+
+test('a queued claim rechecks positive balance after a concurrent withdrawal commits', async () => {
+  const driver = (await request('/driver/profile', driverToken)).data;
+  const created = await order();
+  let release!: () => void;
+  let locked!: (pid: number) => void;
+  const ready = new Promise<number>(resolve => { locked = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const heldWallet = prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM balances WHERE user_id = ${driver.userId} FOR UPDATE`;
+    const [connection] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+    locked(connection.pid);
+    await gate;
+  }, { timeout: 10000 });
+  async function blockedBy(pid: number) {
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline) {
+      const waiting = await prisma.$queryRaw<Array<{ pid: number }>>`SELECT pid FROM pg_stat_activity WHERE ${pid} = ANY(pg_blocking_pids(pid))`;
+      if (waiting.length) return waiting[0].pid;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    throw new Error('Concurrent request did not reach its database lock');
+  }
+  let withdrawal: ReturnType<typeof request> | undefined;
+  let claim: ReturnType<typeof request> | undefined;
+  try {
+    const walletPid = await ready;
+    withdrawal = request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: -500, type: 'WITHDRAWAL' });
+    const withdrawalPid = await blockedBy(walletPid);
+    claim = request('/orders/accept', driverToken, { orderId: created.id });
+    await blockedBy(withdrawalPid);
+  } finally {
+    release();
+    await heldWallet;
+  }
+  assert.equal((await withdrawal!).status, 200);
+  assert.equal((await claim!).status, 403);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '0');
+  assert.equal((await request('/orders/current', driverToken)).data, null);
+  const history = (await request('/driver/history', driverToken)).data.transactions;
+  assert.equal(history.total, 1);
+  assert.equal(history.items[0].amount, '-500');
+});
+
+test('topups racing order charges and refunds reconcile through public history', async () => {
+  const driver = (await request('/driver/profile', driverToken)).data;
+  for (let round = 0; round < 20; round++) {
+    const created = await order();
+    const responses = await Promise.all([
+      request('/orders/accept', driverToken, { orderId: created.id }),
+      request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 1, type: 'TOPUP' })
+    ]);
+    assert.ok(responses.every(response => response.status === 200));
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, String(491 + round * 2));
+    const cancelled = await Promise.all([
+      request('/orders/cancel', driverToken, { orderId: created.id }),
+      request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 1, type: 'TOPUP' })
+    ]);
+    assert.ok(cancelled.every(response => response.status === 200));
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, String(502 + round * 2));
+  }
+  const history = (await request('/driver/history?limit=100', driverToken)).data.transactions;
+  assert.equal(history.total, 80);
+  assert.equal(history.items.filter((entry: { type: string }) => entry.type === 'PAYMENT').length, 20);
+  assert.equal(history.items.filter((entry: { type: string }) => entry.type === 'REFUND').length, 20);
+  assert.equal(history.items.reduce((sum: number, entry: { amount: string }) => sum + Number(entry.amount), 0), 40);
+});
+
+test('concurrent withdrawals recheck funds without creating a forbidden ledger entry', async () => {
+  const driver = (await request('/driver/profile', driverToken)).data;
+  const responses = await Promise.all(Array.from({ length: 2 }, () =>
+    request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: -400, type: 'WITHDRAWAL' })
+  ));
+  assert.deepEqual(responses.map(response => response.status).sort(), [200, 400]);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '100');
+  const history = (await request('/driver/history', driverToken)).data.transactions;
+  assert.equal(history.total, 1);
+  assert.equal(history.items[0].amount, '-400');
+  assert.equal(history.items[0].balanceAfter, '100');
+});
+
+test('a failed ledger insert rolls back the claim and wallet before a safe retry', async () => {
+  const created = await order();
+  const client = await socket(adminToken);
+  const payments: unknown[] = [];
+  client.on('balance:updated', event => { if (event.orderId === created.id) payments.push(event); });
+  // A storage-boundary failure fixture, confined to this disposable schema.
+  await prisma.$executeRawUnsafe('ALTER TABLE transactions ADD CONSTRAINT fail_test_payment CHECK (amount <> -10)');
+  try {
+    assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 500);
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
+    assert.equal((await request('/orders/current', driverToken)).data, null);
+    assert.equal((await request('/driver/profile', driverToken)).data.isAvailable, true);
+    assert.equal((await request('/driver/history', driverToken)).data.transactions.total, 0);
+    assert.equal(payments.length, 0);
+  } finally {
+    await prisma.$executeRawUnsafe('ALTER TABLE transactions DROP CONSTRAINT fail_test_payment');
+  }
+  assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 200);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '490');
+  const history = (await request('/driver/history', driverToken)).data.transactions;
+  assert.equal(history.total, 1);
+  assert.equal(history.items[0].amount, '-10');
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(payments.length, 1);
+  client.disconnect();
+});
