@@ -1925,3 +1925,32 @@ test("a rejected Yandex lookup leaves GPS readiness and actual coordinates usabl
     page.getByRole("button", { name: "Выйти на линию", exact: true }),
   ).toBeEnabled();
 });
+
+test("dispatcher overview uses global counts and labels completed trip values as all-time", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const overview = page.waitForResponse((response) =>
+    response.url().endsWith("/admin/overview"),
+  );
+  await login(page, "admin");
+  expect((await overview).ok()).toBe(true);
+  await expect(
+    page.getByRole("heading", { name: "Обзор", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", {
+      name: "Завершённые поездки за всё время",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Средняя известная стоимость", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(/последние 100|Сумма последних/)).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+});

@@ -4,7 +4,7 @@ const rooms = require('../../sockets/rooms');
 const logger = require('../../config/logger');
 const { findNearestDistrict, findDistrictByBoundary } = require('../../utils/geo');
 const { refreshOrderRecipients } = require('../../sockets/roomSync');
-const { GPS_FRESHNESS_MS } = require('../driver/gps-eligibility');
+const { onlineDriverWhere } = require('../driver/gps-eligibility');
 
 // "Активные заказы" - anything still in the pipeline (not finished, not
 // cancelled). "Свободные водители" - online, available, approved AND with a
@@ -18,6 +18,7 @@ async function listDistrictsWithStats() {
     orderBy: { name: 'asc' }
   });
 
+  const onlineWhere = onlineDriverWhere();
   const [orderCounts, candidateFreeDrivers, onlineCounts] = await Promise.all([
     prisma.order.groupBy({
       by: ['districtId'],
@@ -28,12 +29,12 @@ async function listDistrictsWithStats() {
     // tallied here in JS rather than in a groupBy - simple and unambiguous
     // for the driver counts a single city instance actually has.
     prisma.driver.findMany({
-      where: { districtId: { not: null }, status: 'APPROVED', isOnline: true, lastLat: { not: null }, lastLng: { not: null }, lastLocationAt: { gt: new Date(Date.now() - GPS_FRESHNESS_MS) }, isAvailable: true },
+      where: { ...onlineWhere, districtId: { not: null }, isAvailable: true },
       select: { districtId: true, user: { select: { balance: { select: { amount: true } } } } }
     }),
     prisma.driver.groupBy({
       by: ['districtId'],
-      where: { districtId: { not: null }, status: 'APPROVED', isOnline: true, lastLat: { not: null }, lastLng: { not: null }, lastLocationAt: { gt: new Date(Date.now() - GPS_FRESHNESS_MS) } },
+      where: { ...onlineWhere, districtId: { not: null } },
       _count: { _all: true }
     })
   ]);

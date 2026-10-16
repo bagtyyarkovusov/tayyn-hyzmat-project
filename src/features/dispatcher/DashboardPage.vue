@@ -4,56 +4,41 @@ import { ArrowUpRight, Plus } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
 import { adminApi } from "@/shared/api";
 import { useResource } from "./useResource";
-import {
-  money,
-  type District,
-  type Driver,
-  type Order,
-  type Page,
-} from "./domain";
+import { money, type District } from "./domain";
+interface Overview {
+  totalDrivers: number;
+  onlineDrivers: number;
+  pendingDrivers: number;
+  activeOrders: number;
+  completedTrips: number;
+  pricedCompletedTrips: number;
+  completedTripValue: string;
+  averageCompletedTripValue: string;
+}
 import PageState from "./components/PageState.vue";
 const { data, loading, error, load } = useResource(
   async () => {
-    const [regions, drivers, orders, completed, pending] = await Promise.all([
+    const [regions, overview] = await Promise.all([
       adminApi.get<District[]>("/districts"),
-      adminApi.get<Page<Driver>>("/admin/drivers", { params: { limit: 100 } }),
-      adminApi.get<Page<Order>>("/admin/orders", {
-        params: { status: "active", limit: 1 },
-      }),
-      adminApi.get<Page<Order>>("/admin/orders", {
-        params: { status: "completed", limit: 100 },
-      }),
-      adminApi.get<Page<Driver>>("/admin/drivers", {
-        params: { status: "PENDING", limit: 1 },
-      }),
+      adminApi.get<Overview>("/admin/overview"),
     ]);
-    return {
-      regions: regions.data,
-      drivers: drivers.data.items,
-      orders: orders.data.total,
-      totalDrivers: drivers.data.total,
-      pending: pending.data.total,
-      completed: completed.data.total,
-      revenue: completed.data.items.reduce(
-        (sum, o) => sum + Number(o.priceFinal ?? o.priceEstimated ?? 0),
-        0,
-      ),
-      revenueCount: completed.data.items.length,
-    };
+    return { regions: regions.data, ...overview.data };
   },
   {
     regions: [] as District[],
-    drivers: [] as Driver[],
-    orders: 0,
     totalDrivers: 0,
-    pending: 0,
-    completed: 0,
-    revenue: 0,
-    revenueCount: 0,
+    onlineDrivers: 0,
+    pendingDrivers: 0,
+    activeOrders: 0,
+    completedTrips: 0,
+    pricedCompletedTrips: 0,
+    completedTripValue: "0.00",
+    averageCompletedTripValue: "0.00",
   },
   [
     "districts:stats",
     "driver:status",
+    "driver:registered",
     "order:new",
     "order:completed",
     "order:cancelled",
@@ -64,7 +49,7 @@ const { data, loading, error, load } = useResource(
   <div class="space-y-5">
     <header class="flex flex-wrap items-center justify-between gap-3">
       <div>
-        <h1 class="page-heading">Рабочая смена</h1>
+        <h1 class="page-heading">Обзор</h1>
         <p class="mt-1 text-sm text-muted-foreground">
           Заказы, водители и районы.
         </p>
@@ -79,14 +64,14 @@ const { data, loading, error, load } = useResource(
     <template v-if="!loading && !error">
       <section
         class="grid grid-cols-3 divide-x rounded-lg border bg-card"
-        aria-label="Сводка смены"
+        aria-label="Текущая ситуация"
       >
         <RouterLink
           to="/adminOrders"
           class="min-w-0 p-3 sm:p-4 hover:bg-secondary/50"
         >
           <p class="text-2xl font-semibold leading-tight tabular-nums">
-            {{ data.orders }}
+            {{ data.activeOrders }}
           </p>
           <p class="mt-1 text-xs text-muted-foreground">Активные заказы</p>
         </RouterLink>
@@ -95,23 +80,19 @@ const { data, loading, error, load } = useResource(
           class="min-w-0 p-3 sm:p-4 hover:bg-secondary/50"
         >
           <p class="text-2xl font-semibold leading-tight tabular-nums">
-            {{ data.drivers.filter((d) => d.isOnline).length
+            {{ data.onlineDrivers
             }}<span class="ml-1 text-sm font-normal text-muted-foreground"
               >/ {{ data.totalDrivers }}</span
             >
           </p>
-          <p class="mt-1 text-xs text-muted-foreground">
-            Водители на линии<span v-if="data.totalDrivers > 100">
-              · последние 100</span
-            >
-          </p>
+          <p class="mt-1 text-xs text-muted-foreground">Водители на линии</p>
         </RouterLink>
         <RouterLink
           to="/adminDrivers?status=PENDING"
           class="min-w-0 p-3 sm:p-4 hover:bg-secondary/50"
         >
           <p class="text-2xl font-semibold leading-tight tabular-nums">
-            {{ data.pending }}
+            {{ data.pendingDrivers }}
           </p>
           <p class="mt-1 text-xs text-muted-foreground">Ожидают проверки</p>
         </RouterLink>
@@ -150,33 +131,44 @@ const { data, loading, error, load } = useResource(
         </div>
       </section>
       <section class="border-t pt-4" aria-label="История завершённых поездок">
-        <h2 class="mb-3 text-sm font-semibold">Завершённые поездки</h2>
+        <h2 class="mb-3 text-sm font-semibold">
+          Завершённые поездки за всё время
+        </h2>
         <dl class="grid gap-3 text-sm sm:grid-cols-3">
           <div class="flex items-baseline justify-between gap-3 sm:block">
             <dt class="text-xs text-muted-foreground">Всего</dt>
             <dd class="font-semibold tabular-nums sm:mt-1">
-              {{ data.completed }}
+              {{ data.completedTrips }}
             </dd>
           </div>
           <div class="flex items-baseline justify-between gap-3 sm:block">
-            <dt class="text-xs text-muted-foreground">
-              Сумма последних {{ data.revenueCount }}
-            </dt>
+            <dt class="text-xs text-muted-foreground">Стоимость поездок</dt>
             <dd class="font-semibold tabular-nums sm:mt-1">
-              {{ money(data.revenue) }}
+              {{
+                data.pricedCompletedTrips ? money(data.completedTripValue) : "—"
+              }}
             </dd>
           </div>
           <div class="flex items-baseline justify-between gap-3 sm:block">
             <dt class="text-xs text-muted-foreground">
-              Средняя стоимость последних {{ data.revenueCount }}
+              Средняя известная стоимость
             </dt>
             <dd class="font-semibold tabular-nums sm:mt-1">
               {{
-                money(data.revenueCount ? data.revenue / data.revenueCount : 0)
+                data.pricedCompletedTrips
+                  ? money(data.averageCompletedTripValue)
+                  : "—"
               }}
             </dd>
           </div>
         </dl>
+        <p
+          v-if="data.pricedCompletedTrips < data.completedTrips"
+          class="mt-2 text-xs text-muted-foreground"
+        >
+          Стоимость известна для {{ data.pricedCompletedTrips }} из
+          {{ data.completedTrips }} поездок.
+        </p>
       </section>
     </template>
   </div>

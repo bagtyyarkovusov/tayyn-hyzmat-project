@@ -1294,3 +1294,102 @@ test('Turkmen phone inputs normalize formatting and reject other countries or in
   assert.equal(result.status, 201);
   assert.equal(result.data.clientPhone, '+99361001095');
 });
+
+
+test('dispatcher overview counts the full fleet and decimal completed trip value instead of a page sample', async () => {
+  const now = new Date();
+  const extraUsers: string[] = [];
+  // Earlier workflows create accounts; this measurement example owns a fixed fleet.
+  await prisma.user.deleteMany({ where: { role: 'DRIVER', phone: { notIn: ['+99360000101', '+99360000102'] } } });
+  try {
+    for (let index = 0; index < 107; index++) {
+      const user = await prisma.user.create({ data: {
+        phone: `+99361${String(index).padStart(6, '0')}`, fullName: `Analytics fixture ${index}`, role: 'DRIVER', passwordHash: 'fixture-only',
+        status: index === 106 ? 'BLOCKED' : 'ACTIVE',
+        driver: { create: {
+          districtId: regionId, status: index === 103 ? 'PENDING' : index === 104 ? 'BLOCKED' : 'APPROVED',
+          isOnline: index !== 101, isAvailable: true, lastLat: 37.96, lastLng: 58.32,
+          lastLocationAt: new Date(now.getTime() + (index === 102 ? -120000 : index === 105 ? 120000 : 0)),
+          createdAt: new Date('2020-01-01T00:00:00Z')
+        } }, balance: { create: { amount: 500 } }
+      } });
+      extraUsers.push(user.id);
+    }
+    await prisma.order.createMany({ data: [
+      ...Array.from({ length: 100 }, () => ({ districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'COMPLETED' as const, priceFinal: '0.10', completedAt: now })),
+      { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'COMPLETED', priceEstimated: '0.21', completedAt: now },
+      { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'COMPLETED', completedAt: now },
+      { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'CANCELLED', priceFinal: '999', cancelledAt: now },
+      { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'NEW', priceEstimated: '500' }
+    ] });
+    const page = await request('/admin/drivers?limit=100', adminToken);
+    assert.equal(page.data.total, 109);
+    assert.equal(page.data.items.length, 100);
+    assert.notEqual(page.data.items.filter((driver: { isOnline: boolean }) => driver.isOnline).length, 103);
+    const result = await request('/admin/overview', adminToken);
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.data, {
+      totalDrivers: 109, onlineDrivers: 103, pendingDrivers: 1, activeOrders: 1,
+      completedTrips: 102, pricedCompletedTrips: 101, completedTripValue: '10.21', averageCompletedTripValue: '0.10'
+    });
+    const districts = await request('/districts', adminToken);
+    const district = districts.data.find((item: { id: string }) => item.id === regionId);
+    assert.equal(district.onlineDrivers, 102);
+    assert.equal(district.freeDrivers, 102);
+  } finally {
+    await prisma.user.deleteMany({ where: { id: { in: extraUsers } } });
+  }
+});
+
+test('dispatcher overview protects roles and distinguishes empty, unknown and zero-priced trips', async () => {
+  assert.equal((await request('/admin/overview')).status, 401);
+  assert.equal((await request('/admin/overview', driverToken)).status, 403);
+  const empty = await request('/admin/overview', adminToken);
+  assert.equal(empty.status, 200);
+  assert.equal(empty.data.completedTrips, 0);
+  assert.equal(empty.data.pricedCompletedTrips, 0);
+  assert.equal(empty.data.completedTripValue, '0.00');
+  assert.equal(empty.data.averageCompletedTripValue, '0.00');
+  const now = new Date();
+  await prisma.order.createMany({ data: [
+    { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'COMPLETED', priceFinal: 0, priceEstimated: 50, completedAt: now },
+    { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'COMPLETED', priceFinal: '0.20', priceEstimated: 100, completedAt: now },
+    { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'COMPLETED', completedAt: now }
+  ] });
+  const result = await request('/admin/overview', adminToken);
+  assert.equal(result.data.completedTrips, 3);
+  assert.equal(result.data.pricedCompletedTrips, 2);
+  assert.equal(result.data.completedTripValue, '0.20');
+  assert.equal(result.data.averageCompletedTripValue, '0.10');
+  await prisma.driver.updateMany({ where: { user: { phone: '+99360000101' } }, data: { isAvailable: false } });
+  const busy = await request('/admin/overview', adminToken);
+  assert.equal(busy.data.onlineDrivers, 2, 'busy drivers remain part of the online fleet');
+  const districts = await request('/districts', adminToken);
+  const district = districts.data.find((item: { id: string }) => item.id === regionId);
+  assert.equal(district.onlineDrivers, 1);
+  assert.equal(district.freeDrivers, 0);
+});
+
+test('dispatcher overview invalidates live counts after approval, unblock and account deletion', async () => {
+  const user = await prisma.user.create({ data: { role: 'DRIVER', phone: '+99361999990', fullName: 'Analytics pending driver', passwordHash: 'fixture-only', driver: { create: { status: 'PENDING' } } }, include: { driver: true } });
+  const client = await socket(adminToken);
+  try {
+    assert.equal((await request('/admin/overview', adminToken)).data.pendingDrivers, 1);
+    const approved = nextSocketEvent(client, 'districts:stats', 500);
+    assert.equal((await request(`/admin/drivers/${user.driver!.id}/approve`, adminToken, {})).status, 200);
+    await approved;
+    assert.equal((await request('/admin/overview', adminToken)).data.pendingDrivers, 0);
+    assert.equal((await request(`/admin/drivers/${user.driver!.id}/block`, adminToken, {})).status, 200);
+    const unblocked = nextSocketEvent(client, 'districts:stats', 500);
+    assert.equal((await request(`/admin/drivers/${user.driver!.id}/unblock`, adminToken, {})).status, 200);
+    await unblocked;
+    const removed = nextSocketEvent(client, 'districts:stats', 500);
+    const response = await fetch(`${base}/admin/drivers/${user.driver!.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${adminToken}` } });
+    assert.equal(response.status, 204);
+    await removed;
+    assert.equal((await request('/admin/overview', adminToken)).data.totalDrivers, 2);
+  } finally {
+    client.disconnect();
+    await prisma.user.deleteMany({ where: { id: user.id } });
+  }
+});
