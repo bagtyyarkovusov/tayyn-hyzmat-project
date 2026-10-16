@@ -185,7 +185,7 @@ async function offerPrivately(orderId, driverId) {
   });
   safeEmit(io => {
     io.to(rooms.driver(driverId)).emit('order:private-offer', safePrivateOffer(order));
-    if (order.districtId) io.to(rooms.district(order.districtId)).emit('order:taken', { orderId });
+    if (order.districtId) io.to(rooms.district(order.districtId)).except(rooms.driver(driverId)).emit('order:taken', { orderId });
     io.to(rooms.admins()).emit('order:updated', order);
   });
   await districtsService.broadcastDistrictStats();

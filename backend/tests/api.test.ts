@@ -546,3 +546,22 @@ test('a reserved driver who becomes unavailable cannot accept or debit the balan
   assert.equal((await request('/orders/private-offer/accept', otherToken, { orderId: created.data.id, privateOfferExpiresAt: created.data.privateOfferExpiresAt })).status, 409);
   assert.equal((await request('/driver/balance', otherToken)).data.amount, '500');
 });
+
+test('a same-region existing-order reservation removes the public offer only for other drivers', async () => {
+  const driver = (await request('/driver/profile', driverToken)).data;
+  assert.equal((await request('/driver/location', otherToken, { lat: 37.96, lng: 58.32 })).status, 200);
+  const target = await socket(driverToken);
+  const other = await socket(otherToken);
+  const created = await request('/admin/orders', adminToken, { districtId: driver.districtId, priceEstimated: 10, clientPhone: '+99365000000' });
+  assert.equal(created.status, 201);
+  const targetTaken: unknown[] = [];
+  target.on('order:taken', event => targetTaken.push(event));
+  const received = nextSocketEvent<{ id: string }>(target, 'order:private-offer');
+  const removedForOther = nextSocketEvent<{ orderId: string }>(other, 'order:taken');
+  assert.equal((await request(`/admin/orders/${created.data.id}/private-offer`, adminToken, { driverId: driver.id })).status, 200);
+  assert.equal((await received).id, created.data.id);
+  assert.equal((await removedForOther).orderId, created.data.id);
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.deepEqual(targetTaken, []);
+  assert.equal((await request('/orders/private-offer', driverToken)).data.id, created.data.id);
+});
