@@ -683,7 +683,12 @@ test("driver history hides single-page navigation and resets the page when switc
       `${process.env.TEST_API_URL}/admin/drivers/${driverId}/balance`,
       {
         headers,
-        data: { amount: 1, type: "TOPUP", note: `Проверка страниц ${i}` },
+        data: {
+          operationId: crypto.randomUUID(),
+          amount: 1,
+          type: "TOPUP",
+          note: `Проверка страниц ${i}`,
+        },
       },
     );
     expect(response.ok()).toBe(true);
@@ -2320,7 +2325,12 @@ async function createAddressDriver(page: Page, phone: string) {
     `${process.env.TEST_API_URL}/admin/drivers/${driver.id}/balance`,
     {
       headers: { Authorization: `Bearer ${token}` },
-      data: { amount: 500, type: "TOPUP", note: "Synthetic address fixture" },
+      data: {
+        operationId: crypto.randomUUID(),
+        amount: 500,
+        type: "TOPUP",
+        note: "Synthetic address fixture",
+      },
     },
   );
   expect(topup.ok()).toBe(true);
@@ -2550,7 +2560,14 @@ test("underfunded public orders stay visible with disabled acceptance and a top-
       (
         await admin.request.post(
           `${process.env.TEST_API_URL}/admin/drivers/${driverId}/balance`,
-          { headers, data: { amount: 15, type: "TOPUP" } },
+          {
+            headers,
+            data: {
+              operationId: crypto.randomUUID(),
+              amount: 15,
+              type: "TOPUP",
+            },
+          },
         )
       ).ok(),
     ).toBe(true);
@@ -2636,7 +2653,14 @@ test("private offer picker disables an online driver whose balance cannot cover 
       (
         await admin.request.post(
           `${process.env.TEST_API_URL}/admin/drivers/${driverId}/balance`,
-          { headers, data: { amount: 15, type: "TOPUP" } },
+          {
+            headers,
+            data: {
+              operationId: crypto.randomUUID(),
+              amount: 15,
+              type: "TOPUP",
+            },
+          },
         )
       ).ok(),
     ).toBe(true);
