@@ -1773,3 +1773,28 @@ test('public orders stay regional until their persisted deadline then disappear 
   assert.equal((await request(`/orders/available?districtId=${regionId}`, otherToken)).data.length, 0);
   regional.disconnect(); outside.disconnect();
 });
+
+test('dispatcher lifecycle filters separate unclaimed waiting from in-progress orders and preserve legacy active queries', async () => {
+  const statuses = ['NEW', 'ACCEPTED', 'WAITING', 'STARTED', 'COMPLETED', 'CANCELLED'] as const;
+  const ids = new Map<string, string>();
+  for (const status of statuses) {
+    const created = await prisma.order.create({ data: { districtId: regionId, status, pickupLat: 37.96, pickupLng: 58.32, clientPhone: '+99365000000', priceEstimated: 25 } });
+    ids.set(status, created.id);
+  }
+  const expectations = [
+    ['waiting', ['NEW']],
+    ['accepted', ['ACCEPTED', 'WAITING', 'STARTED']],
+    ['completed', ['COMPLETED']],
+    ['cancelled', ['CANCELLED']],
+    ['active', ['NEW', 'ACCEPTED', 'WAITING', 'STARTED']],
+    ['all', [...statuses]],
+  ] as const;
+  for (const [filter, wanted] of expectations) {
+    const response = await request(`/admin/orders?status=${filter}`, adminToken);
+    assert.equal(response.status, 200);
+    assert.equal(response.data.total, wanted.length);
+    assert.deepEqual(response.data.items.map((item: { id: string }) => item.id).sort(), wanted.map(status => ids.get(status)).sort());
+  }
+  assert.equal((await request('/admin/orders', adminToken)).data.total, 6);
+  assert.equal((await request('/admin/orders?status=unknown', adminToken)).status, 400);
+});
