@@ -2383,3 +2383,26 @@ test("private offer picker disables an online driver whose balance cannot cover 
     await driverContext.close();
   }
 });
+
+test("dispatcher driver details follow fresh location events without a manual refresh", async ({
+  page,
+}) => {
+  const created = await createAddressDriver(page, "+99360000324");
+  const token = await page.evaluate(() =>
+    localStorage.getItem("openride.driver.accessToken"),
+  );
+  await login(page, "admin");
+  await page.goto(`/adminDrivers/${created.id}`);
+  await expect(page.getByText("Нет координат", { exact: true })).toBeVisible();
+  const report = await page.request.post(
+    `${process.env.TEST_API_URL}/driver/location`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { lat: 37.96, lng: 58.32, accuracy: 10 },
+    },
+  );
+  expect(report.ok()).toBe(true);
+  await expect(
+    page.getByText("37.96000, 58.32000", { exact: true }),
+  ).toBeVisible();
+});

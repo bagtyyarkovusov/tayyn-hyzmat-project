@@ -30,8 +30,7 @@ router.use('/admin', authenticate, requireRole('ADMIN'), adminRoutes);
 // demand?) and the future admin dashboard - any authenticated role can read it.
 router.use('/districts', authenticate, districtsRoutes);
 
-// Reverse geocoding proxy (see geo.service.js for why this is server-side,
-// not a direct client call) - both drivers and admins use it.
+// Driver-scoped optional addresses, with shared persistent provider limits.
 router.use('/geo', authenticate, geoRoutes);
 
 module.exports = router;

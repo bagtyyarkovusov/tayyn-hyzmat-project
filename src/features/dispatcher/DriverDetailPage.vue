@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { useLocationAddress } from "@/shared/useLocationAddress";
 import { formatPhone } from "@/shared/phone";
-import { ref, watch, onUnmounted } from "vue";
+import { ref, watch, onMounted, onUnmounted } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import { ArrowLeft } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
@@ -108,12 +109,6 @@ async function saveCredentials() {
     if (generation === credentialGeneration) credentialPending.value = false;
   }
 }
-const gpsAddress = ref("");
-let geocodeVersion = 0;
-let geocodedPoint = "";
-onUnmounted(() => {
-  geocodeVersion++;
-});
 const vehicle = ref({ plateNumber: "", make: "", model: "", color: "" });
 const {
   data: driver,
@@ -136,23 +131,39 @@ const { data: history, load: loadHistory } = useResource(
   null as History | null,
   ["balance:updated", "order:completed"],
 );
+let offLocation: (() => void) | undefined;
+function refreshVisibleLocation() {
+  if (!document.hidden && tab.value === "info") void load();
+}
+onMounted(() => {
+  offLocation = adminSession.on(
+    "driver:location",
+    (event: { driverId: string }) => {
+      if (event.driverId === props.driverId) refreshVisibleLocation();
+    },
+  );
+  document.addEventListener("visibilitychange", refreshVisibleLocation);
+});
+onUnmounted(() => {
+  offLocation?.();
+  document.removeEventListener("visibilitychange", refreshVisibleLocation);
+});
+watch(tab, () => {
+  if (tab.value === "info") refreshVisibleLocation();
+});
+const gpsAddress = useLocationAddress(
+  () =>
+    driver.value?.lastLat != null &&
+    driver.value?.lastLng != null &&
+    driver.value.lastLocationAt &&
+    Date.now() - new Date(driver.value.lastLocationAt).getTime() < 60_000
+      ? { lat: Number(driver.value.lastLat), lng: Number(driver.value.lastLng) }
+      : null,
+  () => (adminSession.state.user ? props.driverId : undefined),
+  adminApi,
+  () => tab.value === "info",
+);
 watch(driver, (d) => {
-  const key =
-    d?.lastLat != null && d?.lastLng != null ? `${d.lastLat},${d.lastLng}` : "";
-  if (key !== geocodedPoint) {
-    geocodedPoint = key;
-    const version = ++geocodeVersion;
-    gpsAddress.value = "";
-    if (d?.lastLat != null && d?.lastLng != null)
-      void adminApi
-        .get<{ address?: string }>("/geo/reverse", {
-          params: { lat: d.lastLat, lng: d.lastLng },
-        })
-        .then(({ data }) => {
-          if (version === geocodeVersion) gpsAddress.value = data.address || "";
-        })
-        .catch(() => {});
-  }
   if (d)
     vehicle.value = {
       plateNumber: d.currentVehicle?.plateNumber || "",
