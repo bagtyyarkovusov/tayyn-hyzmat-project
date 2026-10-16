@@ -74,8 +74,8 @@ async function order(priceEstimated: number | null = 10) {
 before(async () => {
   const passwordHash = await bcrypt.hash(password, 4);
   await prisma.user.create({ data: { phone: '+10000000000', fullName: 'Test dispatcher', role: 'ADMIN', passwordHash, admin: { create: { permissionLevel: 'SUPER' } } } });
-  const region = await prisma.district.create({ data: { name: 'Synthetic west', centerLat: 37.96, centerLng: 58.32 } });
-  const otherRegion = await prisma.district.create({ data: { name: 'Synthetic east', centerLat: 37.96, centerLng: 58.42 } });
+  const region = await prisma.district.create({ data: { name: 'Synthetic west', centerLat: 37.96, centerLng: 58.32, boundary: [[[37.94, 58.30], [37.98, 58.30], [37.98, 58.36], [37.94, 58.36]]] } });
+  const otherRegion = await prisma.district.create({ data: { name: 'Synthetic east', centerLat: 37.96, centerLng: 58.42, boundary: [[[37.94, 58.38], [37.98, 58.38], [37.98, 58.46], [37.94, 58.46]]] } });
   regionId = region.id;
   otherRegionId = otherRegion.id;
   for (const [phone, districtId] of [['+10000000101', regionId], ['+10000000102', otherRegionId]]) {
@@ -108,6 +108,26 @@ after(async () => {
   await prisma.$disconnect();
   // Application and fixture clients have separate connection pools.
   await require('../dist/lib/prisma').$disconnect();
+});
+
+test('GPS outside saved regions clears the previous region without hiding the real position or going offline', async () => {
+  const within = await request('/driver/location', driverToken, { lat: 37.96, lng: 58.32 });
+  assert.equal(within.status, 200);
+  assert.equal(within.data.districtId, regionId);
+  const outside = await request('/driver/location', driverToken, { lat: 30.2329, lng: 120.0399 });
+  assert.equal(outside.status, 200);
+  const profile = await request('/driver/profile', driverToken);
+  assert.equal(profile.data.districtId, null);
+  assert.equal(Number(profile.data.lastLat), 30.2329);
+  assert.equal(Number(profile.data.lastLng), 120.0399);
+  assert.equal(profile.data.isOnline, true);
+  const regions = await request('/districts', driverToken);
+  assert.equal(regions.data.find((region: { id: string }) => region.id === regionId).onlineDrivers, 0);
+  const publicOrder = await order();
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, driverToken)).status, 200);
+  assert.equal((await request('/orders/accept', driverToken, { orderId: publicOrder.id, arrivalMinutes: 5 })).status, 200);
+  const returned = await request('/driver/location', driverToken, { lat: 37.96, lng: 58.32 });
+  assert.equal(returned.data.districtId, regionId);
 });
 
 test('private driver data requires authentication and dispatcher data requires an admin role', async () => {
