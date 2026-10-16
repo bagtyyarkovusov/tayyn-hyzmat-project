@@ -67,6 +67,8 @@ export interface Order {
   clientPhone?: string;
   note?: string;
   createdAt: string;
+  privateOfferDriverId?: string | null;
+  privateOfferExpiresAt?: string | null;
 }
 export interface Message {
   id: string;

@@ -38,14 +38,12 @@ function omitPushToken(driver) {
   return rest;
 }
 
-async function createDriver({ phone, fullName, password, districtId }, actorId) {
-  const district = await prisma.district.findFirst({ where: { id: districtId, isActive: true } });
-  if (!district) throw ApiError.notFound('Район не найден');
+async function createDriver({ phone, fullName, password }, actorId) {
   const passwordHash = await hashPassword(password);
   const user = await prisma.user.create({
     data: {
       role: 'DRIVER', phone, fullName, passwordHash,
-      driver: { create: { districtId, status: 'APPROVED', approvedAt: new Date(), approvedBy: actorId } },
+      driver: { create: { status: 'APPROVED', approvedAt: new Date(), approvedBy: actorId } },
       balance: { create: { amount: 0, currency: 'TMT' } }
     },
     select: { driver: { select: { id: true } } }

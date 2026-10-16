@@ -83,6 +83,7 @@ model User {
   role         Role
   phone        String     @unique
   email        String?    @unique
+  credentialVersion Int @default(0) @map("credential_version")
   passwordHash String     @map("password_hash")
   fullName     String     @map("full_name")
   avatarUrl    String?    @map("avatar_url")
@@ -280,6 +281,8 @@ model Order {
   // plan). Deliberately separate from `clientId`/`client`, which stays for
   // the future case of a real client account placing the order.
   clientPhone String? @map("client_phone")
+  privateOfferDriverId String? @map("private_offer_driver_id")
+  privateOfferExpiresAt DateTime? @map("private_offer_expires_at")
   driverId    String? @map("driver_id")
   driver      Driver? @relation(fields: [driverId], references: [id])
   vehicleId   String? @map("vehicle_id")
@@ -436,6 +439,7 @@ model RefreshToken {
   id        String    @id @default(uuid())
   userId    String    @map("user_id")
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  credentialVersion Int @default(0) @map("credential_version")
   tokenHash String    @unique @map("token_hash")
   expiresAt DateTime  @map("expires_at")
   revokedAt DateTime? @map("revoked_at")

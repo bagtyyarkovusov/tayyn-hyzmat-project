@@ -4,14 +4,12 @@ import { adminApi, errorMessage } from "@/shared/api";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { Label } from "@/shared/ui/label";
-import type { District, Driver } from "../domain";
-import { useResource } from "../useResource";
+import type { Driver } from "../domain";
 const emit = defineEmits<{ created: [driver: Driver] }>();
 const form = reactive({
   fullName: "",
   phone: "+993",
   password: "",
-  districtId: "",
 });
 const pending = ref(false),
   error = ref("");
@@ -19,15 +17,6 @@ let alive = true;
 onUnmounted(() => {
   alive = false;
 });
-const {
-  data: districts,
-  error: regionError,
-  loading,
-  load,
-} = useResource(
-  async () => (await adminApi.get<District[]>("/districts")).data,
-  [],
-);
 async function submit() {
   if (pending.value) return;
   pending.value = true;
@@ -83,46 +72,16 @@ async function submit() {
           Не менее 6 символов. Передайте пароль водителю.
         </p>
       </div>
-      <div class="field">
-        <Label for="driver-region">Район</Label>
-        <select
-          id="driver-region"
-          v-model="form.districtId"
-          class="native-select"
-          required
-          :disabled="loading"
-        >
-          <option value="" disabled>
-            {{ loading ? "Загружаем…" : "Выберите район" }}
-          </option>
-          <option
-            v-for="region in districts"
-            :key="region.id"
-            :value="region.id"
-          >
-            {{ region.name }}
-          </option>
-        </select>
-        <p v-if="regionError" role="alert" class="text-sm text-destructive">
-          {{ regionError }}
-        </p>
-        <Button v-if="regionError" type="button" variant="outline" @click="load"
-          >Повторить</Button
-        >
-      </div>
     </fieldset>
     <p class="muted text-sm">
       Водитель будет одобрен. Начальный баланс: 0 TMT. Пополните его в карточке
-      водителя для выхода на линию.
+      водителя для выхода на линию. Район определится по GPS.
     </p>
     <p v-if="error" role="alert" class="text-sm text-destructive">
       {{ error }}
     </p>
-    <Button
-      type="submit"
-      class="w-full"
-      :disabled="pending || !form.districtId"
-      >{{ pending ? "Добавляем…" : "Добавить водителя" }}</Button
-    >
+    <Button type="submit" class="w-full" :disabled="pending">{{
+      pending ? "Добавляем…" : "Добавить водителя"
+    }}</Button>
   </form>
 </template>
