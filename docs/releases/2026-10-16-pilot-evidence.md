@@ -104,10 +104,23 @@ PR #105 merged as `fd10bc86457fd9292565ad5a727aa2a9142e90de` after all three CI 
 
 PR #103 enlarged the optional order map beside the form on wide screens and stacks it below on narrow screens. Required region, phone and TMT price, private eligibility and optional pickup/destination remain unchanged. API-backed browser evidence covers desktop, mobile and landscape; live vendor SDK behavior and phone keyboard checks remain separate.
 
-PR #107 merged as `2eb84649901e70aaae3feb1d1a188f8d71ef5db4` after all CI jobs passed. It closes the session and device-binding gaps tracked in #23 and #24: driver device identity is required, password/reset races are serialized, logout revokes the current credential generation and sockets, and transient restore failures keep credentials behind a retry screen. The final APK must still be rebuilt from this mainline and tested on the target phone.
+PR #107 merged as `2eb84649901e70aaae3feb1d1a188f8d71ef5db4` after all CI jobs passed. It closes the tested session and device-binding paths tracked in #23 and #24: driver device identity is required, password/reset races are serialized, logout revokes the current credential generation and sockets, and transient restore failures keep credentials behind a retry screen. Issue #24 remains open for a separately scoped cross-tab and multi-client verification pass.
 
 ## Current isolated APK environment
 
 The isolated APK API has no configured private Yandex reverse-geocoder key or confirmed lookup-budget policy. Its expected location display is the saved region plus actual coordinates, or Outside region plus coordinates. This is the approved fallback and never blocks a shift or trip. It is not evidence that the provider is broken. A public map SDK key is a different credential; native map rendering is verified separately in the final APK build record.
 
 The client tutorials contain eight A4 pages per language. Both tagged PDFs were rendered to page images and all sixteen pages inspected. The lifecycle explanation has its own page so cancellation/refund and completion/no-refund are readable without squeezing monitoring instructions. The HTML files embed the logo and use local diagrams; opening them does not require a diagram service. Production signing and physical Infinix checks remain explicit gates in both languages.
+
+## Final test candidate evidence
+
+The following evidence records the current test candidate. It does not certify production signing or physical-phone background behavior.
+
+- **APK:** [TayynHyzmat-1.12-test-rc1.apk](https://github.com/bagtyyarkovusov/tayyn-hyzmat-project/releases/tag/1.12-test), package `io.openride.driver.test`, version `1.12-test`, version code 13. SHA-256: `d587c09ea3de2df03ed53e452a0e0db1f4ad027717e5eeccfa7ebace94188e2b`. The APK is debug-signed with certificate SHA-256 `e1b927726ab3c52ccfc62394e5554b7fe84e9a6bff4c649254657ec89890fc37`; production signing remains open.
+- **Source provenance:** APK source/API code is main `2eb84649901e70aaae3feb1d1a188f8d71ef5db4`. The documentation release merged separately as `af5395461c0502c53314b0ac1f57e148d7795c93`.
+- **Isolated Railway services:** API deployment `95bc011f-b4d1-415e-8997-0aeb04bd1d5c`, [`/health`](https://apk-api-apk-test.up.railway.app/health) returned HTTP 200. Web deployment `c49bddb0-f744-408e-8ac1-da2f7891e350`, [`/health`](https://apk-web-apk-test.up.railway.app/health) returned HTTP 200.
+- **Shared development services:** API deployment `87906ede-fb84-437b-add3-ccd00d8a818e` and web deployment `891e7acb-f8de-4728-a20b-9aeaffaecfe4` ran code `2eb8464`. The web health endpoint returned HTTP 200.
+- **Region safety:** the shared nine-region post-read deep-equalled the pre-read. Canonical sorted hash is `edeab40af07edf8ee2a5007753bb627ed62f20854917d7f76dc9aa9e3574eded`; no region geometry was changed.
+- **Emulator verification:** package installation, simulated GPS at `37.9601,58.3261` mapping to 30 мкр / Gurtly, Yandex tiles and markers, GPS and notification permission grant, foreground `ShiftService`, `POST /driver/shift` HTTP 201, and repeated native-shift ticks HTTP 200 passed. Native private/public order lifecycle was not run in this APK session. The disposable HTTP, Socket.IO and browser suites cover public and private offers, the 20-second deadline, competing claims and lifecycle transitions.
+
+Physical Infinix Android 14 checks for locked-screen delivery, Doze, battery restrictions, force-stop and network loss remain open.
