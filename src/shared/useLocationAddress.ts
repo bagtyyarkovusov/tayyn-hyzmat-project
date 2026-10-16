@@ -41,13 +41,14 @@ export function useLocationAddress(
   async function reconcile() {
     const point = position(),
       id = driverId();
-    const current = ++generation;
     if (id !== lastDriver) {
+      ++generation;
       lastRequestAt = 0;
       resolved = undefined;
       lastDriver = id;
     }
     if (!enabled() || !point || !id) {
+      ++generation;
       address.value = "";
       resolved = undefined;
       return;
@@ -59,13 +60,13 @@ export function useLocationAddress(
       distance(point, resolved.point) < 150
         ? resolved.address
         : "";
-    if (
-      visibility.value !== "visible" ||
-      !navigator.onLine ||
-      Date.now() - lastRequestAt < 30_000
-    )
+    if (visibility.value !== "visible") {
+      ++generation;
       return;
+    }
+    if (!navigator.onLine || Date.now() - lastRequestAt < 30_000) return;
     lastRequestAt = Date.now();
+    const current = ++generation;
     try {
       const { data } = await api.get<AddressReply>(
         `/geo/drivers/${encodeURIComponent(id)}/address`,

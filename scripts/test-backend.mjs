@@ -30,7 +30,7 @@ try {
   if (!ready) throw new Error('Disposable PostgreSQL did not become ready');
   const port = run('docker', ['port', name, '5432/tcp']).split(':').at(-1);
   const env = { ...process.env, NODE_ENV: 'test', LOG_LEVEL: 'silent', DATABASE_URL: `postgresql://postgres:${password}@127.0.0.1:${port}/tayyn_test`, JWT_ACCESS_SECRET: randomBytes(32).toString('hex'), JWT_REFRESH_SECRET: randomBytes(32).toString('hex'), DISPOSABLE_DB_TEST: 'true' };
-  for (const args of [['run', 'build'], ['exec', 'prisma', 'migrate', 'deploy'], ['exec', 'tsx', '--test', 'tests/api.test.ts', 'tests/geocoder-api.test.ts']]) {
+  for (const args of [['run', 'build'], ['exec', 'prisma', 'migrate', 'deploy'], ['exec', 'tsx', '--test', '--test-concurrency=1', 'tests/api.test.ts', 'tests/geocoder-api.test.ts']]) {
     run('pnpm', args, { env, stdio: 'inherit' });
   }
 } finally {

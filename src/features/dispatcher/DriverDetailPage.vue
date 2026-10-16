@@ -163,8 +163,15 @@ const gpsAddress = useLocationAddress(
   adminApi,
   () => tab.value === "info",
 );
-watch(driver, (d) => {
-  if (d)
+watch(driver, (d, previous) => {
+  // GPS/profile refreshes must not replace a dispatcher’s vehicle draft.
+  if (
+    d &&
+    (d.id !== previous?.id ||
+      (["plateNumber", "make", "model", "color"] as const).some(
+        (key) => d.currentVehicle?.[key] !== previous?.currentVehicle?.[key],
+      ))
+  )
     vehicle.value = {
       plateNumber: d.currentVehicle?.plateNumber || "",
       make: d.currentVehicle?.make || "",

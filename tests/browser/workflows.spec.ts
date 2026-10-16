@@ -2160,7 +2160,40 @@ test("GPS outside every saved region keeps its actual coordinates and ignores a 
   ).toBeEnabled();
 });
 
-test("a rejected Yandex lookup leaves GPS readiness and actual coordinates usable", async ({
+test("a delayed address survives a nearby GPS fix during its request", async ({
+  page,
+}) => {
+  await createAddressDriver(page, "+99360000325");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let received = false;
+  await page.route("**/geo/drivers/*/address", async (route) => {
+    const response = await route.fetch();
+    received = (await response.json()).address === "Synthetic street, 12";
+    await gate;
+    await route.fulfill({ response });
+  });
+  await page.context().grantPermissions(["geolocation"]);
+  await page.context().setGeolocation({
+    latitude: 37.961234,
+    longitude: 58.321234,
+    accuracy: 10,
+  });
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect.poll(() => received).toBe(true);
+  await page.waitForTimeout(10_100);
+  await page
+    .context()
+    .setGeolocation({ latitude: 37.9613, longitude: 58.3213, accuracy: 10 });
+  const location = page.getByLabel("Местоположение GPS");
+  await expect(location).toContainText("37.9613, 58.3213");
+  release();
+  await expect(location).toContainText("Synthetic street, 12");
+});
+
+test("an unavailable server Geocoder leaves GPS readiness and actual coordinates usable", async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -2394,6 +2427,7 @@ test("dispatcher driver details follow fresh location events without a manual re
   await login(page, "admin");
   await page.goto(`/adminDrivers/${created.id}`);
   await expect(page.getByText("Нет координат", { exact: true })).toBeVisible();
+  await page.getByLabel("Марка", { exact: true }).fill("Draft vehicle make");
   const report = await page.request.post(
     `${process.env.TEST_API_URL}/driver/location`,
     {
@@ -2405,4 +2439,7 @@ test("dispatcher driver details follow fresh location events without a manual re
   await expect(
     page.getByText("37.96000, 58.32000", { exact: true }),
   ).toBeVisible();
+  await expect(page.getByLabel("Марка", { exact: true })).toHaveValue(
+    "Draft vehicle make",
+  );
 });
