@@ -1349,6 +1349,13 @@ test("driver feedback shows blockers until recovery and action errors without an
   });
   await expect(toast).toContainText(failure);
   await expect(page.getByRole("dialog")).toHaveCount(0);
+  // A background refresh must not cut short the error's reading time.
+  const refreshing = page.waitForResponse("**/api/driver/profile");
+  await page.evaluate(() =>
+    document.dispatchEvent(new Event("visibilitychange")),
+  );
+  await (await refreshing).finished();
+  await expect(toast).toContainText(failure);
   await page.clock.fastForward(9000);
   await expect(toast).toHaveCount(0);
   // Repeating the same failure during a background refresh must not reopen it.

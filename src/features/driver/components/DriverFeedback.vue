@@ -28,7 +28,9 @@ watch(
   ([error, notice, attempt]) => {
     const message = error || notice;
     if (!message) {
-      open.value = false;
+      // Background refreshes clear their previous error before requesting.
+      // Preserve reading time; an explicit next action may dismiss it early.
+      if (attempt !== lastAttempt) open.value = false;
       return;
     }
     const key = `${error ? "error" : "notice"}:${message}`;
