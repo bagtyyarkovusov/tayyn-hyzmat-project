@@ -2299,13 +2299,15 @@ test("a delayed address cannot replace a newer GPS position outside the saved re
   await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
   await lookup;
   await expect.poll(() => originalAddress).toBe("Synthetic street, 12");
-  await page.waitForTimeout(10_100); // A new GPS report is allowed every ten seconds.
   await page
     .getByRole("button", { name: "Выйти на линию", exact: true })
     .click();
   await expect(
     page.getByRole("button", { name: "Уйти с линии", exact: true }),
   ).toBeVisible();
+  // Starting the shift requests another fix; let that acknowledgement's
+  // real ten-second upload throttle expire before delivering movement.
+  await page.waitForTimeout(10_100);
   await page
     .context()
     .setGeolocation({ latitude: 30.2328, longitude: 120.0398, accuracy: 10 });
