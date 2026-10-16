@@ -281,6 +281,8 @@ model Order {
   // plan). Deliberately separate from `clientId`/`client`, which stays for
   // the future case of a real client account placing the order.
   clientPhone String? @map("client_phone")
+  privateOfferDriverId String? @map("private_offer_driver_id")
+  privateOfferExpiresAt DateTime? @map("private_offer_expires_at")
   driverId    String? @map("driver_id")
   driver      Driver? @relation(fields: [driverId], references: [id])
   vehicleId   String? @map("vehicle_id")

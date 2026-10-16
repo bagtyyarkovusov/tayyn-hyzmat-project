@@ -110,6 +110,9 @@ function initSockets(httpServer) {
     }
   });
 
+  const offerSweep = setInterval(() => require('../modules/orders/orders.service').expirePrivateOffers().catch(err => logger.warn({ err }, 'Private offer expiry failed')), 1000);
+  offerSweep.unref();
+  io.engine.on('close', () => clearInterval(offerSweep));
   setIO(io);
   return io;
 }

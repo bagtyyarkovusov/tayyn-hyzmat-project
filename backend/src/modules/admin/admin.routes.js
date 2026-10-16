@@ -21,7 +21,7 @@ const asyncHandler = require('../../utils/asyncHandler');
 const { z } = require('zod');
 const passwordSchema = z.object({ password: z.string().min(8).max(72).refine(value => Buffer.byteLength(value, 'utf8') <= 72, 'Пароль должен занимать не более 72 байт'), passwordConfirmation: z.string().min(8).max(128) }).strict().refine(value => value.password === value.passwordConfirmation, { message: 'Пароли не совпадают', path: ['passwordConfirmation'] });
 const profileSchema = z.object({ fullName: z.string().trim().min(2).max(120), phone: z.string().trim().regex(/^\+[1-9]\d{7,14}$/) }).strict();
-const { createOrderSchema } = require('../orders/orders.validation');
+const { createOrderSchema, privateOfferSchema } = require('../orders/orders.validation');
 
 // Mounted in routes/index.js behind: authenticate, requireRole('ADMIN')
 const router = Router();
@@ -83,6 +83,7 @@ router.post(
 
 // Manual/phone dispatch - there is no client app yet (see migration plan),
 // so this is currently the only way an order enters the system at all.
+router.post('/orders/:id/private-offer', validate({ params: orderIdParamSchema, body: privateOfferSchema }), controller.privateOffer);
 router.post('/orders', validate({ body: createOrderSchema }), controller.createOrder);
 router.get('/orders', validate({ query: listOrdersQuerySchema }), controller.listOrders);
 // Admin cancel - unlike POST /orders/cancel (driver-only, ACCEPTED/WAITING
