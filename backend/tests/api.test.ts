@@ -485,3 +485,46 @@ test('dispatcher resets driver password with confirmation and revokes all prior 
   assert.equal((await request('/auth/login', '', { phone: '+99361001004', password })).status, 401);
   assert.equal((await request('/auth/login', '', { phone: '+99361001004', password: body.password })).status, 200);
 });
+
+test('a credential change keeps the driver offline when an old online request is already in flight', async () => {
+  const fixture = await request('/admin/drivers', adminToken, { fullName: 'Concurrent credential fixture', phone: '+99361001005', password });
+  const session = await request('/auth/login', '', { phone: '+99361001005', password });
+  const token = session.data.accessToken;
+  await request('/driver/location', token, { lat: 37.96, lng: 58.32 });
+  // Fixture database locks arrange an in-flight request; assertions stay at HTTP seams.
+  let release!: () => void;
+  let ready!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const locked = new Promise<void>(resolve => { ready = resolve; });
+  const blocker = prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM drivers WHERE id = ${fixture.data.id} FOR UPDATE`;
+    ready();
+    await gate;
+  }, { timeout: 10000 });
+  async function waitForBlockedRequests(count: number) {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+      if (Number(rows[0].count) >= count) return;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    throw new Error('Fixture did not arrange the concurrent HTTP requests');
+  }
+  await locked;
+  let changed!: Awaited<ReturnType<typeof request>>;
+  let online!: Awaited<ReturnType<typeof request>>;
+  try {
+    const reset = request(`/admin/drivers/${fixture.data.id}/profile`, adminToken, { fullName: 'Concurrent credential fixture', phone: '+99361001006' });
+    await waitForBlockedRequests(1);
+    const oldRequest = request('/driver/status', token, { isOnline: true });
+    await waitForBlockedRequests(2);
+    release();
+    [changed, online] = await Promise.all([reset, oldRequest]);
+  } finally {
+    release();
+    await blocker;
+  }
+  assert.equal(changed.status, 200);
+  assert.equal(online.status, 401);
+  const final = await request(`/admin/drivers/${fixture.data.id}`, adminToken);
+  assert.equal(final.data.isOnline, false);
+});

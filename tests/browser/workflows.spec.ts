@@ -786,6 +786,37 @@ test("dispatcher adds an approved driver and opens their zero TMT balance", asyn
   await expect(
     page.getByRole("heading", { name: "Новый тестовый водитель", exact: true }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Баланс", exact: true }).click();
+  await expect(page.getByText("0 TMT", { exact: true }).first()).toBeVisible();
+  await page.getByLabel("Сумма, TMT", { exact: true }).fill("100");
+  await page.getByRole("button", { name: "Пополнить", exact: true }).click();
+  await expect(
+    page.getByText("100 TMT", { exact: true }).first(),
+  ).toBeVisible();
+});
+
+async function openCredentialFixture(page: Page, phone: string) {
+  const session = await page.request.post(
+    `${process.env.TEST_API_URL}/auth/login`,
+    {
+      data: { phone: "+10000000000", password },
+    },
+  );
+  const { accessToken } = await session.json();
+  const created = await page.request.post(
+    `${process.env.TEST_API_URL}/admin/drivers`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      data: { fullName: "Credential browser fixture", phone, password },
+    },
+  );
+  expect(created.status()).toBe(201);
+  const { id } = await created.json();
+  await login(page, "admin");
+  await page.goto(`/adminDrivers/${id}`);
+}
+test("dispatcher edits driver name and login phone", async ({ page }) => {
+  await openCredentialFixture(page, "+99361999890");
   await page
     .getByRole("button", { name: "Изменить данные входа", exact: true })
     .click();
@@ -804,6 +835,11 @@ test("dispatcher adds an approved driver and opens their zero TMT balance", asyn
   await expect(
     page.getByRole("link", { name: "+99361999889", exact: true }),
   ).toBeVisible();
+});
+test("dispatcher confirms password reset and the closed form forgets its password", async ({
+  page,
+}) => {
+  await openCredentialFixture(page, "+99361999891");
   await page
     .getByRole("button", { name: "Сбросить пароль", exact: true })
     .click();
@@ -831,13 +867,6 @@ test("dispatcher adds an approved driver and opens their zero TMT balance", asyn
     "",
   );
   await page.getByRole("button", { name: "Отмена", exact: true }).click();
-  await page.getByRole("button", { name: "Баланс", exact: true }).click();
-  await expect(page.getByText("0 TMT", { exact: true }).first()).toBeVisible();
-  await page.getByLabel("Сумма, TMT", { exact: true }).fill("100");
-  await page.getByRole("button", { name: "Пополнить", exact: true }).click();
-  await expect(
-    page.getByText("100 TMT", { exact: true }).first(),
-  ).toBeVisible();
 });
 
 test("all nine driver regions fit on the home screen without page scrolling", async ({

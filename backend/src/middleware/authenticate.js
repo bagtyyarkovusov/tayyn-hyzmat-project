@@ -18,6 +18,7 @@ const authenticate = asyncHandler(async (req, res, next) => {
     await validateCredentialSession(payload);
     req.user = {
       id: payload.sub,
+      credentialVersion: payload.credentialVersion ?? 0,
       role: payload.role,
       driverId: payload.driverId,
       adminId: payload.adminId

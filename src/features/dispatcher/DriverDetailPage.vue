@@ -61,7 +61,7 @@ function openCredentials(kind: "profile" | "password") {
   };
   credentialDialog.value = kind;
 }
-watch(() => [props.driverId, adminSession.state.accessToken], closeCredentials);
+watch(() => [props.driverId, adminSession.state.user?.id], closeCredentials);
 onUnmounted(closeCredentials);
 async function saveCredentials() {
   if (credentialPending.value) return;
