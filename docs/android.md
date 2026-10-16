@@ -33,7 +33,7 @@ The artifact is `android/app/build/outputs/apk/debug/TayynHyzmat-debug.apk`. A d
 
 ## Verification and remaining release gates
 
-The combined isolated APK candidate passed 61 public HTTP/Socket.IO tests, 5 backend unit tests, 31 Chromium actor workflows (including focused recovery reruns), TypeScript checks and app-only Android debug assembly/JUnit tests. Public regressions showed transient GPS retry, revoked native stop credentials, unread chat overflow, native shift status broadcasts and account-switch races fail before fixes and pass afterward. The two Java notification-boundary tests cover deduplication, canonical removal/expiry and channel-specific clearing. These checks do not establish native phone behavior.
+The combined isolated APK candidate passed 62 public HTTP/Socket.IO tests, 5 backend unit tests, 34 Chromium actor workflows (including focused recovery reruns), TypeScript checks and app-only Android debug assembly/JUnit tests. Public regressions showed transient GPS retry, revoked native stop credentials, unread chat overflow, native shift status broadcasts and account-switch races fail before fixes and pass afterward. The two Java notification-boundary tests cover deduplication, canonical removal/expiry and channel-specific clearing. These checks do not establish native phone behavior.
 
 Before release, run the APK against the matching isolated API on intended Android phones and record:
 
