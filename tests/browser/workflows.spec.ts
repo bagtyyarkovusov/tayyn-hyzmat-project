@@ -89,6 +89,7 @@ test("phone entry groups local digits and preserves middle edits and separator d
   await phone.press("ControlOrMeta+A");
   await phone.press("Backspace");
   await expect(phone).toHaveValue("");
+  await expect(phone).toHaveAttribute("placeholder", "Номер телефона");
   await expect(page.getByText("+993", { exact: true })).toBeVisible();
 });
 test("phone country prefix stays fixed while login accepts local digits and canonical paste", async ({
