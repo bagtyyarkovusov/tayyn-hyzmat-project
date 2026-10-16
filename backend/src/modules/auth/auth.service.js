@@ -8,6 +8,9 @@ const {
   parseDurationToMs
 } = require('../../utils/jwt');
 const env = require('../../config/env');
+const { getIO } = require('../../lib/socket');
+const rooms = require('../../sockets/rooms');
+const logger = require('../../config/logger');
 
 // How long a just-rotated refresh token keeps working - see refresh().
 const ROTATION_GRACE_MS = 60 * 1000;
@@ -45,6 +48,14 @@ async function registerDriver({ phone, fullName, password }) {
     });
     return created;
   });
+
+  // Registration is already committed. Delivery failure must not turn it into
+  // a retryable HTTP failure, and only admins need this invalidation signal.
+  try {
+    getIO().to(rooms.admins()).emit('driver:registered', { driverId: user.driver.id });
+  } catch (err) {
+    logger.warn({ err }, 'Failed to broadcast driver registration');
+  }
 
   return {
     user: sanitizeUser(user),
