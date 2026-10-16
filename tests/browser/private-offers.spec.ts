@@ -440,7 +440,9 @@ for (const width of [320, 390]) {
           ).toBeVisible();
           await expect(offer.getByText(pickup, { exact: true })).toBeVisible();
           await expect(
-            offer.getByText(privateOffer ? "123,45" : "123 456,78", { exact: true }),
+            offer.getByText(privateOffer ? "123,45" : "123 456,78", {
+              exact: true,
+            }),
           ).toBeVisible();
           await expect(
             driver.getByText("+99365000999", { exact: true }),
