@@ -535,3 +535,12 @@ test('dispatcher cancellation immediately dismisses a reserved offer without cha
   assert.equal((await request('/orders/private-offer', otherToken)).data, null);
   assert.equal((await request('/driver/balance', otherToken)).data.amount, '500');
 });
+
+test('a reserved driver who becomes unavailable cannot accept or debit the balance', async () => {
+  const driver = (await request('/driver/profile', otherToken)).data;
+  const created = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: driver.id });
+  assert.equal(created.status, 201);
+  assert.equal((await request('/driver/status', otherToken, { isAvailable: false })).status, 200);
+  assert.equal((await request('/orders/private-offer/accept', otherToken, { orderId: created.data.id, privateOfferExpiresAt: created.data.privateOfferExpiresAt })).status, 409);
+  assert.equal((await request('/driver/balance', otherToken)).data.amount, '500');
+});

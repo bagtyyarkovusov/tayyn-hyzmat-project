@@ -217,6 +217,7 @@ async function accept(orderId, driver, etaMinutes, privateOfferExpiresAt) {
     const currentDriver = await tx.driver.findUnique({ where: { id: driver.id } });
     if (!currentDriver) throw ApiError.notFound('Профиль водителя не найден');
     assertOrderEligibility(currentDriver);
+    if (!currentDriver.isAvailable) throw ApiError.conflict('Водитель сейчас недоступен');
     if (currentDriver.status !== 'APPROVED') throw ApiError.forbidden('Водитель недоступен');
     const pending = await tx.order.findFirst({ where: { privateOfferDriverId: driver.id, status: 'NEW', privateOfferExpiresAt: { gt: new Date() } } });
     if (pending && pending.id !== orderId) throw ApiError.conflict('Сначала ответьте на персональное предложение');
