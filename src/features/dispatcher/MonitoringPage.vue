@@ -113,6 +113,11 @@ function render() {
     }
   });
 }
+// A location response can be newer than the periodic display clock. Evaluate
+// eligibility at commit time instead of treating that fresh fix as future GPS.
+watch(data, () => {
+  now.value = Date.now();
+});
 watch([data, now], render);
 let off: (() => void) | undefined;
 onMounted(async () => {
