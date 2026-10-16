@@ -26,9 +26,13 @@ export function makeRouter(driverOnly = false) {
         redirect: driverOnly ? "/driverDashboard" : "/adminDashboard",
       },
       { path: "/admin", redirect: "/adminDashboard" },
-      { path: "/adminLogin", component: AuthPage },
-      { path: "/driverLogin", component: AuthPage },
-      { path: "/driverRegister", component: AuthPage },
+      { path: "/adminLogin", component: AuthPage, meta: { layout: "auth" } },
+      { path: "/driverLogin", component: AuthPage, meta: { layout: "auth" } },
+      {
+        path: "/driverRegister",
+        component: AuthPage,
+        meta: { layout: "auth" },
+      },
       ...(!driverOnly ? dispatcherRoutes : []),
       ...driverRoutes,
       ...legacyPaths.map((path) => ({
@@ -50,10 +54,11 @@ export function makeRouter(driverOnly = false) {
   let adminRestored = false;
   let driverRestored = false;
   router.beforeEach(async (to) => {
-    const admin = to.path.startsWith("/admin") && to.path !== "/adminLogin";
+    const admin = to.path.startsWith("/admin") && to.meta.layout !== "auth";
     const driver =
       to.path.startsWith("/driver") &&
-      !["/driverLogin", "/driverRegister", "/driverSupport"].includes(to.path);
+      to.meta.layout !== "auth" &&
+      to.path !== "/driverSupport";
     if (admin) {
       if (!adminRestored) {
         await adminSession.restore();
