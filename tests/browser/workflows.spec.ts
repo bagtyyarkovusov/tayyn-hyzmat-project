@@ -818,6 +818,12 @@ test("GPS reporting continues across driver routes and stops after logout", asyn
       .click();
     await (await firstReport).finished();
     await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+    await page
+      .getByRole("button", { name: "Выйти на линию", exact: true })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Уйти с линии", exact: true }),
+    ).toBeVisible();
     const token = await page.evaluate(() =>
       localStorage.getItem("openride.driver.accessToken"),
     );
@@ -1847,7 +1853,7 @@ test("permission controls distinguish confirmed GPS and enabled notification per
       await route.continue();
     });
     const gpsStarted = startGps(page);
-    await expect(gps).toHaveAttribute("data-state", "pending");
+    await expect(gps).toHaveAttribute("data-state", "connecting");
     await expect(
       page.getByRole("button", { name: "Выйти на линию", exact: true }),
     ).toBeDisabled();
@@ -1870,6 +1876,10 @@ test("permission controls distinguish confirmed GPS and enabled notification per
       "aria-description",
       /Нет связи с диспетчером/,
     );
+    await expect(gps).toHaveAttribute("data-state", "connecting");
+    await expect(
+      page.getByText("Последнее положение", { exact: true }),
+    ).toBeVisible();
     await context.setOffline(false);
     await expect(power).toHaveAttribute(
       "aria-description",
@@ -1897,6 +1907,33 @@ test("permission controls distinguish confirmed GPS and enabled notification per
   } finally {
     await context.close();
   }
+});
+
+test("offline drivers keep a local GPS fix, show its timestamp, and send no location uploads", async ({
+  page,
+}) => {
+  await page.context().grantPermissions(["geolocation"]);
+  await page.context().setGeolocation({
+    latitude: 37.96,
+    longitude: 58.32,
+    accuracy: 10,
+  });
+  await login(page, "driver");
+  await page.context().setOffline(true);
+  let uploads = 0;
+  await page.route("**/driver/location", async (route) => {
+    uploads++;
+    await route.abort();
+  });
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  const gps = page.getByRole("button", { name: "Включить GPS", exact: true });
+  await expect(gps).toHaveAttribute("data-state", "connecting");
+  await expect(
+    page.getByText("Последнее положение", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(/Последнее обновление/)).toBeVisible();
+  expect(uploads).toBe(0);
+  await page.context().setOffline(false);
 });
 
 for (const [savedAdminSession, driverEntry] of [

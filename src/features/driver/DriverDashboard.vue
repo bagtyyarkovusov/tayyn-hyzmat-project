@@ -56,7 +56,12 @@ const connectionReady = computed(
       ? state.nativeConnected
       : session.state.connected),
 );
-const locationReady = computed(() => state.gpsReady && connectionReady.value);
+const localFixFresh = computed(
+  () => state.gpsFixReady && state.clock - state.locationUpdatedAt < 60_000,
+);
+const locationReady = computed(
+  () => localFixFresh.value && state.gpsReady && connectionReady.value,
+);
 const locationState = computed(() => {
   if (state.gpsPending) return "pending";
   if (!state.gpsFixReady && state.gpsError) return "blocked";
@@ -99,8 +104,10 @@ const gpsDescription = computed(() =>
     : locationReady.value
       ? "GPS и связь с диспетчером подтверждены."
       : state.gpsFixReady
-        ? state.locationSyncError ||
-          "GPS работает. Ожидаем связь с диспетчером…"
+        ? !localFixFresh.value
+          ? "Последнее положение устарело. Нажмите GPS, чтобы обновить."
+          : state.locationSyncError ||
+            "GPS работает. Ожидаем связь с диспетчером…"
         : state.gpsError || "GPS не включён. Нажмите, чтобы включить.",
 );
 const lastLocationDescription = computed(() =>
@@ -219,7 +226,10 @@ watch(
                   ? 'bg-success/10 text-success'
                   : locationState === 'blocked'
                     ? 'text-destructive'
-                    : 'text-muted-foreground'
+                    : locationState === 'connecting' ||
+                        locationState === 'pending'
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                      : 'text-muted-foreground'
               "
               :data-state="locationState"
               :aria-description="gpsDescription"
@@ -321,9 +331,10 @@ watch(
             :aria-busy="state.busy"
             :disabled="
               state.busy ||
+              state.locationSyncPending ||
               !state.profile ||
               (!state.profile.isOnline &&
-                (Number(state.balance?.amount ?? 0) <= 0 || !state.gpsFixReady))
+                (Number(state.balance?.amount ?? 0) <= 0 || !localFixFresh))
             "
             @click="setOnline"
           >
@@ -448,7 +459,7 @@ watch(
             : 'bg-card hover:bg-secondary/50',
           d.id === state.profile?.districtId ? 'ring-1 ring-primary' : '',
         ]"
-        :disabled="!state.gpsReady || !state.profile?.isOnline"
+        :disabled="!locationReady || !state.profile?.isOnline"
         @click="selected = d.id"
       >
         <span
@@ -462,7 +473,7 @@ watch(
           class="region-score text-2xl font-semibold leading-none tabular-nums"
           :aria-label="`Машин на линии: ${d.onlineDrivers ?? d.freeDrivers}. Заказов: ${d.activeOrders}`"
           >{{
-            state.gpsReady && state.profile?.isOnline
+            locationReady && state.profile?.isOnline
               ? `${d.onlineDrivers ?? d.freeDrivers}:${d.activeOrders}`
               : "—:—"
           }}</strong
@@ -478,7 +489,7 @@ watch(
           ></DialogHeader
         >
         <AvailableOrders
-          v-if="selectedDistrict && state.profile?.isOnline && state.gpsReady"
+          v-if="selectedDistrict && state.profile?.isOnline && locationReady"
           :district-id="selectedDistrict.id"
           :district-name="selectedDistrict.name"
         />
