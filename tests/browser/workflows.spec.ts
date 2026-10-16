@@ -2469,3 +2469,144 @@ test("dispatcher driver details follow fresh location events without a manual re
     "Draft vehicle make",
   );
 });
+
+test("dispatcher can load older chat and a lost send response retries without duplicating", async ({
+  browser,
+}) => {
+  const adminContext = await browser.newContext();
+  const driverContext = await browser.newContext();
+  try {
+    const admin = await adminContext.newPage();
+    const driver = await driverContext.newPage();
+    await login(admin, "admin");
+    await login(driver, "driver");
+    const token = await driver.evaluate(() =>
+      localStorage.getItem("openride.driver.accessToken"),
+    );
+    const profile = await driverContext.request.get(
+      `${process.env.TEST_API_URL}/driver/profile`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const driverId = (await profile.json()).id;
+    for (let i = 0; i < 105; i++) {
+      const result = await driverContext.request.post(
+        `${process.env.TEST_API_URL}/driver/messages`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          data: { body: `Older history ${i}` },
+        },
+      );
+      expect(result.ok()).toBe(true);
+    }
+    await admin.goto(`/adminChat/${driverId}`);
+    await expect(
+      admin.getByText("Older history 104", { exact: true }),
+    ).toBeAttached();
+    await expect(
+      admin.getByText("Older history 0", { exact: true }),
+    ).toHaveCount(0);
+    await admin
+      .getByRole("button", { name: "Загрузить более ранние сообщения" })
+      .click();
+    await expect(
+      admin.getByText("Older history 0", { exact: true }),
+    ).toBeAttached();
+    await driver.goto("/driverChat");
+    let dropped = false;
+    await driver.route("**/driver/messages", async (route) => {
+      if (route.request().method() === "POST" && !dropped) {
+        dropped = true;
+        await route.fetch();
+        await route.abort();
+      } else await route.continue();
+    });
+    const composer = driver.getByLabel("Сообщение диспетчеру");
+    await composer.fill("Retry once without duplicate");
+    await composer.press("Enter");
+    await expect(composer).toHaveValue("Retry once without duplicate");
+    await expect(
+      driver.getByRole("button", { name: "Отправить сообщение", exact: true }),
+    ).toBeEnabled();
+    await composer.press("Enter");
+    await expect(composer).toHaveValue("");
+    const history = await driverContext.request.get(
+      `${process.env.TEST_API_URL}/driver/messages`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    expect(
+      (await history.json()).items.filter(
+        (message: { body: string }) =>
+          message.body === "Retry once without duplicate",
+      ),
+    ).toHaveLength(1);
+  } finally {
+    await adminContext.close();
+    await driverContext.close();
+  }
+});
+
+test("a hidden driver chat does not mark arriving messages as read", async ({
+  browser,
+}) => {
+  const adminContext = await browser.newContext();
+  const driverContext = await browser.newContext();
+  try {
+    const admin = await adminContext.newPage();
+    const driver = await driverContext.newPage();
+    await login(admin, "admin");
+    await login(driver, "driver");
+    await driver.goto("/driverChat");
+    await expect(driver.getByLabel("Сообщение диспетчеру")).toBeVisible();
+    await driver.evaluate(() =>
+      Object.defineProperty(document, "hidden", {
+        configurable: true,
+        get: () => true,
+      }),
+    );
+    const driverToken = await driver.evaluate(() =>
+      localStorage.getItem("openride.driver.accessToken"),
+    );
+    const adminToken = await admin.evaluate(() =>
+      localStorage.getItem("openride.admin.accessToken"),
+    );
+    const profile = await driverContext.request.get(
+      `${process.env.TEST_API_URL}/driver/profile`,
+      { headers: { Authorization: `Bearer ${driverToken}` } },
+    );
+    const driverId = (await profile.json()).id;
+    await adminContext.request.post(
+      `${process.env.TEST_API_URL}/admin/messages`,
+      {
+        headers: { Authorization: `Bearer ${adminToken}` },
+        data: { driverId, body: "Keep this unread while hidden" },
+      },
+    );
+    await expect(
+      driver.getByText("Keep this unread while hidden", { exact: true }),
+    ).toBeAttached();
+    const history = await driverContext.request.get(
+      `${process.env.TEST_API_URL}/driver/messages`,
+      { headers: { Authorization: `Bearer ${driverToken}` } },
+    );
+    expect((await history.json()).unread).toBeGreaterThan(0);
+    await driver.evaluate(() => {
+      Object.defineProperty(document, "hidden", {
+        configurable: true,
+        get: () => false,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await expect
+      .poll(async () => {
+        const result = await driverContext.request.get(
+          `${process.env.TEST_API_URL}/driver/messages`,
+          { headers: { Authorization: `Bearer ${driverToken}` } },
+        );
+        return (await result.json()).unread;
+      })
+      .toBe(0);
+  } finally {
+    await adminContext.close();
+    await driverContext.close();
+  }
+});

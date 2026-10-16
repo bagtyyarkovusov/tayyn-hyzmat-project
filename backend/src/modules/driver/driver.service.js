@@ -1,3 +1,5 @@
+const { afterCursor, beforeCursor, markRead } = require('../chat/cursors');
+const { persistMessage } = require('../chat/persist-message');
 const prisma = require('../../lib/prisma');
 const { getIO } = require('../../lib/socket');
 const rooms = require('../../sockets/rooms');
@@ -241,7 +243,7 @@ async function getHistory(driver, { page, limit }) {
   };
 }
 
-async function getMessages(driver, { page, limit }) {
+async function getMessages(driver, { page, limit, beforeMessageId }) {
   const where = {
     OR: [{ senderId: driver.userId }, { receiverId: driver.userId }, { isBroadcast: true }]
   };
@@ -258,14 +260,15 @@ async function getMessages(driver, { page, limit }) {
     // being per-driver keeps that correct for each of them individually.
     OR: [{ receiverId: driver.userId }, { isBroadcast: true }],
     NOT: { senderId: driver.userId },
-    ...(driver.lastChatReadAt ? { sentAt: { gt: driver.lastChatReadAt } } : {})
+    AND: [afterCursor(driver.lastChatReadAt, driver.lastChatReadMessageId)]
   };
 
+  const older = await beforeCursor(where, beforeMessageId);
   const [items, total, unread] = await Promise.all([
     prisma.message.findMany({
-      where,
-      orderBy: { sentAt: 'desc' },
-      skip: (page - 1) * limit,
+      where: { AND: [where, older] },
+      orderBy: [{ sentAt: 'desc' }, { id: 'desc' }],
+      skip: beforeMessageId ? 0 : (page - 1) * limit,
       take: limit
     }),
     prisma.message.count({ where }),
@@ -277,17 +280,16 @@ async function getMessages(driver, { page, limit }) {
 
 // Called when the driver actually opens their chat screen - everything the
 // admin sent up to now counts as seen.
-async function markChatRead(driver) {
-  await prisma.driver.update({ where: { id: driver.id }, data: { lastChatReadAt: new Date() } });
+async function markChatRead(driver, throughMessageId) {
+  await markRead(driver.id, { OR: [{ receiverId: driver.userId }, { isBroadcast: true }] }, throughMessageId, 'lastChatReadAt', 'lastChatReadMessageId');
 }
 
 // A driver message has no single recipient (any on-duty admin can pick it
 // up) - receiverId stays null, same shape Message already supports for the
 // admin broadcast case, just mirrored for the other direction.
-async function sendMessage(driver, body) {
-  const message = await prisma.message.create({
-    data: { senderId: driver.userId, body, isBroadcast: false }
-  });
+async function sendMessage(driver, body, clientMessageId) {
+  const { message, created } = await persistMessage({ senderId: driver.userId, body, isBroadcast: false, clientMessageId });
+  if (!created) return message;
 
   try {
     getIO()

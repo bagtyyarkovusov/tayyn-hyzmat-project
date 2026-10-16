@@ -143,6 +143,7 @@ model Driver {
   // Compared against the driver's own most recent message timestamp in
   // admin.service.js#listDrivers to compute hasUnreadMessage.
   lastReadByAdminAt DateTime? @map("last_read_by_admin_at")
+  lastReadByAdminMessageId String? @map("last_read_by_admin_message_id")
 
   // Mirror of the above for the other direction: when this driver last
   // opened their own chat screen. Anything the admin sent after this counts
@@ -151,6 +152,7 @@ model Driver {
   // closed produced no badge at all - it only existed in the database and
   // they had to happen to open the chat to ever see it.
   lastChatReadAt DateTime? @map("last_chat_read_at")
+  lastChatReadMessageId String? @map("last_chat_read_message_id")
 
   approvedAt  DateTime? @map("approved_at")
   approvedBy  String?   @map("approved_by")
@@ -424,8 +426,10 @@ model Message {
   isBroadcast Boolean   @default(false) @map("is_broadcast")
   sentAt      DateTime  @default(now()) @map("sent_at")
   readAt      DateTime? @map("read_at")
+  clientMessageId String? @map("client_message_id")
 
   @@index([receiverId])
+  @@unique([senderId, clientMessageId])
   @@map("messages")
 }
 

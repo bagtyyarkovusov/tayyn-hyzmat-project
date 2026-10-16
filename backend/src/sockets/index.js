@@ -59,8 +59,8 @@ async function handleDriverConnection(socket) {
   // Чат Админ ↔ водитель works the same way from either end.
   socket.on('driver:message', async (payload, ack) => {
     try {
-      const body = payload && payload.body;
-      const message = await driverService.sendMessage(driver, body);
+      const { body, clientMessageId } = require('../modules/driver/driver.validation').sendMessageSchema.parse(payload || {});
+      const message = await driverService.sendMessage(driver, body, clientMessageId);
       if (typeof ack === 'function') ack({ ok: true, message });
     } catch (err) {
       logger.warn({ err }, 'driver:message via socket failed');
@@ -77,7 +77,8 @@ function handleAdminConnection(socket) {
   // socket directly, in addition to POST /admin/messages.
   socket.on('admin:message', async (payload, ack) => {
     try {
-      const result = await adminService.sendMessage(payload || {}, socket.data.user.id);
+      const data = require('../modules/admin/admin.validation').messageSchema.parse(payload || {});
+      const result = await adminService.sendMessage(data, socket.data.user.id);
       if (typeof ack === 'function') ack({ ok: true, result });
     } catch (err) {
       logger.warn({ err }, 'admin:message via socket failed');

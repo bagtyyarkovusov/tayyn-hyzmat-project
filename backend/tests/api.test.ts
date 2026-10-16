@@ -1601,3 +1601,59 @@ test('driver completion racing dispatcher resolution has one terminal winner wit
   assert.equal(history.transactions.total, 1);
   assert.equal(history.transactions.items[0].amount, '-10');
 });
+
+test('chat retries with one client message id persist one message and reject changed content', async () => {
+  await prisma.message.deleteMany();
+  await prisma.driver.updateMany({ data: { lastChatReadAt: null, lastChatReadMessageId: null, lastReadByAdminAt: null, lastReadByAdminMessageId: null } });
+  const clientMessageId = 'd07ca5bb-c21f-4617-a03b-f538d1873096';
+  const results = await Promise.all([
+    request('/driver/messages', driverToken, { body: 'One delivery', clientMessageId }),
+    request('/driver/messages', driverToken, { body: 'One delivery', clientMessageId }),
+  ]);
+  assert.equal(results[0].status, 201);
+  assert.equal(results[1].status, 201);
+  assert.equal(results[0].data.id, results[1].data.id);
+  const history = (await request('/driver/messages', driverToken)).data;
+  assert.equal(history.items.filter((message: { body: string }) => message.body === 'One delivery').length, 1);
+  assert.equal((await request('/driver/messages', driverToken, { body: 'Changed delivery', clientMessageId })).status, 409);
+});
+
+test('read cursor preserves newer unseen driver and dispatcher messages as unread', async () => {
+  await prisma.message.deleteMany();
+  await prisma.driver.updateMany({ data: { lastChatReadAt: null, lastChatReadMessageId: null, lastReadByAdminAt: null, lastReadByAdminMessageId: null } });
+  const driver = (await request('/driver/profile', driverToken)).data;
+  const first = await request('/admin/messages', adminToken, { driverId: driver.id, body: 'Visible admin message' });
+  await request('/admin/messages', adminToken, { driverId: driver.id, body: 'Unseen admin message' });
+  assert.equal((await request('/driver/messages/read', driverToken, { throughMessageId: first.data.id })).status, 204);
+  assert.equal((await request('/driver/messages', driverToken)).data.unread, 1);
+  const visible = await request('/driver/messages', driverToken, { body: 'Visible driver message' });
+  await request('/driver/messages', driverToken, { body: 'Unseen driver message' });
+  assert.equal((await request(`/admin/drivers/${driver.id}/messages/read`, adminToken, { throughMessageId: visible.data.id })).status, 204);
+  assert.ok((await request('/admin/messages/unread', adminToken)).data.driverIds.includes(driver.id));
+});
+
+test('tied chat timestamps keep unseen messages unread and keyset pages complete', async () => {
+  await prisma.message.deleteMany();
+  await prisma.driver.updateMany({ data: { lastChatReadAt: null, lastChatReadMessageId: null, lastReadByAdminAt: null, lastReadByAdminMessageId: null } });
+  const driver = (await request('/driver/profile', driverToken)).data;
+  const admin = await prisma.user.findFirstOrThrow({ where: { role: 'ADMIN' } });
+  const sentAt = new Date('2026-01-01T12:00:00.123Z');
+  const ids = ['10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000003'];
+  await prisma.message.createMany({ data: ids.map(id => ({ id, senderId: admin.id, receiverId: driver.userId, body: id, sentAt })) });
+  assert.equal((await request('/driver/messages/read', driverToken, { throughMessageId: ids[0] })).status, 204);
+  assert.equal((await request('/driver/messages', driverToken)).data.unread, 2);
+  const newest = (await request('/driver/messages?limit=2', driverToken)).data;
+  assert.deepEqual(newest.items.map((item: { id: string }) => item.id), [ids[1], ids[2]]);
+  const older = (await request(`/driver/messages?limit=2&beforeMessageId=${ids[1]}`, driverToken)).data;
+  assert.deepEqual(older.items.map((item: { id: string }) => item.id), [ids[0]]);
+  assert.equal((await request('/driver/messages/read', driverToken, { throughMessageId: ids[2] })).status, 204);
+  assert.equal((await request('/driver/messages/read', driverToken, { throughMessageId: ids[0] })).status, 204);
+  assert.equal((await request('/driver/messages', driverToken)).data.unread, 0);
+
+  const replies = ['20000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000002'];
+  await prisma.message.createMany({ data: replies.map(id => ({ id, senderId: driver.userId, body: id, sentAt })) });
+  assert.equal((await request(`/admin/drivers/${driver.id}/messages/read`, adminToken, { throughMessageId: replies[0] })).status, 204);
+  assert.ok((await request('/admin/messages/unread', adminToken)).data.driverIds.includes(driver.id));
+  const adminOlder = (await request(`/admin/drivers/${driver.id}/messages?limit=2&beforeMessageId=${replies[0]}`, adminToken)).data;
+  assert.deepEqual(adminOlder.items.map((item: { id: string }) => item.id), [ids[1], ids[2]]);
+});
