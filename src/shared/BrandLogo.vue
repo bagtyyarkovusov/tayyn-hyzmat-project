@@ -33,12 +33,12 @@ withDefaults(defineProps<{ compact?: boolean }>(), { compact: false });
 .brand-dark {
   display: none;
 }
-:global(.dark) .brand-light,
-:global(.auth-story) .brand-light {
+:global(.dark .brand-lockup .brand-light),
+:global(.auth-story .brand-lockup .brand-light) {
   display: none;
 }
-:global(.dark) .brand-dark,
-:global(.auth-story) .brand-dark {
+:global(.dark .brand-lockup .brand-dark),
+:global(.auth-story .brand-lockup .brand-dark) {
   display: block;
 }
 .brand-name {
