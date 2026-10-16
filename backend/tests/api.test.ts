@@ -1484,7 +1484,7 @@ test('dispatcher overview invalidates live counts after approval, unblock and ac
     const response = await fetch(`${base}/admin/drivers/${user.driver!.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${adminToken}` } });
     assert.equal(response.status, 204);
     await removed;
-    assert.equal((await request('/admin/overview', adminToken)).data.totalDrivers, 2);
+    assert.equal((await request('/admin/overview', adminToken)).data.totalDrivers, 3);
   } finally {
     client.disconnect();
     await prisma.user.deleteMany({ where: { id: user.id } });
@@ -1968,4 +1968,55 @@ test('topups preserve headroom for an active trip refund', async () => {
   assert.equal((await request('/driver/balance', driverToken)).data.amount, '9999999999.99');
   const history = await request(`/admin/drivers/${driver.id}/history`, adminToken);
   assert.equal(history.data.transactions.total, 3);
+});
+
+test('deactivating a driver preserves ledger and completed attribution while revoking access', async () => {
+  const created = await request('/admin/drivers', adminToken, { phone: '+99361999981', fullName: 'Retained driver', password });
+  assert.equal(created.status, 201);
+  const id = created.data.id;
+  const auth = await request('/auth/login', '', { phone: '+99361999981', password, deviceId: 'retained-device' });
+  const token = auth.data.accessToken;
+  const session = await socket(token);
+  assert.equal((await request(`/admin/drivers/${id}/balance`, adminToken, { amount: 30, type: 'TOPUP', note: 'Retained funding' })).status, 200);
+  await request('/driver/location', token, { lat: 37.96, lng: 58.32 });
+  await request('/driver/status', token, { isOnline: true });
+  const shift = await request('/driver/shift', token, { deviceId: 'retained-device', refreshToken: auth.data.refreshToken });
+  assert.equal(shift.status, 201);
+  const completed = await order(30);
+  await prisma.order.update({ where: { id: completed.id }, data: { driverId: id, status: 'COMPLETED', completedAt: new Date() } });
+  const disconnected = new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Deactivated session remained connected')), 3000);
+    session.once('disconnect', () => { clearTimeout(timer); resolve(); });
+  });
+  const deleted = await fetch(`${base}/admin/drivers/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${adminToken}` } });
+  assert.equal(deleted.status, 204);
+  await disconnected;
+  const retained = await request(`/admin/drivers/${id}`, adminToken);
+  assert.equal(retained.status, 200);
+  assert.equal(retained.data.id, id);
+  assert.equal(retained.data.status, 'BLOCKED');
+  assert.equal(retained.data.user.balance.amount, '30');
+  const history = await request(`/admin/drivers/${id}/history`, adminToken);
+  assert.equal(history.data.transactions.total, 1);
+  assert.equal(history.data.transactions.items[0].note, 'Retained funding');
+  assert.equal(history.data.orders.items[0].driverId, id);
+  assert.equal((await request('/driver/me', token)).status, 401);
+  assert.equal((await request('/auth/refresh', '', { refreshToken: auth.data.refreshToken })).status, 401);
+  assert.equal((await request('/native-shift/tick', shift.data.shiftToken, { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() })).status, 401);
+  assert.equal((await request('/auth/login', '', { phone: '+99361999981', password })).status, 403);
+  await request(`/admin/drivers/${id}/unblock`, adminToken, {});
+  assert.equal((await request('/auth/login', '', { phone: '+99361999981', password })).status, 403);
+});
+
+test('deactivation refuses an active trip and preserves its balance and driver linkage', async () => {
+  const driver = await prisma.driver.findFirstOrThrow({ where: { user: { phone: '+99360000101' } } });
+  const created = await order(30);
+  assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 200);
+  for (const status of ['ACCEPTED', 'WAITING', 'STARTED'] as const) {
+    await prisma.order.update({ where: { id: created.id }, data: { status } });
+    const response = await fetch(`${base}/admin/drivers/${driver.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${adminToken}` } });
+    assert.equal(response.status, 409);
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, '470');
+    assert.equal((await request('/orders/current', driverToken)).data.driverId, driver.id);
+  }
 });
