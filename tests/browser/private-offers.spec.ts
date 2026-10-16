@@ -393,3 +393,142 @@ test("a delayed decline response leaves the newer private offer visible", async 
     await close();
   }
 });
+
+for (const width of [320, 390]) {
+  for (const colorScheme of ["light", "dark"] as const) {
+    for (const privateOffer of [false, true]) {
+      test(`driver offer stays readable and dismissible at ${width}px ${colorScheme} ${privateOffer ? "private" : "public"}`, async ({
+        browser,
+      }) => {
+        const { dispatcher, driver, driverId, close } = await actors(browser);
+        try {
+          await driver.setViewportSize({ width, height: 740 });
+          await driver.emulateMedia({ colorScheme });
+          await driver.evaluate(() => {
+            document.documentElement.style.fontSize = "24px";
+          });
+          await dispatcher.goto("/adminOrders");
+          const token = await dispatcher.evaluate(() =>
+            localStorage.getItem("openride.admin.accessToken"),
+          );
+          const pickup =
+            "Улица Махтумкули, дом 123, подъезд со стороны длинного проспекта " +
+            "А".repeat(90);
+          const created = await dispatcher.request.post(
+            `${process.env.TEST_API_URL}/admin/orders`,
+            {
+              headers: { Authorization: `Bearer ${token}` },
+              data: {
+                districtId: process.env.TEST_REGION_ID,
+                clientPhone: "+99365000999",
+                priceEstimated: 123456.78,
+                pickupAddress: pickup,
+                ...(privateOffer ? { privateOfferDriverId: driverId } : {}),
+              },
+            },
+          );
+          expect(created.ok()).toBe(true);
+          const offer = driver.getByRole("dialog", {
+            name: "Предложение заказа",
+            exact: true,
+          });
+          await expect(
+            offer.getByRole("heading", {
+              name: privateOffer ? "Личное предложение" : "Новый заказ",
+              exact: true,
+            }),
+          ).toBeVisible();
+          await expect(offer.getByText(pickup, { exact: true })).toBeVisible();
+          await expect(
+            offer.getByText("123 456,78", { exact: true }),
+          ).toBeVisible();
+          await expect(
+            driver.getByText("+99365000999", { exact: true }),
+          ).not.toBeVisible();
+          if (privateOffer)
+            await expect(offer.getByRole("timer")).toHaveText(
+              /(?:1[0-9]|20) сек/,
+            );
+          const metrics = await offer.evaluate((dialog) => {
+            const close =
+              dialog.querySelector<HTMLButtonElement>(".dialog-close")!;
+            const heading = [...dialog.querySelectorAll("h2")].find(
+              (h) => !h.classList.contains("sr-only"),
+            )!;
+            const price = dialog.querySelector(".offer-price")!;
+            const currency = price.lastElementChild!;
+            const box = close.getBoundingClientRect(),
+              title = heading.getBoundingClientRect();
+            return {
+              width: dialog.clientWidth,
+              scrollWidth: dialog.scrollWidth,
+              closeWidth: box.width,
+              closeHeight: box.height,
+              titleRight: title.right,
+              closeLeft: box.left,
+              priceSize: parseFloat(getComputedStyle(price).fontSize),
+              currencySize: parseFloat(getComputedStyle(currency).fontSize),
+              closeBorder: getComputedStyle(close).borderTopWidth,
+              nestedBorder: getComputedStyle(dialog.querySelector("section")!)
+                .borderTopWidth,
+            };
+          });
+          expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.width);
+          expect(metrics.closeWidth).toBeGreaterThanOrEqual(44);
+          expect(metrics.closeHeight).toBeGreaterThanOrEqual(44);
+          expect(metrics.titleRight).toBeLessThanOrEqual(metrics.closeLeft);
+          if (privateOffer) {
+            const titleBox = await offer
+              .getByRole("heading", { name: "Личное предложение", exact: true })
+              .boundingBox();
+            const timerBox = await offer.getByRole("timer").boundingBox();
+            expect(timerBox!.y).toBeGreaterThanOrEqual(
+              titleBox!.y + titleBox!.height,
+            );
+          }
+          expect(metrics.priceSize).toBeGreaterThan(metrics.currencySize);
+          expect(metrics.closeBorder).toBe("0px");
+          expect(metrics.nestedBorder).toBe("0px");
+          await offer.getByLabel("Буду через").selectOption("15");
+          await expect(offer.getByLabel("Буду через")).toHaveValue("15");
+          const dismiss = offer.getByRole("button", {
+            name: privateOffer ? "Отказаться" : "Скрыть предложение",
+            exact: true,
+          });
+          await dismiss.scrollIntoViewIfNeeded();
+          await expect(dismiss).toBeInViewport();
+          const closeButton = offer.getByRole("button", {
+            name: "Close",
+            exact: true,
+          });
+          await closeButton.focus();
+          await expect(closeButton).toBeFocused();
+          await driver.screenshot({
+            path: test.info().outputPath("offer-layout.png"),
+          });
+          await closeButton.press("Enter");
+          if (privateOffer) {
+            // Closing declines the private reservation. Its released public offer can reopen.
+            await expect(
+              offer.getByRole("heading", {
+                name: "Личное предложение",
+                exact: true,
+              }),
+            ).not.toBeVisible();
+          } else await expect(offer).not.toBeVisible();
+          await expect(driver.getByLabel("Баланс")).toHaveText("500 TMT");
+          const order = await created.json();
+          await dispatcher.request.post(
+            `${process.env.TEST_API_URL}/admin/orders/${order.id}/cancel`,
+            {
+              headers: { Authorization: `Bearer ${token}` },
+              data: { reason: "Synthetic layout test cleanup" },
+            },
+          );
+        } finally {
+          await close();
+        }
+      });
+    }
+  }
+}

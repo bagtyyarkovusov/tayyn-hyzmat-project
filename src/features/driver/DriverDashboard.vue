@@ -475,7 +475,7 @@ watch(
           ><DialogDescription
             >Примите заказ или скройте предложение.</DialogDescription
           ></DialogHeader
-        ><IncomingOrder />
+        ><IncomingOrder embedded />
         <p v-if="state.error" role="alert" class="text-sm text-destructive">
           {{ state.error }}
         </p></DialogContent

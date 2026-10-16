@@ -68,6 +68,8 @@ Shared shadcn-vue primitives keep their behavior. Panels remain flat and ruled; 
 
 Verification covers both actors, light/dark, desktop/mobile and the driver viewport. A polished visual test does not certify financial integrity, background notification delivery or production readiness; those have separate release gates.
 
+Driver order offers use a single dialog surface. The quote uses a responsive 28–36px price with a smaller TMT unit; large-text settings can increase it further. Header content reserves the borderless close target, and private-offer countdowns occupy their own line so translated or enlarged titles cannot collide. ETA and accept/decline actions retain at least 44px touch targets.
+
 ### Glass navigation
 
 The user additionally requested restrained transparent glass and professional shadows. Apple’s [Materials guidance](https://developer.apple.com/design/human-interface-guidelines/materials) places Liquid Glass in a distinct functional navigation/control layer, recommends sparing use, and keeps it out of the content layer. This implementation follows that hierarchy using a modest 12px CSS backdrop blur on the workspace header, dispatcher sidebar and driver bottom navigation. It does not claim to reproduce Apple's native material or rely on an unverified iOS version.

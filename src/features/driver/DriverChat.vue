@@ -133,7 +133,7 @@ onUnmounted(() => {
         ><DialogTitle class="sr-only">Новый заказ</DialogTitle
         ><DialogDescription class="sr-only"
           >Выберите время прибытия и подтвердите заказ.</DialogDescription
-        ><IncomingOrder /></DialogContent
+        ><IncomingOrder embedded /></DialogContent
     ></Dialog>
     <p
       v-if="error"
