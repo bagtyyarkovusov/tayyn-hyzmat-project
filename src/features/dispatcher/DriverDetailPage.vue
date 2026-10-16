@@ -438,17 +438,17 @@ function adjust(withdraw: boolean) {
             >
           </form>
           <div class="border-t border-destructive/30 pt-5">
-            <h2 class="font-semibold text-destructive">Удаление аккаунта</h2>
+            <h2 class="font-semibold text-destructive">Деактивация аккаунта</h2>
             <p class="mt-2 text-sm text-muted-foreground">
-              Личные данные, баланс и переписка будут удалены навсегда. Заказы
-              сохранятся без привязки к водителю.
+              Водитель потеряет доступ. Баланс, история операций, переписка и
+              привязка к заказам сохранятся.
             </p>
             <Button
               class="mt-4"
               variant="destructive"
               :disabled="pending"
               @click="confirm = 'delete'"
-              >Удалить водителя</Button
+              >Деактивировать водителя</Button
             >
           </div>
         </div>
@@ -559,12 +559,12 @@ function adjust(withdraw: boolean) {
         ><DialogHeader
           ><DialogTitle>{{
             confirm === "delete"
-              ? "Удалить навсегда?"
+              ? "Деактивировать аккаунт?"
               : "Заблокировать водителя?"
           }}</DialogTitle
           ><DialogDescription>{{
             confirm === "delete"
-              ? "Это действие нельзя отменить. Данные аккаунта будут удалены."
+              ? "Вход и рабочие сессии будут отключены. История и баланс сохранятся."
               : "Водитель потеряет доступ к рабочим операциям."
           }}</DialogDescription></DialogHeader
         ><template v-if="confirm === 'block'"

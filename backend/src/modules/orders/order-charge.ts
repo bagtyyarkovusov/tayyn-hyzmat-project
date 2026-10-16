@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { MAX_WALLET_AMOUNT } from '../../utils/money-policy';
 import { lockedBalance } from '../balance/locked-balance';
 const ApiError = require('../../utils/ApiError');
 
@@ -30,6 +31,9 @@ export async function recordOrderCharge(
   const balanceAfter = payment
     ? new Prisma.Decimal(balance.amount).sub(price)
     : new Prisma.Decimal(balance.amount).add(price);
+  if (balanceAfter.gt(MAX_WALLET_AMOUNT)) {
+    throw ApiError.badRequest('Возврат превысит максимальный баланс. Сначала уменьшите баланс водителя');
+  }
   await tx.balance.update({ where: { id: balance.id }, data: { amount: balanceAfter } });
   await tx.transaction.create({
     data: {
