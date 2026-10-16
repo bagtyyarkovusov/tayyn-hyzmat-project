@@ -1,3 +1,4 @@
+const { beforeCursor, markRead } = require('../chat/cursors');
 const { persistMessage } = require('../chat/persist-message');
 const { Prisma } = require('@prisma/client');
 const prisma = require('../../lib/prisma');
@@ -92,16 +93,18 @@ async function listDrivers({ status, page, limit }) {
 async function withUnreadFlag(drivers) {
   if (drivers.length === 0) return drivers;
   const userIds = drivers.map((d) => d.userId);
-  const lastMessages = await prisma.message.groupBy({
-    by: ['senderId'],
+  const lastMessages = await prisma.message.findMany({
     where: { senderId: { in: userIds }, isBroadcast: false },
-    _max: { sentAt: true }
+    orderBy: [{ sentAt: 'desc' }, { id: 'desc' }],
+    distinct: ['senderId'],
+    select: { id: true, senderId: true, sentAt: true }
   });
-  const lastMessageAtByUserId = new Map(lastMessages.map((m) => [m.senderId, m._max.sentAt]));
-  return drivers.map((d) => {
-    const lastMessageAt = lastMessageAtByUserId.get(d.userId) || null;
-    const hasUnreadMessage = Boolean(lastMessageAt && (!d.lastReadByAdminAt || lastMessageAt > d.lastReadByAdminAt));
-    return { ...d, hasUnreadMessage };
+  const latestByUserId = new Map(lastMessages.map(message => [message.senderId, message]));
+  return drivers.map(driver => {
+    const latest = latestByUserId.get(driver.userId);
+    const hasUnreadMessage = Boolean(latest && (!driver.lastReadByAdminAt || latest.sentAt > driver.lastReadByAdminAt ||
+      (latest.sentAt.getTime() === driver.lastReadByAdminAt.getTime() && driver.lastReadByAdminMessageId && latest.id > driver.lastReadByAdminMessageId)));
+    return { ...driver, hasUnreadMessage };
   });
 }
 
@@ -112,7 +115,7 @@ async function withUnreadFlag(drivers) {
 async function listUnreadDriverIds() {
   const drivers = await prisma.driver.findMany({
     where: { status: 'APPROVED' },
-    select: { id: true, userId: true, lastReadByAdminAt: true }
+    select: { id: true, userId: true, lastReadByAdminAt: true, lastReadByAdminMessageId: true }
   });
   const withFlags = await withUnreadFlag(drivers);
   return withFlags.filter((d) => d.hasUnreadMessage).map((d) => d.id);
@@ -123,13 +126,7 @@ async function listUnreadDriverIds() {
 // not just the one who opened it, matching the shared-inbox model above.
 async function markMessagesRead(driverId, throughMessageId) {
   const driver = await findDriverOrThrow(driverId);
-  let readAt = new Date();
-  if (throughMessageId) {
-    const message = await prisma.message.findFirst({ where: { id: throughMessageId, senderId: driver.userId, isBroadcast: false }, select: { sentAt: true } });
-    if (!message) throw ApiError.badRequest('Некорректная отметка сообщения');
-    readAt = message.sentAt;
-  }
-  await prisma.driver.updateMany({ where: { id: driverId, OR: [{ lastReadByAdminAt: null }, { lastReadByAdminAt: { lt: readAt } }] }, data: { lastReadByAdminAt: readAt } });
+  await markRead(driverId, { senderId: driver.userId, isBroadcast: false }, throughMessageId, 'lastReadByAdminAt', 'lastReadByAdminMessageId');
 }
 
 // Single-driver detail - not just "find it in the already-fetched list" on
@@ -411,15 +408,16 @@ async function sendMessage({ driverId, broadcast, title, body, clientMessageId }
 // sender or the receiver (an admin-broadcast message never targets a single
 // driver by receiverId, so it doesn't show up here - that's intentional,
 // broadcasts aren't part of a 1:1 conversation view).
-async function getDriverMessages(driverId, { page, limit }) {
+async function getDriverMessages(driverId, { page, limit, beforeMessageId }) {
   const driver = await findDriverOrThrow(driverId);
   const where = { OR: [{ senderId: driver.userId }, { receiverId: driver.userId }] };
 
+  const older = await beforeCursor(where, beforeMessageId);
   const [items, total] = await Promise.all([
     prisma.message.findMany({
-      where,
-      orderBy: { sentAt: 'desc' },
-      skip: (page - 1) * limit,
+      where: { AND: [where, older] },
+      orderBy: [{ sentAt: 'desc' }, { id: 'desc' }],
+      skip: beforeMessageId ? 0 : (page - 1) * limit,
       take: limit
     }),
     prisma.message.count({ where })

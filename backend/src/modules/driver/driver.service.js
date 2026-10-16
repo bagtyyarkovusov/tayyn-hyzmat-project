@@ -1,3 +1,4 @@
+const { afterCursor, beforeCursor, markRead } = require('../chat/cursors');
 const { persistMessage } = require('../chat/persist-message');
 const prisma = require('../../lib/prisma');
 const { getIO } = require('../../lib/socket');
@@ -242,7 +243,7 @@ async function getHistory(driver, { page, limit }) {
   };
 }
 
-async function getMessages(driver, { page, limit }) {
+async function getMessages(driver, { page, limit, beforeMessageId }) {
   const where = {
     OR: [{ senderId: driver.userId }, { receiverId: driver.userId }, { isBroadcast: true }]
   };
@@ -259,14 +260,15 @@ async function getMessages(driver, { page, limit }) {
     // being per-driver keeps that correct for each of them individually.
     OR: [{ receiverId: driver.userId }, { isBroadcast: true }],
     NOT: { senderId: driver.userId },
-    ...(driver.lastChatReadAt ? { sentAt: { gt: driver.lastChatReadAt } } : {})
+    AND: [afterCursor(driver.lastChatReadAt, driver.lastChatReadMessageId)]
   };
 
+  const older = await beforeCursor(where, beforeMessageId);
   const [items, total, unread] = await Promise.all([
     prisma.message.findMany({
-      where,
-      orderBy: { sentAt: 'desc' },
-      skip: (page - 1) * limit,
+      where: { AND: [where, older] },
+      orderBy: [{ sentAt: 'desc' }, { id: 'desc' }],
+      skip: beforeMessageId ? 0 : (page - 1) * limit,
       take: limit
     }),
     prisma.message.count({ where }),
@@ -279,13 +281,7 @@ async function getMessages(driver, { page, limit }) {
 // Called when the driver actually opens their chat screen - everything the
 // admin sent up to now counts as seen.
 async function markChatRead(driver, throughMessageId) {
-  let readAt = new Date();
-  if (throughMessageId) {
-    const message = await prisma.message.findFirst({ where: { id: throughMessageId, OR: [{ receiverId: driver.userId }, { isBroadcast: true }] }, select: { sentAt: true } });
-    if (!message) throw ApiError.badRequest('Некорректная отметка сообщения');
-    readAt = message.sentAt;
-  }
-  await prisma.driver.updateMany({ where: { id: driver.id, OR: [{ lastChatReadAt: null }, { lastChatReadAt: { lt: readAt } }] }, data: { lastChatReadAt: readAt } });
+  await markRead(driver.id, { OR: [{ receiverId: driver.userId }, { isBroadcast: true }] }, throughMessageId, 'lastChatReadAt', 'lastChatReadMessageId');
 }
 
 // A driver message has no single recipient (any on-duty admin can pick it

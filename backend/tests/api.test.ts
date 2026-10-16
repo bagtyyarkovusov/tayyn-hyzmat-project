@@ -1581,3 +1581,27 @@ test('read cursor preserves newer unseen driver and dispatcher messages as unrea
   assert.equal((await request(`/admin/drivers/${driver.id}/messages/read`, adminToken, { throughMessageId: visible.data.id })).status, 204);
   assert.ok((await request('/admin/messages/unread', adminToken)).data.driverIds.includes(driver.id));
 });
+
+test('tied chat timestamps keep unseen messages unread and keyset pages complete', async () => {
+  const driver = (await request('/driver/profile', driverToken)).data;
+  const admin = await prisma.user.findFirstOrThrow({ where: { role: 'ADMIN' } });
+  const sentAt = new Date('2026-01-01T12:00:00.123Z');
+  const ids = ['10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000003'];
+  await prisma.message.createMany({ data: ids.map(id => ({ id, senderId: admin.id, receiverId: driver.userId, body: id, sentAt })) });
+  assert.equal((await request('/driver/messages/read', driverToken, { throughMessageId: ids[0] })).status, 204);
+  assert.equal((await request('/driver/messages', driverToken)).data.unread, 2);
+  const newest = (await request('/driver/messages?limit=2', driverToken)).data;
+  assert.deepEqual(newest.items.map((item: { id: string }) => item.id), [ids[1], ids[2]]);
+  const older = (await request(`/driver/messages?limit=2&beforeMessageId=${ids[1]}`, driverToken)).data;
+  assert.deepEqual(older.items.map((item: { id: string }) => item.id), [ids[0]]);
+  assert.equal((await request('/driver/messages/read', driverToken, { throughMessageId: ids[2] })).status, 204);
+  assert.equal((await request('/driver/messages/read', driverToken, { throughMessageId: ids[0] })).status, 204);
+  assert.equal((await request('/driver/messages', driverToken)).data.unread, 0);
+
+  const replies = ['20000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000002'];
+  await prisma.message.createMany({ data: replies.map(id => ({ id, senderId: driver.userId, body: id, sentAt })) });
+  assert.equal((await request(`/admin/drivers/${driver.id}/messages/read`, adminToken, { throughMessageId: replies[0] })).status, 204);
+  assert.ok((await request('/admin/messages/unread', adminToken)).data.driverIds.includes(driver.id));
+  const adminOlder = (await request(`/admin/drivers/${driver.id}/messages?limit=2&beforeMessageId=${replies[0]}`, adminToken)).data;
+  assert.deepEqual(adminOlder.items.map((item: { id: string }) => item.id), [ids[1], ids[2]]);
+});

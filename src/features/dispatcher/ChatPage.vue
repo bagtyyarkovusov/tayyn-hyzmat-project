@@ -68,10 +68,9 @@ async function loadOlder() {
   const driverId = thread.value.driver.id;
   const previousHeight = history.value?.scrollHeight ?? 0;
   try {
-    const page = Math.floor(thread.value.messages.length / 100) + 1;
     const { data } = await adminApi.get<Page<Message>>(
       `/admin/drivers/${driverId}/messages`,
-      { params: { page, limit: 100 } },
+      { params: { beforeMessageId: thread.value.messages[0]?.id, limit: 100 } },
     );
     if (!alive || props.driverId !== driverId || !thread.value) return;
     const merged = [...data.items, ...thread.value.messages];
@@ -119,9 +118,11 @@ const {
     ) {
       const more = await adminApi.get<Page<Message>>(
         `/admin/drivers/${driverId}/messages`,
-        { params: { page: ++fetchedPage, limit: 100 } },
+        { params: { beforeMessageId: messages.data.items[0]?.id, limit: 100 } },
       );
+      fetchedPage++;
       if (!alive || props.driverId !== driverId) return null;
+      if (!more.data.items.length) break;
       messages.data.items.unshift(...more.data.items);
     }
     try {
@@ -154,7 +155,11 @@ const {
             message,
           ]),
         ).values(),
-      ].sort((a, b) => Date.parse(a.sentAt) - Date.parse(b.sentAt)),
+      ].sort(
+        (a, b) =>
+          Date.parse(a.sentAt) - Date.parse(b.sentAt) ||
+          a.id.localeCompare(b.id),
+      ),
       total: messages.data.total,
       driver: driver.data,
     };

@@ -23,6 +23,7 @@ const sendMessageSchema = z.object({
 });
 
 const messagesQuerySchema = z.object({
+  beforeMessageId: z.string().uuid().optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(200).default(50)
 });

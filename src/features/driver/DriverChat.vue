@@ -49,8 +49,15 @@ async function load(older = false) {
     const anchor = older ? undefined : messages.value.at(-1)?.id;
     let fetchedPage = next;
     const { data } = await driverApi.get<Page<Message>>("/driver/messages", {
-      params: { page: fetchedPage, limit: 50 },
+      params: {
+        page: older ? 1 : fetchedPage,
+        limit: 50,
+        ...(older && messages.value[0]
+          ? { beforeMessageId: messages.value[0].id }
+          : {}),
+      },
     });
+    let oldestFetched = data.items[0]?.id;
     // Reconnect can miss more than one page. Fetch back to the last known
     // message before merging, rather than leaving a silent gap in the thread.
     while (
@@ -59,9 +66,12 @@ async function load(older = false) {
       fetchedPage * 50 < data.total
     ) {
       const more = await driverApi.get<Page<Message>>("/driver/messages", {
-        params: { page: ++fetchedPage, limit: 50 },
+        params: { beforeMessageId: oldestFetched, limit: 50 },
       });
+      fetchedPage++;
       if (!alive) return;
+      oldestFetched = more.data.items[0]?.id;
+      if (!oldestFetched) break;
       data.items.push(...more.data.items);
     }
     if (!alive) return;
@@ -69,7 +79,8 @@ async function load(older = false) {
     total.value = data.total;
     const combined = [...messages.value, ...data.items];
     messages.value = [...new Map(combined.map((m) => [m.id, m])).values()].sort(
-      (a, b) => Date.parse(a.sentAt) - Date.parse(b.sentAt),
+      (a, b) =>
+        Date.parse(a.sentAt) - Date.parse(b.sentAt) || a.id.localeCompare(b.id),
     );
     if (!document.hidden) {
       const lastIncoming = [...messages.value]

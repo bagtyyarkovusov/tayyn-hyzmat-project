@@ -120,7 +120,10 @@ export async function tick(token: string, fix: Fix) {
     }
   }
   const after = new Date(Math.max(renewed.lease.started_at.getTime(), renewed.driver.lastChatReadAt?.getTime() ?? 0));
-  const messages = await prisma.message.findMany({ where: { OR: [{ receiverId: renewed.driver.userId }, { isBroadcast: true }], NOT: { senderId: renewed.driver.userId }, sentAt: { gt: after } }, select: { id: true }, orderBy: [{ sentAt: 'desc' }, { id: 'desc' }], take: 100 });
+  const readCursor = renewed.driver.lastChatReadAt && renewed.driver.lastChatReadAt.getTime() >= renewed.lease.started_at.getTime()
+    ? require('../chat/cursors').afterCursor(renewed.driver.lastChatReadAt, renewed.driver.lastChatReadMessageId)
+    : { sentAt: { gt: after } };
+  const messages = await prisma.message.findMany({ where: { AND: [readCursor], OR: [{ receiverId: renewed.driver.userId }, { isBroadcast: true }], NOT: { senderId: renewed.driver.userId } }, select: { id: true }, orderBy: [{ sentAt: 'desc' }, { id: 'desc' }], take: 100 });
   for (const message of messages) events.push({ id: `chat:${message.id}`, channel: 'chat', title: 'Сообщение диспетчера', body: 'Откройте чат в приложении.', messageId: message.id, expiresAt: renewed.expires.toISOString() });
   return { serverTime: responseTime.toISOString(), leaseExpiresAt: renewed.expires.toISOString(), events };
 }
