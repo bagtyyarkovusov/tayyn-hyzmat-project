@@ -1557,6 +1557,8 @@ test('private acceptance rechecks funds after reservation without debiting an un
 });
 
 test('chat retries with one client message id persist one message and reject changed content', async () => {
+  await prisma.message.deleteMany();
+  await prisma.driver.updateMany({ data: { lastChatReadAt: null, lastChatReadMessageId: null, lastReadByAdminAt: null, lastReadByAdminMessageId: null } });
   const clientMessageId = 'd07ca5bb-c21f-4617-a03b-f538d1873096';
   const results = await Promise.all([
     request('/driver/messages', driverToken, { body: 'One delivery', clientMessageId }),
@@ -1571,6 +1573,8 @@ test('chat retries with one client message id persist one message and reject cha
 });
 
 test('read cursor preserves newer unseen driver and dispatcher messages as unread', async () => {
+  await prisma.message.deleteMany();
+  await prisma.driver.updateMany({ data: { lastChatReadAt: null, lastChatReadMessageId: null, lastReadByAdminAt: null, lastReadByAdminMessageId: null } });
   const driver = (await request('/driver/profile', driverToken)).data;
   const first = await request('/admin/messages', adminToken, { driverId: driver.id, body: 'Visible admin message' });
   await request('/admin/messages', adminToken, { driverId: driver.id, body: 'Unseen admin message' });
@@ -1583,6 +1587,8 @@ test('read cursor preserves newer unseen driver and dispatcher messages as unrea
 });
 
 test('tied chat timestamps keep unseen messages unread and keyset pages complete', async () => {
+  await prisma.message.deleteMany();
+  await prisma.driver.updateMany({ data: { lastChatReadAt: null, lastChatReadMessageId: null, lastReadByAdminAt: null, lastReadByAdminMessageId: null } });
   const driver = (await request('/driver/profile', driverToken)).data;
   const admin = await prisma.user.findFirstOrThrow({ where: { role: 'ADMIN' } });
   const sentAt = new Date('2026-01-01T12:00:00.123Z');
