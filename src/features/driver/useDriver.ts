@@ -682,7 +682,7 @@ function enableGps() {
     )
       markLocationSyncFailure("Ожидаем подтверждение связи с диспетчером…");
     navigator.geolocation.getCurrentPosition(report, failed, options);
-  }, 20000);
+  }, 10000);
 }
 function start() {
   const readinessClock = setInterval(() => {
