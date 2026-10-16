@@ -1,6 +1,6 @@
 const { z } = require('zod');
 const { registerDriverSchema } = require('../auth/auth.validation');
-const createDriverSchema = registerDriverSchema.extend({ districtId: z.string().uuid('Выберите район') });
+const createDriverSchema = registerDriverSchema;
 
 const driverIdParamSchema = z.object({
   id: z.string().uuid('Некорректный идентификатор водителя')

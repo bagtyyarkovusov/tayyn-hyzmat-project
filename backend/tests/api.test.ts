@@ -48,6 +48,12 @@ async function socket(token: string) {
   });
   return client;
 }
+async function socketEvent(client: Socket, event: string): Promise<any[]> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Expected socket ${event}`)), 3000);
+    client.once(event, (...args: any[]) => { clearTimeout(timer); resolve(args); });
+  });
+}
 async function order(priceEstimated: number | null = 10) {
   const response = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: priceEstimated ?? 10, pickupAddress: 'Synthetic pickup', clientPhone: '+10000000999' });
   assert.equal(response.status, 201);
@@ -335,14 +341,14 @@ for (const price of [null, 0, -10]) {
 }
 
 test('dispatcher creates an approved driver with a zero TMT balance and no leaked password', async () => {
-  const body = { phone: '+99361123456', fullName: 'Added synthetic driver', password, districtId: regionId };
+  const body = { phone: '+99361123456', fullName: 'Added synthetic driver', password };
   assert.equal((await request('/admin/drivers', driverToken, body)).status, 403);
   assert.equal((await request('/admin/drivers', '', body)).status, 401);
-  assert.equal((await request('/admin/drivers', adminToken, { ...body, districtId: '00000000-0000-4000-8000-000000000000' })).status, 404);
   const created = await request('/admin/drivers', adminToken, body);
   assert.equal(created.status, 201);
   assert.equal(created.data.status, 'APPROVED');
-  assert.equal(created.data.districtId, regionId);
+  assert.equal(created.data.districtId, null);
+  assert.equal(created.data.isOnline, false);
   assert.equal(created.data.user.phone, body.phone);
   assert.equal(created.data.user.balance.amount, '0');
   assert.equal(created.data.user.balance.currency, 'TMT');
@@ -405,4 +411,120 @@ test('canonical bootstrap fills a missing boundary without changing an existing 
   assert.equal(restored.length, 1);
   assert.equal(restored[0].id, oldId);
   assert.equal(restored[0].boundary[0].length, 26);
+});
+
+test('dispatcher edits driver identity without a name-only change ending the session', async () => {
+  const created = await request('/admin/drivers', adminToken, { fullName: 'Credential fixture', phone: '+99361001001', password });
+  assert.equal(created.status, 201);
+  const id = created.data.id;
+  const login = await request('/auth/login', '', { phone: '+99361001001', password, deviceId: 'credential-test-device' });
+  assert.equal(login.status, 200);
+  const body = { fullName: 'Updated driver', phone: '+99361001001' };
+  assert.equal((await request(`/admin/drivers/${id}/profile`, driverToken, body)).status, 403);
+  assert.equal((await request(`/admin/drivers/${id}/profile`, '', body)).status, 401);
+  const updated = await request(`/admin/drivers/${id}/profile`, adminToken, body);
+  assert.equal(updated.status, 200);
+  assert.equal(updated.data.user.fullName, 'Updated driver');
+  assert.equal((await request('/driver/profile', login.data.accessToken)).status, 200);
+  const duplicate = await request(`/admin/drivers/${id}/profile`, adminToken, { fullName: 'Should not save', phone: '+10000000102' });
+  assert.equal(duplicate.status, 409);
+  const preserved = await request(`/admin/drivers/${id}`, adminToken);
+  assert.equal(preserved.data.user.fullName, 'Updated driver');
+  assert.equal(preserved.data.user.phone, '+99361001001');
+  assert.equal((await request(`/admin/drivers/${id}/profile`, adminToken, { fullName: 'X', phone: 'bad' })).status, 400);
+});
+
+test('changing driver login phone revokes old sessions and keeps approved device, balance and trip', async () => {
+  const fixture = await request('/admin/drivers', adminToken, { fullName: 'Phone fixture', phone: '+99361001003', password });
+  await request(`/admin/drivers/${fixture.data.id}/balance`, adminToken, { amount: 500, type: 'TOPUP' });
+  const session = await request('/auth/login', '', { phone: '+99361001003', password, deviceId: 'credential-device' });
+  const profile = await request('/driver/profile', session.data.accessToken);
+  const id = profile.data.id;
+  const oldSocket = await socket(session.data.accessToken);
+  await request('/driver/location', session.data.accessToken, { lat: 37.96, lng: 58.32 });
+  await request('/driver/status', session.data.accessToken, { isOnline: true });
+  const created = await order();
+  assert.equal((await request('/orders/accept', session.data.accessToken, { orderId: created.id, arrivalMinutes: 5 })).status, 200);
+  const disconnected = socketEvent(oldSocket, 'disconnect');
+  const result = await request(`/admin/drivers/${id}/profile`, adminToken, { fullName: 'New identity', phone: '+99361001002' });
+  assert.equal(result.status, 200);
+  await disconnected;
+  assert.equal((await request('/driver/profile', session.data.accessToken)).status, 401);
+  assert.equal((await request('/auth/refresh', '', { refreshToken: session.data.refreshToken })).status, 401);
+  assert.equal((await request('/auth/login', '', { phone: '+99361001003', password })).status, 401);
+  const recovered = await request('/auth/login', '', { phone: '+99361001002', password, deviceId: 'credential-device' });
+  assert.equal(recovered.status, 200);
+  const restored = await request('/driver/profile', recovered.data.accessToken);
+  assert.equal(restored.data.currentDeviceId, 'credential-device');
+  assert.equal(restored.data.isOnline, false);
+  assert.equal((await request('/driver/balance', recovered.data.accessToken)).data.amount, '490');
+  assert.equal((await request('/orders/current', recovered.data.accessToken)).data.id, created.id);
+  const rejected = connect(base, { auth: { token: session.data.accessToken }, transports: ['websocket'], reconnection: false });
+  clients.push(rejected);
+  const [error] = await socketEvent(rejected, 'connect_error');
+  assert.equal(error.message, 'unauthorized');
+});
+
+test('dispatcher resets driver password with confirmation and revokes all prior refresh generations', async () => {
+  await request('/admin/drivers', adminToken, { fullName: 'Password fixture', phone: '+99361001004', password });
+  const session = await request('/auth/login', '', { phone: '+99361001004', password });
+  const rotated = await request('/auth/refresh', '', { refreshToken: session.data.refreshToken });
+  const id = (await request('/driver/profile', session.data.accessToken)).data.id;
+  const body = { password: 'Replacement123!', passwordConfirmation: 'Replacement123!' };
+  assert.equal((await request(`/admin/drivers/${id}/password`, driverToken, body)).status, 403);
+  assert.equal((await request(`/admin/drivers/${id}/password`, adminToken, { ...body, passwordConfirmation: 'mismatch' })).status, 400);
+  assert.equal((await request(`/admin/drivers/${id}/password`, adminToken, { password: 'short', passwordConfirmation: 'short' })).status, 400);
+  assert.equal((await request('/driver/profile', session.data.accessToken)).status, 200);
+  const reset = await request(`/admin/drivers/${id}/password`, adminToken, body);
+  assert.equal(reset.status, 200);
+  assert.equal(JSON.stringify(reset.data).includes('Replacement'), false);
+  assert.equal(JSON.stringify(reset.data).includes('passwordHash'), false);
+  for (const token of [session.data.refreshToken, rotated.data.refreshToken])
+    assert.equal((await request('/auth/refresh', '', { refreshToken: token })).status, 401);
+  assert.equal((await request('/driver/profile', rotated.data.accessToken)).status, 401);
+  assert.equal((await request('/auth/login', '', { phone: '+99361001004', password })).status, 401);
+  assert.equal((await request('/auth/login', '', { phone: '+99361001004', password: body.password })).status, 200);
+});
+
+test('a credential change keeps the driver offline when an old online request is already in flight', async () => {
+  const fixture = await request('/admin/drivers', adminToken, { fullName: 'Concurrent credential fixture', phone: '+99361001005', password });
+  const session = await request('/auth/login', '', { phone: '+99361001005', password });
+  const token = session.data.accessToken;
+  await request('/driver/location', token, { lat: 37.96, lng: 58.32 });
+  // Fixture database locks arrange an in-flight request; assertions stay at HTTP seams.
+  let release!: () => void;
+  let ready!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const locked = new Promise<void>(resolve => { ready = resolve; });
+  const blocker = prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM drivers WHERE id = ${fixture.data.id} FOR UPDATE`;
+    ready();
+    await gate;
+  }, { timeout: 10000 });
+  async function waitForBlockedRequests(count: number) {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+      if (Number(rows[0].count) >= count) return;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    throw new Error('Fixture did not arrange the concurrent HTTP requests');
+  }
+  await locked;
+  let changed!: Awaited<ReturnType<typeof request>>;
+  let online!: Awaited<ReturnType<typeof request>>;
+  try {
+    const reset = request(`/admin/drivers/${fixture.data.id}/profile`, adminToken, { fullName: 'Concurrent credential fixture', phone: '+99361001006' });
+    await waitForBlockedRequests(1);
+    const oldRequest = request('/driver/status', token, { isOnline: true });
+    await waitForBlockedRequests(2);
+    release();
+    [changed, online] = await Promise.all([reset, oldRequest]);
+  } finally {
+    release();
+    await blocker;
+  }
+  assert.equal(changed.status, 200);
+  assert.equal(online.status, 401);
+  const final = await request(`/admin/drivers/${fixture.data.id}`, adminToken);
+  assert.equal(final.data.isOnline, false);
 });
