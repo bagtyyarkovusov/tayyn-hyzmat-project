@@ -28,7 +28,7 @@ const env = {
   jwtAccessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '15m',
   jwtRefreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d',
 
-  seedAdminPhone: process.env.SEED_ADMIN_PHONE || '+10000000000',
+  seedAdminPhone: process.env.SEED_ADMIN_PHONE || '+99360000000',
   seedAdminPassword: process.env.SEED_ADMIN_PASSWORD || 'ChangeMe123!',
   seedAdminName: process.env.SEED_ADMIN_NAME || 'Super Admin',
 

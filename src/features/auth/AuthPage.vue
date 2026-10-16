@@ -10,6 +10,8 @@ import {
 } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
+import PhoneInput from "@/shared/ui/phone-input/PhoneInput.vue";
+import { passwordError, passwordHint } from "@/shared/password";
 import { Label } from "@/shared/ui/label";
 import { adminSession, driverSession } from "./session";
 import { errorMessage, publicRequest } from "@/shared/api";
@@ -25,6 +27,10 @@ const busy = ref(false);
 const error = ref("");
 const message = ref("");
 async function submit() {
+  if (registering.value && passwordError(password.value)) {
+    error.value = passwordError(password.value);
+    return;
+  }
   busy.value = true;
   error.value = "";
   message.value = "";
@@ -112,14 +118,7 @@ async function submit() {
           </div>
           <div class="field">
             <Label for="phone">Номер телефона</Label
-            ><Input
-              id="phone"
-              v-model="phone"
-              type="tel"
-              autocomplete="tel"
-              placeholder="+993 …"
-              required
-            />
+            ><PhoneInput id="phone" v-model="phone" required />
           </div>
           <div class="field">
             <Label for="password">Пароль</Label
@@ -130,8 +129,12 @@ async function submit() {
               :autocomplete="registering ? 'new-password' : 'current-password'"
               required
               :minlength="registering ? 6 : 1"
+              :maxlength="registering ? 72 : undefined"
             />
           </div>
+          <p v-if="registering" class="text-xs text-muted-foreground">
+            {{ passwordHint }}
+          </p>
           <p v-if="error" role="alert" class="error-message">{{ error }}</p>
           <p v-if="message" role="status" class="rounded-lg bg-secondary p-4">
             {{ message }}

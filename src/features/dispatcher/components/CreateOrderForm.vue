@@ -2,8 +2,10 @@
 import { onMounted, onUnmounted, reactive, ref } from "vue";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
+import PhoneInput from "@/shared/ui/phone-input/PhoneInput.vue";
 import { Label } from "@/shared/ui/label";
 import { Textarea } from "@/shared/ui/textarea";
+import { isTurkmenPhone, phoneError } from "@/shared/phone";
 import { adminApi, errorMessage } from "@/shared/api";
 import { hasYandexMapsApiKey, loadYandexMaps } from "@/shared/maps/yandex";
 import PrivateOfferDriverPicker from "./PrivateOfferDriverPicker.vue";
@@ -12,7 +14,6 @@ import type { District } from "../domain";
 const props = defineProps<{ initialDriverId?: string }>();
 const mode = ref(props.initialDriverId ? "private" : "public");
 const privateDriverId = ref(props.initialDriverId ?? "");
-const phonePattern = String.raw`[+]?[0-9][0-9\s\-]{5,19}`;
 const emit = defineEmits<{ created: [] }>();
 const districts = ref<District[]>([]),
   pending = ref(false),
@@ -121,12 +122,8 @@ async function submit() {
     error.value = "Выберите район";
     return;
   }
-  if (
-    !/^\+?[0-9][0-9\s-]*$/.test(phone) ||
-    phone.replace(/\D/g, "").length < 6 ||
-    phone.replace(/\D/g, "").length > 15
-  ) {
-    error.value = "Укажите телефон клиента: от 6 до 15 цифр";
+  if (!isTurkmenPhone(phone)) {
+    error.value = phoneError;
     return;
   }
   if (
@@ -221,18 +218,7 @@ async function submit() {
           <Label for="client-phone">Телефон клиента</Label
           ><span aria-hidden="true" class="text-destructive">*</span>
         </div>
-        <Input
-          id="client-phone"
-          v-model="form.clientPhone"
-          type="tel"
-          autocomplete="tel"
-          inputmode="tel"
-          required
-          minlength="6"
-          maxlength="20"
-          :pattern="phonePattern"
-          placeholder="+993…"
-        />
+        <PhoneInput id="client-phone" v-model="form.clientPhone" required />
         <p class="text-xs text-muted-foreground">
           Номер виден водителю только после принятия.
         </p>

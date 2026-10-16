@@ -63,7 +63,7 @@ async function socketEvent(client: Socket, event: string): Promise<any[]> {
   });
 }
 async function order(priceEstimated: number | null = 10) {
-  const response = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: priceEstimated ?? 10, pickupAddress: 'Synthetic pickup', clientPhone: '+10000000999' });
+  const response = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: priceEstimated ?? 10, pickupAddress: 'Synthetic pickup', clientPhone: '+99360000999' });
   assert.equal(response.status, 201);
   if (priceEstimated === null) {
     await prisma.order.update({ where: { id: response.data.id }, data: { priceEstimated: null } });
@@ -73,12 +73,12 @@ async function order(priceEstimated: number | null = 10) {
 
 before(async () => {
   const passwordHash = await bcrypt.hash(password, 4);
-  await prisma.user.create({ data: { phone: '+10000000000', fullName: 'Test dispatcher', role: 'ADMIN', passwordHash, admin: { create: { permissionLevel: 'SUPER' } } } });
+  await prisma.user.create({ data: { phone: '+99360000000', fullName: 'Test dispatcher', role: 'ADMIN', passwordHash, admin: { create: { permissionLevel: 'SUPER' } } } });
   const region = await prisma.district.create({ data: { name: 'Synthetic west', centerLat: 37.96, centerLng: 58.32, boundary: [[[37.94, 58.30], [37.98, 58.30], [37.98, 58.36], [37.94, 58.36]]] } });
   const otherRegion = await prisma.district.create({ data: { name: 'Synthetic east', centerLat: 37.96, centerLng: 58.42, boundary: [[[37.94, 58.38], [37.98, 58.38], [37.98, 58.46], [37.94, 58.46]]] } });
   regionId = region.id;
   otherRegionId = otherRegion.id;
-  for (const [phone, districtId] of [['+10000000101', regionId], ['+10000000102', otherRegionId]]) {
+  for (const [phone, districtId] of [['+99360000101', regionId], ['+99360000102', otherRegionId]]) {
     await prisma.user.create({ data: { phone, fullName: 'Synthetic driver', role: 'DRIVER', passwordHash, driver: { create: { status: 'APPROVED', districtId } }, balance: { create: { amount: 500, currency: 'TMT' } } } });
   }
   server.listen(0, '127.0.0.1');
@@ -86,9 +86,9 @@ before(async () => {
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   base = `http://127.0.0.1:${address.port}`;
-  adminToken = await login('+10000000000');
-  driverToken = await login('+10000000101');
-  otherToken = await login('+10000000102');
+  adminToken = await login('+99360000000');
+  driverToken = await login('+99360000101');
+  otherToken = await login('+99360000102');
 });
 beforeEach(async () => {
   testClient++;
@@ -96,7 +96,7 @@ beforeEach(async () => {
   await prisma.order.deleteMany();
   await prisma.balance.updateMany({ data: { amount: 500 } });
   await prisma.driver.updateMany({ data: { isAvailable: true, isOnline: false } });
-  await prisma.driver.updateMany({ where: { user: { phone: '+10000000102' } }, data: { districtId: otherRegionId } });
+  await prisma.driver.updateMany({ where: { user: { phone: '+99360000102' } }, data: { districtId: otherRegionId } });
   for (const [token, lng] of [[driverToken, 58.32], [otherToken, 58.42]] as const) {
     assert.equal((await request('/driver/location', token, { lat: 37.96, lng })).status, 200);
     assert.equal((await request('/driver/status', token, { isOnline: true })).status, 200);
@@ -138,7 +138,7 @@ test('private driver data requires authentication and dispatcher data requires a
 test('missing or stale GPS blocks online status, order browsing and claims without charging', async () => {
   const created = await order();
   for (const lastLocationAt of [null, new Date(Date.now() - 61000)]) {
-    await prisma.driver.updateMany({ where: { user: { phone: '+10000000101' } }, data: { lastLocationAt, isOnline: true } });
+    await prisma.driver.updateMany({ where: { user: { phone: '+99360000101' } }, data: { lastLocationAt, isOnline: true } });
     assert.equal((await request('/driver/status', driverToken, { isOnline: true })).status, 403);
     assert.equal((await request('/orders/available', driverToken)).status, 403);
     assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 403);
@@ -163,7 +163,7 @@ test('GPS expiry forces offline without interrupting a claimed trip and fresh GP
   assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 200);
   const client = await socket(driverToken);
   try {
-    await prisma.driver.updateMany({ where: { user: { phone: '+10000000101' } }, data: { lastLocationAt: new Date(Date.now() - 59500) } });
+    await prisma.driver.updateMany({ where: { user: { phone: '+99360000101' } }, data: { lastLocationAt: new Date(Date.now() - 59500) } });
     const expired = new Promise<Record<string, unknown>>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('GPS expiry did not emit offline')), 2500);
       client.on('driver:status', event => { if (event.reason === 'GPS_REQUIRED') { clearTimeout(timeout); resolve(event); } });
@@ -193,7 +193,7 @@ test('stale sockets receive no offers or live queues after balance, region chang
   watch();
   try {
     // Seed a stale timestamp while a previously eligible socket is still joined.
-    await prisma.driver.updateMany({ where: { user: { phone: '+10000000101' } }, data: { lastLocationAt: new Date(Date.now() - 61000) } });
+    await prisma.driver.updateMany({ where: { user: { phone: '+99360000101' } }, data: { lastLocationAt: new Date(Date.now() - 61000) } });
     await order();
     const profile = await request('/driver/profile', driverToken);
     assert.equal(profile.data.isOnline, false);
@@ -242,7 +242,7 @@ test('an inherited unpriced order can be completed without a balance charge', as
   assert.equal('clientPhone' in offered, false);
   const claimed = await request('/orders/accept', driverToken, { orderId: created.data.id });
   assert.equal(claimed.status, 200);
-  assert.equal(claimed.data.clientPhone, '+10000000999');
+  assert.equal(claimed.data.clientPhone, '+99360000999');
   assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
   for (const action of ['waiting', 'start', 'complete']) assert.equal((await request(`/orders/${action}`, driverToken, { orderId: created.data.id })).status, 200);
   assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
@@ -256,7 +256,7 @@ test('a claimed order progresses to completion and charges the quoted TMT price 
   const claimed = await request('/orders/accept', driverToken, body);
   assert.equal(claimed.status, 200);
   assert.equal(claimed.data.status, 'ACCEPTED');
-  assert.equal(claimed.data.clientPhone, '+10000000999');
+  assert.equal(claimed.data.clientPhone, '+99360000999');
   assert.equal((await request('/orders/complete', driverToken, body)).status, 409);
   for (const [action, status] of [['waiting', 'WAITING'], ['start', 'STARTED'], ['complete', 'COMPLETED']]) {
     const response = await request(`/orders/${action}`, driverToken, body);
@@ -390,7 +390,7 @@ test('dispatcher creates an approved driver with a zero TMT balance and no leake
 });
 
 test('a newly registered driver can log in only after dispatcher approval', async () => {
-  const phone = '+10000000103';
+  const phone = '+99360000103';
   const registered = await request('/auth/register', '', { phone, password, fullName: 'Pending synthetic driver' });
   assert.equal(registered.status, 201);
   assert.equal((await request('/auth/login', '', { phone, password })).status, 403);
@@ -444,14 +444,14 @@ test('canonical bootstrap fills a missing boundary without changing an existing 
 
 test('native inbox safely replays notifications and removes consumed orders and chats', async () => {
   const island = await prisma.district.create({ data: { name: 'Native synthetic island', centerLat: 0, centerLng: 0, boundary: [[[-0.01, -0.01], [0.01, -0.01], [0.01, 0.01], [-0.01, 0.01]]] } });
-  const auth = await request('/auth/login', '', { phone: '+10000000101', password, deviceId: 'native-test-device' });
+  const auth = await request('/auth/login', '', { phone: '+99360000101', password, deviceId: 'native-test-device' });
   await request('/driver/location', auth.data.accessToken, { lat: 0, lng: 0 });
   await request('/driver/status', auth.data.accessToken, { isOnline: true });
   assert.equal(auth.status, 200);
   const started = await request('/driver/shift', auth.data.accessToken, { deviceId: 'native-test-device', refreshToken: auth.data.refreshToken });
   assert.equal(started.status, 201);
   assert.equal(started.data.pollIntervalMs, 10000);
-  const createdResponse = await request('/admin/orders', adminToken, { districtId: island.id, priceEstimated: 10, clientPhone: '+10000000999' });
+  const createdResponse = await request('/admin/orders', adminToken, { districtId: island.id, priceEstimated: 10, clientPhone: '+99360000999' });
   assert.equal(createdResponse.status, 201);
   const created = createdResponse.data;
   assert.equal((await request('/admin/messages', adminToken, { driverId: auth.data.user.driver.id, body: 'Private test message' })).status, 200);
@@ -460,7 +460,7 @@ test('native inbox safely replays notifications and removes consumed orders and 
   assert.equal(first.status, 200);
   assert.ok(first.data.events.some((event: { orderId?: string }) => event.orderId === created.id));
   assert.ok(first.data.events.some((event: { channel: string }) => event.channel === 'chat'));
-  assert.ok(!JSON.stringify(first.data.events).includes('+10000000999'));
+  assert.ok(!JSON.stringify(first.data.events).includes('+99360000999'));
   assert.ok(!JSON.stringify(first.data.events).includes('Private test message'));
   const second = await request('/native-shift/tick', started.data.shiftToken, fix);
   assert.deepEqual(second.data.events.map((event: { id: string }) => event.id), first.data.events.map((event: { id: string }) => event.id));
@@ -471,13 +471,13 @@ test('native inbox safely replays notifications and removes consumed orders and 
 });
 
 test('native chat inbox includes the newest unread message when more than one hundred are pending', async () => {
-  const auth = await request('/auth/login', '', { phone: '+10000000101', password, deviceId: 'native-test-device' });
+  const auth = await request('/auth/login', '', { phone: '+99360000101', password, deviceId: 'native-test-device' });
   await request('/driver/location', auth.data.accessToken, { lat: 37.96, lng: 58.32 });
   await request('/driver/status', auth.data.accessToken, { isOnline: true });
   const started = await request('/driver/shift', auth.data.accessToken, { deviceId: 'native-test-device', refreshToken: auth.data.refreshToken });
   assert.equal(started.status, 201);
   const fix = { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() };
-  const sender = await prisma.user.findUniqueOrThrow({ where: { phone: '+10000000000' } });
+  const sender = await prisma.user.findUniqueOrThrow({ where: { phone: '+99360000000' } });
   const sentAt = new Date(Date.now() + 1);
   await prisma.message.createMany({ data: Array.from({ length: 100 }, (_, i) => ({ id: `native-chat-overflow-${i}`, senderId: sender.id, receiverId: auth.data.user.id, body: 'Synthetic older unread', sentAt })) });
   await prisma.message.create({ data: { id: 'native-chat-newest', senderId: sender.id, receiverId: auth.data.user.id, body: 'Synthetic newest unread', sentAt: new Date(sentAt.getTime() + 1) } });
@@ -488,7 +488,7 @@ test('native chat inbox includes the newest unread message when more than one hu
 
 
 test('native shift cannot start without matching device and GPS or renew with a stale fix, expired lease or logout', async () => {
-  const auth = await request('/auth/login', '', { phone: '+10000000101', password, deviceId: 'native-test-device' });
+  const auth = await request('/auth/login', '', { phone: '+99360000101', password, deviceId: 'native-test-device' });
   const body = { deviceId: 'native-test-device', refreshToken: auth.data.refreshToken };
   assert.equal((await request('/driver/shift', auth.data.accessToken, { ...body, deviceId: 'wrong-device' })).status, 403);
   await request('/driver/status', auth.data.accessToken, { isOnline: false });
@@ -511,7 +511,7 @@ test('native shift cannot start without matching device and GPS or renew with a 
 });
 
 test('native task stop publishes persisted offline state to the driver and dispatcher', async () => {
-  const auth = await request('/auth/login', '', { phone: '+10000000101', password, deviceId: 'native-test-device' });
+  const auth = await request('/auth/login', '', { phone: '+99360000101', password, deviceId: 'native-test-device' });
   await request('/driver/location', auth.data.accessToken, { lat: 37.96, lng: 58.32 });
   await request('/driver/status', auth.data.accessToken, { isOnline: true });
   const started = await request('/driver/shift', auth.data.accessToken, { deviceId: 'native-test-device', refreshToken: auth.data.refreshToken });
@@ -534,7 +534,7 @@ test('native task stop publishes persisted offline state to the driver and dispa
 });
 
 test('explicit shift stop revokes its credential and a later replay cannot offline the driver', async () => {
-  const auth = await request('/auth/login', '', { phone: '+10000000101', password, deviceId: 'native-test-device' });
+  const auth = await request('/auth/login', '', { phone: '+99360000101', password, deviceId: 'native-test-device' });
   const started = await request('/driver/shift', auth.data.accessToken, { deviceId: 'native-test-device', refreshToken: auth.data.refreshToken });
   assert.equal(started.status, 201);
   assert.equal((await request('/driver/shift/stop', auth.data.accessToken, {})).status, 204);
@@ -1004,7 +1004,7 @@ test('dispatcher edits driver identity without a name-only change ending the ses
   assert.equal(updated.status, 200);
   assert.equal(updated.data.user.fullName, 'Updated driver');
   assert.equal((await request('/driver/profile', login.data.accessToken)).status, 200);
-  const duplicate = await request(`/admin/drivers/${id}/profile`, adminToken, { fullName: 'Should not save', phone: '+10000000102' });
+  const duplicate = await request(`/admin/drivers/${id}/profile`, adminToken, { fullName: 'Should not save', phone: '+99360000102' });
   assert.equal(duplicate.status, 409);
   const preserved = await request(`/admin/drivers/${id}`, adminToken);
   assert.equal(preserved.data.user.fullName, 'Updated driver');
@@ -1115,7 +1115,7 @@ test('credential reset revokes a private offer session while the new login can r
   assert.equal(reset.status, 200);
   assert.equal((await request('/orders/private-offer', otherToken)).status, 401);
   assert.equal((await request('/orders/private-offer/accept', otherToken, { orderId: created.data.id, privateOfferExpiresAt: created.data.privateOfferExpiresAt })).status, 401);
-  const session = await request('/auth/login', '', { phone: '+10000000102', password: 'SyntheticReplacement123!' });
+  const session = await request('/auth/login', '', { phone: '+99360000102', password: 'SyntheticReplacement123!' });
   assert.equal(session.status, 200);
   const token = session.data.accessToken;
   assert.equal((await request('/orders/private-offer', token)).status, 403);
@@ -1152,7 +1152,7 @@ test('credential reset cannot revive an old native shift after the new session g
 });
 
 test('native private offer replay preserves the persisted deadline and acceptance removes its notification', async () => {
-  const auth = await request('/auth/login', '', { phone: '+10000000101', password, deviceId: 'native-test-device' });
+  const auth = await request('/auth/login', '', { phone: '+99360000101', password, deviceId: 'native-test-device' });
   assert.equal(auth.status, 200);
   const token = auth.data.accessToken;
   const started = await request('/driver/shift', token, { deviceId: 'native-test-device', refreshToken: auth.data.refreshToken });
@@ -1202,7 +1202,7 @@ test('private confirmation and cancellation preserve credits with one charge and
 });
 
 test('a native renewal blocked beyond lease expiry cannot restore availability', async () => {
-  const auth = await request('/auth/login', '', { phone: '+10000000101', password, deviceId: 'native-test-device' });
+  const auth = await request('/auth/login', '', { phone: '+99360000101', password, deviceId: 'native-test-device' });
   assert.equal(auth.status, 200);
   const started = await request('/driver/shift', auth.data.accessToken, { deviceId: 'native-test-device', refreshToken: auth.data.refreshToken });
   assert.equal(started.status, 201);
@@ -1231,4 +1231,66 @@ test('a native renewal blocked beyond lease expiry cannot restore availability',
     release();
     assert.equal((await pending).status, 401);
   } finally { release(); await blocker; }
+});
+
+test('numeric six-character driver passwords work consistently for creation and reset while old sessions are revoked', async () => {
+  const phone = '+99361001091';
+  const created = await request('/admin/drivers', adminToken, { fullName: 'Numeric password fixture', phone, password: '123456' });
+  assert.equal(created.status, 201);
+  const auth = await request('/auth/login', '', { phone, password: '123456', deviceId: 'numeric-password-device' });
+  assert.equal(auth.status, 200);
+  const token = auth.data.accessToken;
+  await request('/driver/location', token, { lat: 37.96, lng: 58.32 });
+  await request('/driver/status', token, { isOnline: true, isAvailable: true });
+  const shift = await request('/driver/shift', token, { deviceId: 'numeric-password-device', refreshToken: auth.data.refreshToken });
+  assert.equal(shift.status, 201);
+  const connected = await socket(token);
+  const revoked = nextSocketEvent(connected, 'session:revoked');
+  const reset = await request(`/admin/drivers/${created.data.id}/password`, adminToken, { password: '654321', passwordConfirmation: '654321' });
+  assert.equal(reset.status, 200);
+  await revoked;
+  assert.equal((await request('/driver/profile', token)).status, 401);
+  assert.equal((await request('/auth/refresh', '', { refreshToken: auth.data.refreshToken })).status, 401);
+  assert.equal((await request('/native-shift/tick', shift.data.shiftToken, { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() })).status, 401);
+  assert.equal((await request('/auth/login', '', { phone, password: '123456' })).status, 401);
+  assert.equal((await request('/auth/login', '', { phone, password: '654321', deviceId: 'numeric-password-device' })).status, 200);
+});
+
+test('new driver passwords reject short values and bcrypt-truncated UTF-8 values in registration, creation and reset', async () => {
+  const fixture = await request('/admin/drivers', adminToken, { fullName: 'Password byte limit fixture', phone: '+99361001092', password: '123456' });
+  assert.equal(fixture.status, 201);
+  for (const invalid of ['12345', 'a'.repeat(73), 'é'.repeat(37)]) {
+    for (const path of ['/auth/register', '/admin/drivers']) {
+      const result = await request(path, path.startsWith('/admin') ? adminToken : '', { fullName: 'Invalid password fixture', phone: '+99361001093', password: invalid });
+      assert.equal(result.status, 400, `${path} rejects invalid new password`);
+    }
+    const reset = await request(`/admin/drivers/${fixture.data.id}/password`, adminToken, { password: invalid, passwordConfirmation: invalid });
+    assert.equal(reset.status, 400);
+  }
+  assert.equal((await request('/auth/login', '', { phone: '+99361001092', password: '123456' })).status, 200);
+});
+
+test('driver registration rejects a UTF-8 password beyond bcrypt 72-byte capacity even when character length is short', async () => {
+  const result = await request('/auth/register', '', { fullName: 'UTF-8 limit fixture', phone: '+99361001094', password: 'é'.repeat(37) });
+  assert.equal(result.status, 400);
+});
+
+
+test('Turkmen phone inputs normalize formatting and reject other countries or invalid lengths across public writes', async () => {
+  const formatted = '+993 61-001095';
+  const created = await request('/admin/drivers', adminToken, { fullName: 'Phone policy fixture', phone: formatted, password: '123456' });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.user.phone, '+99361001095');
+  assert.equal((await request('/auth/login', '', { phone: formatted, password: '123456' })).status, 200);
+  const invalidPhones = ['+10000000999', '+9936100109', '+993610010950', '61001095', '+99361x01095', '+993+61001095'];
+  for (const phone of invalidPhones) {
+    assert.equal((await request('/auth/register', '', { fullName: 'Invalid phone', phone, password: '123456' })).status, 400);
+    assert.equal((await request('/admin/drivers', adminToken, { fullName: 'Invalid phone', phone, password: '123456' })).status, 400);
+    assert.equal((await request(`/admin/drivers/${created.data.id}/profile`, adminToken, { fullName: 'Invalid phone', phone })).status, 400);
+    assert.equal((await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: phone })).status, 400);
+    assert.equal((await request('/auth/login', '', { phone, password: '123456' })).status, 400);
+  }
+  const result = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: formatted });
+  assert.equal(result.status, 201);
+  assert.equal(result.data.clientPhone, '+99361001095');
 });

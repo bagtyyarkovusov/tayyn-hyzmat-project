@@ -131,7 +131,7 @@ try {
     const passwordHash = await bcrypt.hash(accountPassword, 4);
     await prisma.user.create({
       data: {
-        phone: "+10000000000",
+        phone: "+99360000000",
         fullName: "Тестовый диспетчер",
         role: "ADMIN",
         passwordHash,
@@ -182,9 +182,9 @@ try {
     }
     env.TEST_REGION_ID = region.id;
     for (const [phone, name] of [
-      ["+10000000101", "Тестовый водитель"],
-      ["+10000000102", "Второй водитель"],
-      ["+10000000103", "Водитель для проверки обновлений"],
+      ["+99360000101", "Тестовый водитель"],
+      ["+99360000102", "Второй водитель"],
+      ["+99360000103", "Водитель для проверки обновлений"],
     ])
       await prisma.user.create({
         data: {
