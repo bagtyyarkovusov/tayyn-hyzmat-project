@@ -160,17 +160,10 @@ model Driver {
   blockedBy   String?   @map("blocked_by")
   blockReason String?   @map("block_reason")
 
-  // Single-device login, now with device memory: a driver is bound to
-  // whichever device last logged in (currentDeviceId/currentDeviceLabel -
-  // label is a human-readable "Samsung SM-A047F, Android 13" string from
-  // @capacitor/device, for the admin panel - see auth.service.js#login).
-  // Logging in from a device already in `devices` below (one the driver
-  // has used and been approved on before) auto-switches with no admin
-  // approval and force-logs-out whatever was active. A genuinely new
-  // device is rejected and recorded as a pending request here instead, for
-  // an admin to approve or reject (admin.service.js#approveDevice/
-  // rejectDevice) - approving adds it to `devices` too, so it's
-  // remembered for next time.
+  // Approved installations can stay logged in together. Shift ownership is
+  // separate and is bound to the signed device session when going online.
+  shiftDeviceId           String?   @map("shift_device_id")
+  // Legacy approval metadata only; currentDeviceId never grants shift control.
   currentDeviceId          String?   @map("current_device_id")
   currentDeviceLabel       String?   @map("current_device_label")
   pendingDeviceId          String?   @map("pending_device_id")
@@ -190,16 +183,15 @@ model Driver {
   @@map("drivers")
 }
 
-// A device this driver has been approved on before - once here, logging in
-// from it again never needs another admin approval, even after switching
-// away to a different (also-known) device and back. See Driver's
-// currentDeviceId/pendingDeviceId comment above for the full flow.
+// An approved installation; sessionVersion revokes this installation's signed
+// sessions together without signing out another device belonging to the driver.
 model DriverDevice {
   id          String   @id @default(uuid())
   driverId    String   @map("driver_id")
   driver      Driver   @relation(fields: [driverId], references: [id], onDelete: Cascade)
   deviceId    String   @map("device_id")
   label       String?  @map("label")
+  sessionVersion Int @default(0) @map("session_version")
   firstSeenAt DateTime @default(now()) @map("first_seen_at")
   lastLoginAt DateTime @default(now()) @map("last_login_at")
 
@@ -474,6 +466,8 @@ model RefreshToken {
   userId    String    @map("user_id")
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   credentialVersion Int @default(0) @map("credential_version")
+  deviceId String? @map("device_id")
+  deviceVersion Int? @map("device_version")
   tokenHash String    @unique @map("token_hash")
   expiresAt DateTime  @map("expires_at")
   revokedAt DateTime? @map("revoked_at")

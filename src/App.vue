@@ -182,20 +182,25 @@ async function logout() {
             ><i
               :class="{
                 online: driver
-                  ? driverState.profile?.isOnline
+                  ? driverState.profile?.isOnline &&
+                    driverState.profile?.canControlShift !== false
                   : session.state.connected,
                 'connection-pulse':
                   visibility === 'visible' &&
                   networkOnline &&
                   session.state.connected &&
                   (!driver ||
-                    (driverState.profile?.isOnline && driverState.gpsReady)),
+                    (driverState.profile?.isOnline &&
+                      driverState.profile?.canControlShift !== false &&
+                      driverState.gpsReady)),
               }"
             />{{
               driver
-                ? driverState.profile?.isOnline
-                  ? "На линии"
-                  : "Не на линии"
+                ? driverState.profile?.canControlShift === false
+                  ? "Смена на другом устройстве"
+                  : driverState.profile?.isOnline
+                    ? "На линии"
+                    : "Не на линии"
                 : session.state.connected
                   ? "На связи"
                   : "Подключение…"

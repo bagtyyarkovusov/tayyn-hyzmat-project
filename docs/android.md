@@ -4,6 +4,10 @@ This branch supplies a Firebase-free, user-started shift service. It is a test i
 
 ## Shift behavior
 
+The same driver may stay signed in on multiple approved devices. Signing in on a second device leaves the first device's shift running. Only the shift owner reports the driver's GPS and performs order actions; the second device remains available for viewing the account and chat. To move work to another device, end the current shift, then start a shift there. Logging out of a viewing device does not end the working device's shift. A password/phone change or account block still ends access on all devices. Device approval authorizes login and does not itself transfer a shift.
+
+Deploy the additive device-session migration and matching API before testing this APK behavior. Sessions issued before signed device identities were added require a fresh login. Logout ends all sessions for that installation/browser profile, not sessions on other devices. With no active shift, an approved device can recover the driver's assigned trip without requiring GPS or Online solely to close that trip; starting a new shift re-establishes exclusive ownership.
+
 The driver grants precise location and order/chat notification permission while the app is visible, obtains a fresh location acknowledged by the API, and explicitly chooses Online. The native service then owns location reporting and a 10-second authenticated inbox poll independently of the WebView. Orders and chat have separate Android channels. The lock screen shows generic text, without customer phones or chat bodies. Tapping opens the driver home or chat.
 
 The server issues a separate random credential, stores its hash, and renews a 60-second lease only for an approved, online driver on the same approved device with a hardware fix no older than 30 seconds. Event IDs derive from persisted orders/messages; read/accepted/expired items disappear from the next canonical inbox, and native replay deduplicates alerts. Opening chat clears chat alerts; accepting/dismissing clears order alerts. Native channels must remain enabled to continue a shift. Browser notifications remain a foreground fallback, with visible permission feedback.
@@ -56,3 +60,23 @@ On the Infinix phone, grant precise location and notifications while visible, pr
 Debug builds use package `io.openride.driver.test` and the visible name `Tayyn Hyzmat Test`, so installing this synthetic environment does not replace a separately signed release app. Release signing and package configuration are unchanged. Test credentials are handed over separately and are never embedded in the APK or public download documentation.
 
 Reverse geocoding uses the merged server-side policy: visible-location demand, at least five minutes and 150 metres after the first attempt, a shared daily cap with 20% reserve, and coordinates on provider failure. Provider activation and confirmed quota still require live verification. GPS reporting, saved-boundary region assignment and order eligibility do not depend on address lookup.
+
+## External trip navigation
+
+The trip feed and details offer navigation when the relevant coordinates exist.
+Before the passenger boards, the target is pickup. After `Начать поездку`, the
+only target is dropoff. If destination coordinates were not supplied, no route
+button is shown for a started trip. Call the customer to agree the destination;
+the application must not silently route back to pickup.
+
+Android opens the installed Yandex Maps app through an explicit external intent.
+If it is unavailable, Android opens the public Yandex web route in a browser.
+This handoff needs no geocoder API key. It does not start or finish a trip, end
+the shift, or replace the driver WebView. The native shift service continues
+subject to the existing GPS, notification and connection lease rules. Return to
+Tayyn Hyzmat to mark arrival, start or completion. Completing a trip preserves
+an otherwise healthy shift and restores availability for new work.
+
+Test both installed-Yandex and browser-fallback paths on the release phone.
+Browser automation verifies route coordinates and the missing-destination rule;
+it cannot certify an installed third-party application's routing behavior.

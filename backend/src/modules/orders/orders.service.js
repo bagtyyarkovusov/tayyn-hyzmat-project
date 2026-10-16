@@ -8,6 +8,7 @@ const districtsService = require('../districts/districts.service');
 const { haversineDistanceKm } = require('../../utils/geo');
 const { recordOrderCharge } = require('./order-charge');
 const { lockedBalance } = require('../balance/locked-balance');
+const { assertShiftControl, lockDeviceSession } = require('../driver/shift-ownership');
 const { assertOrderEligibility } = require('../driver/gps-eligibility');
 const { refreshOrderRecipients } = require('../../sockets/roomSync');
 
@@ -231,10 +232,16 @@ async function offerPrivately(orderId, driverId, broadcastAfterPrivateExpiry = t
 
 async function declinePrivateOffer(orderId, driver, privateOfferExpiresAt) {
   await expirePrivateOffers();
-  const order = await prisma.order.findUnique({ where: { id: orderId }, include: { district: true } });
-  if (!order || order.privateOfferDriverId !== driver.id || order.privateOfferExpiresAt?.toISOString() !== privateOfferExpiresAt) throw ApiError.conflict('Предложение больше недоступно');
-  const changed = await prisma.order.updateMany({ where: { id: orderId, status: 'NEW', privateOfferDriverId: driver.id, privateOfferExpiresAt: { equals: new Date(privateOfferExpiresAt), gt: new Date() } }, data: { privateOfferDriverId: null, privateOfferExpiresAt: null, publicRegionOnlyUntil: order.privateOfferExpiresAt, publicReleasedGloballyAt: null } });
-  if (!changed.count) throw ApiError.conflict('Предложение больше недоступно');
+  const order = await prisma.$transaction(async tx => {
+    await lockDeviceSession(tx, driver);
+    await lockDriver(tx, driver.id);
+    assertShiftControl(await tx.driver.findUniqueOrThrow({ where: { id: driver.id } }), driver.sessionDeviceId);
+    const order = await tx.order.findUnique({ where: { id: orderId }, include: { district: true } });
+    if (!order || order.privateOfferDriverId !== driver.id || order.privateOfferExpiresAt?.toISOString() !== privateOfferExpiresAt) throw ApiError.conflict('Предложение больше недоступно');
+    const changed = await tx.order.updateMany({ where: { id: orderId, status: 'NEW', privateOfferDriverId: driver.id, privateOfferExpiresAt: { equals: new Date(privateOfferExpiresAt), gt: new Date() } }, data: { privateOfferDriverId: null, privateOfferExpiresAt: null, publicRegionOnlyUntil: order.privateOfferExpiresAt, publicReleasedGloballyAt: null } });
+    if (!changed.count) throw ApiError.conflict('Предложение больше недоступно');
+    return order;
+  });
   await publishPrivateRelease(order);
   return { orderId };
 }
@@ -262,7 +269,9 @@ async function accept(orderId, driver, etaMinutes, privateOfferExpiresAt) {
 
   await expirePrivateOffers();
   const order = await prisma.$transaction(async (tx) => {
+    await lockDeviceSession(tx, driver);
     await lockDriver(tx, driver.id);
+    assertShiftControl(await tx.driver.findUniqueOrThrow({ where: { id: driver.id } }), driver.sessionDeviceId);
     await lockOrder(tx, orderId);
     const currentDriver = await tx.driver.findUnique({ where: { id: driver.id } });
     if (!currentDriver) throw ApiError.notFound('Профиль водителя не найден');
@@ -359,7 +368,9 @@ function assertOwnedByDriver(order, driver) {
 // without the server needing to push anything every second.
 async function markWaiting(orderId, driver) {
   const updated = await prisma.$transaction(async (tx) => {
+    await lockDeviceSession(tx, driver);
     await lockDriver(tx, driver.id);
+    assertShiftControl(await tx.driver.findUniqueOrThrow({ where: { id: driver.id } }), driver.sessionDeviceId);
     const order = await lockOrder(tx, orderId);
     assertOwnedByDriver(order, driver);
     if (order.status !== 'ACCEPTED') {
@@ -386,7 +397,9 @@ async function markWaiting(orderId, driver) {
 // over to the per-km tariff for the rest of the ride.
 async function startTrip(orderId, driver) {
   const updated = await prisma.$transaction(async (tx) => {
+    await lockDeviceSession(tx, driver);
     await lockDriver(tx, driver.id);
+    assertShiftControl(await tx.driver.findUniqueOrThrow({ where: { id: driver.id } }), driver.sessionDeviceId);
     const order = await lockOrder(tx, orderId);
     assertOwnedByDriver(order, driver);
     if (order.status !== 'WAITING') {
@@ -420,7 +433,9 @@ async function startTrip(orderId, driver) {
 // doesn't misleadingly suggest a second amount was billed.
 async function complete(orderId, driver) {
   const updatedOrder = await prisma.$transaction(async (tx) => {
+    await lockDeviceSession(tx, driver);
     await lockDriver(tx, driver.id);
+    assertShiftControl(await tx.driver.findUniqueOrThrow({ where: { id: driver.id } }), driver.sessionDeviceId);
     const order = await lockOrder(tx, orderId);
     assertOwnedByDriver(order, driver);
     if (order.status !== 'STARTED') {
@@ -456,7 +471,9 @@ async function complete(orderId, driver) {
 // recordOrderCharge.
 async function cancel(orderId, driver, reason) {
   const result = await prisma.$transaction(async (tx) => {
+    await lockDeviceSession(tx, driver);
     await lockDriver(tx, driver.id);
+    assertShiftControl(await tx.driver.findUniqueOrThrow({ where: { id: driver.id } }), driver.sessionDeviceId);
     const order = await lockOrder(tx, orderId);
     assertOwnedByDriver(order, driver);
     if (order.status !== 'WAITING') {

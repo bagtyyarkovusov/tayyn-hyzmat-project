@@ -33,9 +33,10 @@ async function syncDriverDistrictRoomNow(driverId) {
       for (const room of socket.rooms) {
         if (room.startsWith('district:')) await socket.leave(room);
       }
-      if (freshOnline) await socket.join(rooms.districtsOverview());
+      const ownsShift = freshOnline && socket.data.credentials?.deviceId === driver.shiftDeviceId;
+      if (ownsShift) await socket.join(rooms.districtsOverview());
       else await socket.leave(rooms.districtsOverview());
-      if (receivesOrders) await socket.join(rooms.district(driver.districtId));
+      if (receivesOrders && ownsShift) await socket.join(rooms.district(driver.districtId));
     }
     if (freshOnline) {
       const delay = Math.max(1, driver.lastLocationAt.getTime() + GPS_FRESHNESS_MS - Date.now());

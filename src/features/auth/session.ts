@@ -127,16 +127,8 @@ function createSession(role: Role) {
     const refreshToken = tokens.refresh(role);
     if (role === "driver") {
       void stopNativeShift();
-      // Logout must not wait for a refresh belonging to a normal request.
-      void fetch(`${apiBase}/driver/status`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${tokens.access(role)}`,
-        },
-        body: JSON.stringify({ isOnline: false }),
-        signal: AbortSignal.timeout(3000),
-      }).catch(() => {});
+      // The logout endpoint releases only this device's shift. A spectator
+      // must never send a global Offline action for another device.
     }
     disconnect();
     tokens.clear(role);

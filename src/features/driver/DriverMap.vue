@@ -147,7 +147,7 @@ onUnmounted(() => {
       <span>Зелёный: ваш район</span><span>Синий: ваше положение</span
       ><span>Красный: адрес поездки</span>
     </div>
-    <ActiveTrip />
+    <ActiveTrip v-if="state.profile?.canControlShift !== false" />
     <p v-if="state.error" role="alert" class="text-sm text-destructive">
       {{ state.error }}
     </p>

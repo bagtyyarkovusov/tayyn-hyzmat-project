@@ -4,7 +4,7 @@ const require = createRequire(
   new URL("../../backend/package.json", import.meta.url),
 );
 const { PrismaClient } = require("@prisma/client");
-const jwt = require("jsonwebtoken");
+import { loginFixture, installFixtureSession } from "./helpers/device-session";
 if (process.env.DISPOSABLE_BROWSER_TEST !== "true")
   throw new Error("Use pnpm test:e2e with its disposable database");
 
@@ -37,31 +37,18 @@ async function actors(browser: Browser) {
       permissions: ["geolocation"],
       geolocation: { latitude: 37.96, longitude: 58.32, accuracy: 10 },
     });
-    for (const [context, user, role, actorId] of [
-      [adminContext, admin, "admin", admin.admin.id],
-      [driverContext, driver, "driver", driver.driver.id],
-    ] as const) {
-      const token = jwt.sign(
-        { sub: user.id, role: role.toUpperCase(), [`${role}Id`]: actorId },
-        process.env.JWT_ACCESS_SECRET,
-        { expiresIn: "5m" },
-      );
-      await context.addInitScript(
-        ({ token, user, role }) => {
-          localStorage.setItem(`openride.${role}.accessToken`, token);
-          localStorage.setItem(`tayyn.${role}.user`, JSON.stringify(user));
-        },
-        {
-          token,
-          role,
-          user: {
-            id: user.id,
-            fullName: user.fullName,
-            role: role.toUpperCase(),
-          },
-        },
-      );
-    }
+    const deviceId = `private-offer-${driver.id}`;
+    await installFixtureSession(
+      adminContext,
+      "admin",
+      await loginFixture(adminContext.request, admin.phone),
+    );
+    await installFixtureSession(
+      driverContext,
+      "driver",
+      await loginFixture(driverContext.request, driver.phone, deviceId),
+      deviceId,
+    );
     const dispatcher = await adminContext.newPage(),
       page = await driverContext.newPage();
     await page.goto("/driverDashboard");

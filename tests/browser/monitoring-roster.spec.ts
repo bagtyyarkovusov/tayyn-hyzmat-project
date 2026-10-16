@@ -29,6 +29,15 @@ test.beforeAll(async () => {
             districtId: i === 105 ? null : region.id,
             isOnline: i <= 50,
             isAvailable: i !== 2,
+            ...(i === 1
+              ? {
+                  currentDeviceId: "synthetic-approved-browser",
+                  shiftDeviceId: "synthetic-approved-browser",
+                  devices: {
+                    create: { deviceId: "synthetic-approved-browser" },
+                  },
+                }
+              : {}),
             lastLat: 37.96,
             lastLng: 58.32,
             lastLocationAt: new Date(),

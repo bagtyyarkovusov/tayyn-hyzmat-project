@@ -30,23 +30,25 @@ export async function revokeDriverShift(driverId: string): Promise<void> {
 }
 export async function revokeUserShift(userId: string): Promise<void> {
   await prisma.$executeRaw`UPDATE native_shift_leases SET revoked_at = NOW() WHERE driver_id IN (SELECT id FROM drivers WHERE user_id = ${userId}) AND revoked_at IS NULL`;
-  await prisma.driver.updateMany({ where: { userId }, data: { isOnline: false } });
+  await prisma.driver.updateMany({ where: { userId }, data: { isOnline: false, shiftDeviceId: null } });
   await publishUserShiftState(userId);
 }
 export async function publishUserShiftState(userId: string): Promise<void> {
   const driver = await prisma.driver.findUnique({ where: { userId } });
   if (driver) { await broadcastStopped(driver.id); await syncDriverDistrictRoom(driver.id); await districts.broadcastDistrictStats(); }
 }
-export async function start(driver: Driver, deviceId: string, refreshToken: string, credentialVersion: number) {
+export async function start(driver: Driver & { sessionDeviceId?: string; sessionDeviceVersion?: number; sessionCredentialVersion?: number }, deviceId: string, refreshToken: string, credentialVersion: number) {
   const token = randomBytes(32).toString('base64url');
   const expires = await prisma.$transaction(async tx => {
-    await tx.$queryRaw`SELECT id FROM users WHERE id = ${driver.userId} FOR UPDATE`;
+    await require('../driver/shift-ownership').lockDeviceSession(tx, driver);
     const current = await tx.driver.findUniqueOrThrow({ where: { id: driver.id }, include: { user: true } });
     if (current.user.credentialVersion !== credentialVersion || current.user.status === 'BLOCKED' || current.status !== 'APPROVED') throw ApiError.unauthorized();
     assertOrderEligibility(current);
-    if (!current.currentDeviceId || current.currentDeviceId !== deviceId) throw ApiError.forbidden('Устройство не подтверждено');
+    require('../driver/shift-ownership').assertShiftControl(current, deviceId);
     const session = await tx.refreshToken.findUnique({ where: { tokenHash: hashRefreshToken(refreshToken) } });
-    if (!session || session.userId !== current.userId || session.credentialVersion !== credentialVersion || session.revokedAt || session.expiresAt.getTime() <= Date.now()) throw ApiError.unauthorized();
+    if (!session || session.userId !== current.userId || session.deviceId !== deviceId || session.credentialVersion !== credentialVersion || session.revokedAt || session.expiresAt.getTime() <= Date.now()) throw ApiError.unauthorized();
+    const live = await tx.$queryRaw<Lease[]>`SELECT * FROM native_shift_leases WHERE driver_id = ${current.id} AND revoked_at IS NULL AND expires_at > NOW()`;
+    if (live.length) throw ApiError.conflict('Фоновая смена уже запущена на этом устройстве', { code: 'NATIVE_SHIFT_ALREADY_ACTIVE' });
     const now = new Date();
     const expires = new Date(now.getTime() + GPS_FRESHNESS_MS);
     const hash = digest(token);
@@ -55,9 +57,9 @@ export async function start(driver: Driver, deviceId: string, refreshToken: stri
   });
   return { shiftToken: token, leaseExpiresAt: expires.toISOString(), pollIntervalMs: 10000 };
 }
-export async function stop(driver: Driver): Promise<void> {
-  await revokeDriverShift(driver.id);
-  await prisma.driver.updateMany({ where: { id: driver.id }, data: { isOnline: false } });
+export async function stop(driver: Driver & { sessionDeviceId?: string; sessionDeviceVersion?: number; sessionCredentialVersion?: number }): Promise<void> {
+  await require('../driver/credentialed-status').updateCredentialedStatus(driver.id, driver.userId,
+    driver.sessionCredentialVersion, { isOnline: false }, driver.sessionDeviceId, driver.sessionDeviceVersion);
   await broadcastStopped(driver.id);
   await syncDriverDistrictRoom(driver.id);
   await districts.broadcastDistrictStats();
@@ -69,9 +71,9 @@ export async function stopToken(token: string): Promise<void> {
     const lease = rows[0];
     if (!lease) return null;
     const current = await tx.driver.findUnique({ where: { id: lease.driver_id }, include: { user: true } });
-    if (!current || current.user.credentialVersion !== lease.credential_version) return null;
+    if (!current || current.user.credentialVersion !== lease.credential_version || current.shiftDeviceId !== lease.device_id) return null;
     await tx.$executeRaw`UPDATE native_shift_leases SET revoked_at = NOW() WHERE token_hash = ${digest(token)}`;
-    await tx.driver.updateMany({ where: { id: lease.driver_id }, data: { isOnline: false } });
+    await tx.driver.updateMany({ where: { id: lease.driver_id }, data: { isOnline: false, shiftDeviceId: null } });
     return lease.driver_id;
   });
   if (stopped) { await broadcastStopped(stopped); await syncDriverDistrictRoom(stopped); await districts.broadcastDistrictStats(); }
@@ -94,7 +96,7 @@ export async function tick(token: string, fix: Fix) {
     if (lease.expires_at.getTime() <= now.getTime()) throw ApiError.unauthorized('Смена завершена');
     if (now.getTime() - recordedAt.getTime() > 30000) throw ApiError.badRequest('Требуется свежее местоположение');
     const driver = await tx.driver.findUnique({ where: { id: lease.driver_id }, include: { user: { include: { balance: true } } } });
-    if (!driver || !driver.isOnline || driver.status !== 'APPROVED' || driver.user.status === 'BLOCKED' || driver.user.credentialVersion !== lease.credential_version || driver.currentDeviceId !== lease.device_id) throw ApiError.unauthorized('Смена завершена');
+    if (!driver || !driver.isOnline || driver.status !== 'APPROVED' || driver.user.status === 'BLOCKED' || driver.user.credentialVersion !== lease.credential_version || driver.shiftDeviceId !== lease.device_id) throw ApiError.unauthorized('Смена завершена');
     const expires = new Date(now.getTime() + GPS_FRESHNESS_MS);
     await tx.$executeRaw`UPDATE native_shift_leases SET expires_at = ${expires} WHERE driver_id = ${driver.id}`;
     const updated = await tx.driver.update({ where: { id: driver.id }, data: { lastLat: fix.lat, lastLng: fix.lng, lastLocationAt: now, districtId: nearest?.id ?? null } });

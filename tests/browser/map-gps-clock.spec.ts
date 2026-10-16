@@ -28,6 +28,9 @@ test.beforeAll(async () => {
           districtId: region.id,
           isOnline: true,
           isAvailable: true,
+          currentDeviceId: "synthetic-approved-browser",
+          shiftDeviceId: "synthetic-approved-browser",
+          devices: { create: { deviceId: "synthetic-approved-browser" } },
           lastLat: 37.96,
           lastLng: 58.32,
           lastLocationAt: new Date(),
@@ -119,7 +122,9 @@ test("new GPS fixes keep the selected map driver offerable between timer ticks",
   );
   expect(loginResponse.ok()).toBeTruthy();
   driverToken = (await loginResponse.json()).accessToken;
-  for (const lat of [37.96, 37.96001, 37.96002]) {
+  // Keep this driver's fixes distinct from other completed test fixtures on
+  // the shared disposable map; identify the update by its actual coordinate.
+  for (const lat of [37.96011, 37.96012, 37.96013]) {
     await page.waitForTimeout(1100);
     const response = await page.request.post(
       `${process.env.TEST_API_URL}/driver/location`,

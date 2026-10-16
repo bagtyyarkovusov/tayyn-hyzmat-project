@@ -180,17 +180,19 @@ async function approveDriver(driverId, actorId) {
 async function blockDriver(driverId, actorId, reason) {
   const driver = await findDriverOrThrow(driverId);
 
-  const updated = await prisma.driver.update({
-    where: { id: driverId },
-    data: {
-      status: 'BLOCKED',
-      blockedAt: new Date(),
-      blockedBy: actorId,
-      blockReason: reason || null,
-      isOnline: false,
-      isAvailable: false
-    }
+  const updated = await prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM users WHERE id = ${driver.userId} FOR UPDATE`;
+    await authService.revokeSessionGeneration(tx, driver.userId);
+    const result = await tx.driver.update({
+      where: { id: driverId },
+      data: {
+        status: 'BLOCKED', blockedAt: new Date(), blockedBy: actorId,
+        blockReason: reason || null, isOnline: false, shiftDeviceId: null, isAvailable: false
+      }
+    });
+    return result;
   });
+  await authService.publishSessionRevocation(driver.userId);
 
   safeEmit((io) => {
     io.to(rooms.driver(driverId)).emit('driver:blocked', { driverId, reason: reason || null });
@@ -221,14 +223,8 @@ async function unblockDriver(driverId, actorId) {
   return updated;
 }
 
-// Single-device login, with device memory (see schema.prisma's
-// Driver.currentDeviceId comment): a driver logging in from a genuinely new
-// device gets rejected and recorded here as pendingDeviceId instead. These
-// two actions are how an admin resolves that - approve both binds the new
-// device AND adds it to the driver's remembered devices (so it never needs
-// approval again), and force-logs-out whatever device was previously
-// active (same revocation reject doesn't need, since nothing changes for
-// the currently-active device on a reject).
+// Approval remembers another installation without changing any active session
+// or shift owner. A new device must retry login after dispatcher approval.
 async function approveDevice(driverId, actorId) {
   const driver = await findDriverOrThrow(driverId);
   if (!driver.pendingDeviceId) {
@@ -236,7 +232,6 @@ async function approveDevice(driverId, actorId) {
   }
 
   const updated = await prisma.$transaction(async (tx) => {
-    await authService.revokeAllRefreshTokens(driver.user.id);
     const result = await tx.driver.update({
       where: { id: driverId },
       data: {

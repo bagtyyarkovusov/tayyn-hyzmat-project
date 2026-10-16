@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { assertShiftControl, lockDeviceSession } from "./shift-ownership";
 import { lockedBalance } from "../balance/locked-balance";
 const prisma: PrismaClient = require("../../lib/prisma");
 const ApiError = require("../../utils/ApiError");
@@ -11,9 +12,17 @@ export async function updateCredentialedStatus(
   userId: string,
   credentialVersion: number,
   data: { isOnline?: boolean; isAvailable?: boolean },
+  deviceId?: string,
+  deviceVersion?: number,
 ) {
   return prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`;
+    await lockDeviceSession(tx, {
+      id: driverId,
+      userId,
+      sessionDeviceId: deviceId,
+      sessionDeviceVersion: deviceVersion,
+      sessionCredentialVersion: credentialVersion,
+    });
     const user = await tx.user.findUnique({ where: { id: userId } });
     if (!user || user.credentialVersion !== credentialVersion)
       throw ApiError.unauthorized("Данные входа изменены. Войдите снова");
@@ -21,6 +30,7 @@ export async function updateCredentialedStatus(
     const driver = await tx.driver.findUniqueOrThrow({
       where: { id: driverId },
     });
+    assertShiftControl(driver, deviceId);
     if (data.isOnline === false)
       await tx.$executeRaw`UPDATE native_shift_leases SET revoked_at = NOW() WHERE driver_id = ${driverId} AND revoked_at IS NULL`;
     if (data.isOnline === true) {
@@ -34,6 +44,17 @@ export async function updateCredentialedStatus(
       select: { id: true },
     });
     // An active trip always overrides caller-provided availability.
-    return tx.driver.update({ where: { id: driverId }, data: { ...data, isAvailable: active ? false : (data.isAvailable ?? driver.isAvailable) } });
+    return tx.driver.update({
+      where: { id: driverId },
+      data: {
+        ...data,
+        ...(data.isOnline === true
+          ? { shiftDeviceId: deviceId }
+          : data.isOnline === false
+            ? { shiftDeviceId: null }
+            : {}),
+        isAvailable: active ? false : (data.isAvailable ?? driver.isAvailable),
+      },
+    });
   });
 }

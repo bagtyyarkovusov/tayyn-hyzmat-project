@@ -45,7 +45,7 @@ router.post(
   controller.blockDriver
 );
 router.post('/drivers/:id/unblock', validate({ params: driverIdParamSchema }), controller.unblockDriver);
-// Single-device login approval - see admin.service.js#approveDevice.
+// Additional-device approval - see admin.service.js#approveDevice.
 router.post('/drivers/:id/approve-device', validate({ params: driverIdParamSchema }), controller.approveDevice);
 router.post('/drivers/:id/reject-device', validate({ params: driverIdParamSchema }), controller.rejectDevice);
 router.post(

@@ -6,6 +6,7 @@ public class MainActivity extends BridgeActivity {
   @Override
   public void onCreate(android.os.Bundle savedInstanceState) {
     registerPlugin(DriverShiftPlugin.class);
+    registerPlugin(DriverNavigationPlugin.class);
     super.onCreate(savedInstanceState);
   }
 }

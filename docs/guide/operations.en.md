@@ -6,7 +6,7 @@ This guide describes the driver app, dispatcher dashboard, and the rules they sh
 
 A dispatcher signs in with the fixed `+993` phone format and password. A driver uses the same format. The dispatcher creates or edits driver credentials; drivers do not receive or display an existing password. A phone or password reset revokes the old access and takes that driver offline. The driver keeps their approved device, balance, and active trip, then signs in again.
 
-Driver login identifies the device. A new device requires dispatcher approval; switching to another approved device signs out the previous session. When the server is reachable, logout ends the account's current sessions, including native shift availability. Offline logout stops the local shift; server availability expires with its lease. It does not sign out another account or remove an accepted trip.
+Driver login identifies the app installation or browser profile. A new device requires dispatcher approval. Several approved devices can stay signed in, but only one can work the driver's shift. Signing in on a second device leaves the working device connected. The second device can view the account and use chat; it cannot change the working device's location, shift or order progress. End the first shift before starting on the second device. Logout ends only that device's sessions and its own shift. Offline logout stops its local service; server availability expires with its lease. An accepted trip stays assigned to the driver.
 
 The pilot has one dispatcher and synthetic driver accounts. It uses TMT only and no real payments. The development seed is not a production credential store. Keep production secrets outside the repository and Railway logs.
 

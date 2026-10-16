@@ -35,6 +35,7 @@ export interface Driver {
   pendingDeviceLabel?: string;
   currentDeviceId?: string;
   currentDeviceLabel?: string;
+  shiftDeviceId?: string | null;
   blockedReason?: string;
   district?: District;
   currentVehicle?: Vehicle;

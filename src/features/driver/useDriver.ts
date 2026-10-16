@@ -55,8 +55,21 @@ let offerTimer: ReturnType<typeof setInterval> | undefined;
 let offerVersion = 0;
 const GPS_MAX_AGE_MS = 60000;
 const LOCATION_SYNC_FAILURE_GRACE_MS = 60000;
+export function canControlShift() {
+  return !!state.profile && state.profile.canControlShift !== false;
+}
+const otherDeviceMessage =
+  "Смена активна на другом устройстве. Завершите её там, чтобы выйти на линию здесь.";
+function requireShiftControl() {
+  if (canControlShift()) return true;
+  state.error = state.profile
+    ? otherDeviceMessage
+    : "Дождитесь загрузки профиля, затем повторите.";
+  return false;
+}
 function hasCurrentGps() {
   return (
+    canControlShift() &&
     state.gpsReady &&
     navigator.onLine &&
     (nativeAndroid
@@ -94,7 +107,7 @@ async function forceOffline(message: string) {
   locationSyncFailureAt = 0;
   lastLocationSent = 0;
   hideAvailableOrders();
-  if (!state.profile?.isOnline || offlinePending) return;
+  if (!canControlShift() || !state.profile?.isOnline || offlinePending) return;
   state.profile.isOnline = false;
   offlinePending = true;
   const generation = sessionGeneration;
@@ -188,6 +201,7 @@ async function recoverPrivateOffer() {
   }
 }
 async function declinePrivateOffer() {
+  if (!requireShiftControl()) return;
   const orderId = state.incoming?.id;
   if (!orderId || !state.incoming?.privateOfferExpiresAt) return;
   const generation = sessionGeneration;
@@ -262,16 +276,29 @@ async function refresh() {
     ]);
     if (!current()) return;
     state.profile = profile.data;
+    if (!canControlShift()) {
+      gpsEpoch++;
+      stopGpsTracking();
+      state.gpsReady = false;
+      state.gpsFixReady = false;
+      state.gpsError = "";
+      dismissIncoming();
+    }
     state.balance = balance.data;
     if (districtVersion === districtSnapshotVersion)
       state.districts = districts.data;
     state.active = active.data;
     if (state.active) dismissIncoming();
-    if (nativeAndroid) await synchronizeNative();
+    if (nativeAndroid && canControlShift()) await synchronizeNative();
     if (!current()) return;
     if (!state.gpsReady) {
       hideAvailableOrders();
-      if (state.profile.isOnline && !state.gpsFixReady && !state.nativeRunning)
+      if (
+        canControlShift() &&
+        state.profile.isOnline &&
+        !state.gpsFixReady &&
+        !state.nativeRunning
+      )
         void loseGps(state.gpsError || "Включите GPS перед выходом на линию.");
     } else if (state.profile.isOnline && !state.active) {
       await recoverPrivateOffer();
@@ -298,6 +325,7 @@ async function act(work: () => Promise<void>) {
   }
 }
 async function accept(orderId: string, etaMinutes: number) {
+  if (!requireShiftControl()) return;
   if (!hasCurrentGps() || !state.profile?.isOnline) {
     dismissIncoming();
     state.error = "Включите GPS и выйдите на линию, чтобы принимать заказы.";
@@ -331,7 +359,7 @@ async function transition(
   action: "waiting" | "start" | "complete" | "cancel",
   reason?: string,
 ) {
-  if (!state.active) return;
+  if (!state.active || !requireShiftControl()) return;
   const orderId = state.active.id;
   await act(async () => {
     await driverApi.post(`/orders/${action}`, {
@@ -382,7 +410,7 @@ async function waitForSocket(timeoutMs = 3000) {
 }
 
 async function acknowledgeCurrentLocation(generation: number) {
-  if (generation !== sessionGeneration) return false;
+  if (generation !== sessionGeneration || !canControlShift()) return false;
   if (!state.position || !state.gpsFixReady) return false;
   if (Date.now() - lastFixAt > GPS_MAX_AGE_MS) return false;
   try {
@@ -408,7 +436,7 @@ async function acknowledgeCurrentLocation(generation: number) {
 }
 
 async function setOnline() {
-  if (!state.profile) return;
+  if (!state.profile || !requireShiftControl()) return;
   const isOnline = !state.profile.isOnline;
   if (isOnline) {
     if (!state.gpsFixReady || Date.now() - lastFixAt > GPS_MAX_AGE_MS) {
@@ -471,6 +499,7 @@ async function setOnline() {
   });
 }
 async function setDistrict(districtId: string) {
+  if (!requireShiftControl()) return;
   await act(async () => {
     await driverApi.post("/driver/district", { districtId });
     await refresh();
@@ -488,7 +517,7 @@ async function checkNativeLocationPermission() {
   }
 }
 async function synchronizeNative() {
-  if (!nativeAndroid) return;
+  if (!nativeAndroid || !canControlShift()) return;
   const generation = sessionGeneration;
   const native = await nativeShift.status();
   if (generation !== sessionGeneration) return;
@@ -576,6 +605,7 @@ async function enableNativeGps() {
   }
 }
 function enableGps() {
+  if (!requireShiftControl()) return;
   if (nativeAndroid) {
     void enableNativeGps();
     return;
@@ -593,7 +623,12 @@ function enableGps() {
     timeout: 20000,
   };
   const report = async (position: GeolocationPosition, requestId = 0) => {
-    if (generation !== sessionGeneration || trackingEpoch !== gpsEpoch) return;
+    if (
+      generation !== sessionGeneration ||
+      trackingEpoch !== gpsEpoch ||
+      !canControlShift()
+    )
+      return;
     if (requestId && requestId < latestGpsRequestResolved) return;
     latestGpsRequestResolved = requestId || ++gpsRequestSequence;
     const {
@@ -655,7 +690,12 @@ function enableGps() {
     }
   };
   const failed = (error: GeolocationPositionError, requestId = 0) => {
-    if (generation !== sessionGeneration || trackingEpoch !== gpsEpoch) return;
+    if (
+      generation !== sessionGeneration ||
+      trackingEpoch !== gpsEpoch ||
+      !canControlShift()
+    )
+      return;
     if (requestId && requestId < latestGpsRequestResolved) return;
     state.gpsPending = false;
     if (error.code === error.POSITION_UNAVAILABLE) {
@@ -719,14 +759,14 @@ function start() {
   const on = (event: string, handler: (payload: unknown) => void) =>
     cleanups.push(driverSession.on(event, handler));
   on("connect", async () => {
-    if (state.profile?.isOnline && !nativeAndroid) {
+    if (canControlShift() && state.profile?.isOnline && !nativeAndroid) {
       await acknowledgeCurrentLocation(sessionGeneration);
       enableGps();
     }
     await refresh();
   });
   on("disconnect", () => {
-    if (!state.profile?.isOnline) return;
+    if (!canControlShift() || !state.profile?.isOnline) return;
     lastLocationSent = 0;
     markLocationSyncFailure("GPS работает. Переподключаемся к диспетчеру…");
   });

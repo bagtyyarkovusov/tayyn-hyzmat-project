@@ -73,7 +73,7 @@ for image, name in [(light, "mark-light.png"), (dark, "mark-dark.png")]:
     save(canvas, BRAND / name)
 
 
-def mark(size, foreground=False, round_icon=False):
+def mark(size, foreground=False, round_icon=False, android=False):
     image = Image.new("RGBA", (size, size))
     if not foreground:
         draw = ImageDraw.Draw(image)
@@ -81,11 +81,19 @@ def mark(size, foreground=False, round_icon=False):
             draw.ellipse((0, 0, size-1, size-1), fill="white")
         else:
             draw.rounded_rectangle((0, 0, size-1, size-1), radius=round(size*0.2), fill="white")
-    # Adaptive foreground fits entirely within the central safe circle.
-    ratio = 0.54 if foreground else 0.76
+    # Android's launcher mask centers the bitmap box, but the supplied H and
+    # rising swoosh carry more visual weight on the left.  Apply a small
+    # optical correction to the Android rasters only so the mark reads
+    # centered inside the launcher/splash safe area.  The source artwork and
+    # the web mark remain unchanged.
+    ratio = 0.48 if foreground and android else 0.54 if foreground else 0.76
     inner = max(1, round(size * ratio))
     artwork = light.resize((inner, inner), Image.Resampling.LANCZOS)
-    image.alpha_composite(artwork, ((size-inner)//2, (size-inner)//2))
+    optical_shift = round(size * (0.065 if foreground else 0.10)) if android else 0
+    image.alpha_composite(
+        artwork,
+        ((size-inner)//2 + optical_shift, (size-inner)//2),
+    )
     return image
 
 
@@ -95,16 +103,16 @@ for path in (ROOT / "public/img/icons").glob("*.png"):
     save(mark(size), path)
 for density, size in {"mdpi":48,"hdpi":72,"xhdpi":96,"xxhdpi":144,"xxxhdpi":192}.items():
     directory = RES / f"mipmap-{density}"
-    save(mark(size), directory / "ic_launcher.png")
-    save(mark(size, round_icon=True), directory / "ic_launcher_round.png")
-    save(mark(round(size*108/48), foreground=True), directory / "ic_launcher_foreground.png")
-save(mark(288), RES / "drawable/splash_icon.png")
+    save(mark(size, android=True), directory / "ic_launcher.png")
+    save(mark(size, round_icon=True, android=True), directory / "ic_launcher_round.png")
+    save(mark(round(size*108/48), foreground=True, android=True), directory / "ic_launcher_foreground.png")
+save(mark(288, android=True), RES / "drawable/splash_icon.png")
 for path in RES.glob("drawable*/splash.png"):
     with Image.open(path) as old:
         width,height = old.size
     canvas = Image.new("RGBA", (width,height), "white")
     inner = round(min(width,height)*0.28)
-    canvas.alpha_composite(mark(inner), ((width-inner)//2,(height-inner)//2))
+    canvas.alpha_composite(mark(inner, android=True), ((width-inner)//2,(height-inner)//2))
     save(canvas,path)
 # This fallback references the same supplied-artwork raster as the adaptive icon.
 (RES / "drawable-v24/ic_launcher_foreground.xml").write_text(

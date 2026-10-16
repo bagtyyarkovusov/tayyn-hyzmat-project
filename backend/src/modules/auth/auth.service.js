@@ -63,9 +63,11 @@ async function registerDriver({ phone, fullName, password }) {
   };
 }
 
-async function issueTokenPair(user, db = prisma) {
+async function issueTokenPair(user, db = prisma, deviceId, deviceVersion) {
   const payload = {
     sub: user.id,
+    deviceId,
+    deviceVersion,
     credentialVersion: user.credentialVersion,
     role: user.role,
     driverId: user.driver ? user.driver.id : undefined,
@@ -78,6 +80,8 @@ async function issueTokenPair(user, db = prisma) {
   await db.refreshToken.create({
     data: {
       userId: user.id,
+      deviceId,
+      deviceVersion,
       credentialVersion: user.credentialVersion,
       tokenHash: hashRefreshToken(refreshToken),
       expiresAt: new Date(Date.now() + parseDurationToMs(env.jwtRefreshExpiresIn))
@@ -93,7 +97,7 @@ async function revokeSessionGeneration(tx, userId) {
   await tx.user.update({ where: { id: userId }, data: { credentialVersion: { increment: 1 } } });
   await tx.refreshToken.updateMany({ where: { userId }, data: { revokedAt: new Date(0) } });
   await tx.$executeRaw`UPDATE native_shift_leases SET revoked_at = NOW() WHERE driver_id IN (SELECT id FROM drivers WHERE user_id = ${userId}) AND revoked_at IS NULL`;
-  await tx.driver.updateMany({ where: { userId }, data: { isOnline: false } });
+  await tx.driver.updateMany({ where: { userId }, data: { isOnline: false, shiftDeviceId: null } });
 }
 async function publishSessionRevocation(userId) {
   try { await require('../native-shift/native-shift.service').publishUserShiftState(userId); }
@@ -130,13 +134,13 @@ async function login({ phone, password, deviceId, deviceLabel }) {
   const result = await prisma.$transaction(async tx => {
     await tx.$queryRaw`SELECT id FROM users WHERE id = ${observed.id} FOR UPDATE`;
     const user = await tx.user.findUniqueOrThrow({ where: { id: observed.id }, include: { driver: true, admin: true } });
-    // Password work stays outside the lock. A reset/block/device switch that
+    // Password work stays outside the lock. A reset/block that
     // wins meanwhile must not authorize the old password in a new generation.
     if (user.credentialVersion !== observed.credentialVersion || user.passwordHash !== observed.passwordHash) {
       throw ApiError.unauthorized('Данные входа изменены. Войдите снова');
     }
     if (user.status === 'BLOCKED') throw ApiError.forbidden('Ваш аккаунт заблокирован');
-    let switched = false;
+    let approvedDevice;
     if (user.role === 'DRIVER') {
       if (!user.driver) throw ApiError.notFound('Профиль водителя не найден');
       if (user.driver.status !== 'APPROVED') throw ApiError.forbidden(
@@ -152,31 +156,21 @@ async function login({ phone, password, deviceId, deviceLabel }) {
         // Commit the approval request; throwing inside the transaction loses it.
         return { pending: true };
       }
-      if (first || !active) {
-        if (!first) {
-          await revokeSessionGeneration(tx, user.id);
-          user.credentialVersion++;
-          switched = true;
-        }
-        await tx.driver.update({ where: { id: user.driver.id }, data: {
-          currentDeviceId: deviceId, currentDeviceLabel: deviceLabel || null,
-          pendingDeviceId: null, pendingDeviceLabel: null, pendingDeviceRequestedAt: null
-        } });
-        await tx.driverDevice.upsert({
-          where: { driverId_deviceId: { driverId: user.driver.id, deviceId } },
-          update: { lastLoginAt: new Date(), ...(deviceLabel ? { label: deviceLabel } : {}) },
-          create: { driverId: user.driver.id, deviceId, label: deviceLabel || null }
-        });
-      }
+      if (first) await tx.driver.update({ where: { id: user.driver.id }, data: {
+        currentDeviceId: deviceId, currentDeviceLabel: deviceLabel || null
+      } });
+      approvedDevice = await tx.driverDevice.upsert({
+        where: { driverId_deviceId: { driverId: user.driver.id, deviceId } },
+        update: { lastLoginAt: new Date(), ...(deviceLabel ? { label: deviceLabel } : {}) },
+        create: { driverId: user.driver.id, deviceId, label: deviceLabel || null }
+      });
     }
-    const pair = await issueTokenPair(user, tx);
+    const pair = await issueTokenPair(user, tx, approvedDevice?.deviceId, approvedDevice?.sessionVersion);
     await tx.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
-    return { ...pair, user: sanitizeUser(user), switched };
+    return { ...pair, user: sanitizeUser(user) };
   });
   if (result.pending) throw ApiError.forbidden('Вход с этого устройства требует подтверждения администратора. Заявка отправлена.', { code: 'DEVICE_APPROVAL_PENDING' });
-  if (result.switched) await publishSessionRevocation(observed.id);
-  const { switched, ...session } = result;
-  return session;
+  return result;
 }
 
 async function refresh(refreshToken) {
@@ -210,6 +204,10 @@ async function refresh(refreshToken) {
     throw ApiError.forbidden('Доступ запрещён', { status: user.driver.status });
   }
 
+  if (user.role === 'DRIVER') {
+    const device = stored.deviceId && await prisma.driverDevice.findUnique({ where: { driverId_deviceId: { driverId: user.driver.id, deviceId: stored.deviceId } } });
+    if (!device || device.sessionVersion !== stored.deviceVersion) throw ApiError.unauthorized();
+  }
   // Rotate: revoke the used token and issue a brand new pair. This limits
   // the blast radius if a refresh token is ever stolen/replayed. Already-
   // revoked-but-within-grace tokens keep their original revokedAt, so the
@@ -217,19 +215,41 @@ async function refresh(refreshToken) {
   if (!stored.revokedAt) {
     await prisma.refreshToken.update({ where: { id: stored.id }, data: { revokedAt: new Date() } });
   }
-  const pair = await issueTokenPair(user);
+  const pair = await issueTokenPair(user, prisma, stored.deviceId ?? undefined, stored.deviceVersion ?? undefined);
 
   return { ...pair, user: sanitizeUser(user) };
 }
 
 async function logout(refreshToken) {
   const session = await prisma.refreshToken.findUnique({ where: { tokenHash: hashRefreshToken(refreshToken) }, include: { user: true } });
-  // A legitimately rotated token may be the one held by an in-flight Logout.
-  // An expired/revoked old generation cannot log out a later login.
-  if (session && session.expiresAt > new Date() && session.credentialVersion === session.user.credentialVersion &&
-      (!session.revokedAt || Date.now() - session.revokedAt.getTime() <= ROTATION_GRACE_MS)) {
-    await revokeAllRefreshTokens(session.userId, session.credentialVersion);
+  if (!session || session.expiresAt <= new Date() || session.credentialVersion !== session.user.credentialVersion ||
+      (session.revokedAt && Date.now() - session.revokedAt.getTime() > ROTATION_GRACE_MS)) return;
+  if (session.user.role !== 'DRIVER') return revokeAllRefreshTokens(session.userId, session.credentialVersion);
+  const changed = await prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM users WHERE id = ${session.userId} FOR UPDATE`;
+    const driver = await tx.driver.findUnique({ where: { userId: session.userId }, include: { user: true } });
+    if (!driver || driver.user.credentialVersion !== session.credentialVersion || !session.deviceId) return false;
+    const device = await tx.driverDevice.findUnique({ where: { driverId_deviceId: { driverId: driver.id, deviceId: session.deviceId } } });
+    if (!device || device.sessionVersion !== session.deviceVersion) return false;
+    await tx.driverDevice.update({ where: { id: device.id }, data: { sessionVersion: { increment: 1 } } });
+    await tx.refreshToken.updateMany({ where: { userId: session.userId, deviceId: session.deviceId }, data: { revokedAt: new Date(0) } });
+    if (driver.isOnline && driver.shiftDeviceId === session.deviceId) {
+      await tx.driver.update({ where: { id: driver.id }, data: { isOnline: false, shiftDeviceId: null } });
+      await tx.$executeRaw`UPDATE native_shift_leases SET revoked_at = NOW() WHERE driver_id = ${driver.id} AND revoked_at IS NULL`;
+      return true;
+    }
+    return false;
+  });
+  if (changed) {
+    try { await require('../native-shift/native-shift.service').publishUserShiftState(session.userId); }
+    catch (err) { logger.warn({ err }, 'Failed to publish logged-out device shift state'); }
   }
+  try {
+    for (const socket of await getIO().in(rooms.user(session.userId)).fetchSockets()) {
+      try { await require('./credential-session').validateCredentialSession(socket.data.credentials); }
+      catch { socket.emit('session:revoked', { message: 'Сессия завершена. Войдите снова.' }); socket.disconnect(true); }
+    }
+  } catch (err) { logger.warn({ err }, 'Failed to disconnect device session sockets'); }
 }
 
-module.exports = { registerDriver, login, refresh, logout, sanitizeUser, revokeAllRefreshTokens };
+module.exports = { registerDriver, login, refresh, logout, sanitizeUser, revokeAllRefreshTokens, revokeSessionGeneration, publishSessionRevocation };
