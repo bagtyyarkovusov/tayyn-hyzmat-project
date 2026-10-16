@@ -429,6 +429,7 @@ async function getDriverMessages(driverId, { page, limit, beforeMessageId }) {
 }
 
 const ORDER_STATUS_GROUPS = {
+  waiting: 'NEW',
   active: { in: ['NEW', 'ACCEPTED', 'WAITING', 'STARTED'] },
   // Narrower than "active" - a driver has actually taken it (as opposed to
   // NEW, still waiting for one). Added because "active" alone made it
