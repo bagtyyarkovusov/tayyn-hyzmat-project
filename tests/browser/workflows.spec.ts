@@ -683,12 +683,7 @@ test("driver history hides single-page navigation and resets the page when switc
       `${process.env.TEST_API_URL}/admin/drivers/${driverId}/balance`,
       {
         headers,
-        data: {
-          operationId: crypto.randomUUID(),
-          amount: 1,
-          type: "TOPUP",
-          note: `Проверка страниц ${i}`,
-        },
+        data: { amount: 1, type: "TOPUP", note: `Проверка страниц ${i}` },
       },
     );
     expect(response.ok()).toBe(true);
@@ -1509,6 +1504,8 @@ test("a transient GPS timeout keeps its blocker visible until an explicit retry 
   await page.context().grantPermissions(["geolocation"]);
   await page.addInitScript(() => {
     let watch: PositionCallback | undefined;
+    let pendingPosition: PositionCallback | undefined;
+    let holdPosition = false;
     let failure: PositionErrorCallback | null | undefined;
     const position = () =>
       ({
@@ -1539,9 +1536,18 @@ test("a transient GPS timeout keeps its blocker visible until an explicit retry 
           watch = undefined;
         },
         getCurrentPosition(success: PositionCallback) {
-          setTimeout(() => success(position()), 1500);
+          if (holdPosition) pendingPosition = success;
+          else queueMicrotask(() => success(position()));
         },
       },
+    });
+    window.addEventListener("synthetic-gps-hold", () => {
+      holdPosition = true;
+    });
+    window.addEventListener("synthetic-gps-release", () => {
+      holdPosition = false;
+      pendingPosition?.(position());
+      pendingPosition = undefined;
     });
     window.addEventListener("synthetic-gps-timeout", () =>
       failure?.({
@@ -1554,6 +1560,18 @@ test("a transient GPS timeout keeps its blocker visible until an explicit retry 
     );
   });
   await login(page, "driver");
+  const token = await page.evaluate(() =>
+    localStorage.getItem("openride.driver.accessToken"),
+  );
+  expect(
+    (
+      await page.request.post(`${process.env.TEST_API_URL}/driver/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+        data: { isOnline: false },
+      })
+    ).ok(),
+  ).toBe(true);
+  await page.reload();
   await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
   const power = page.getByRole("button", {
     name: "Выйти на линию",
@@ -1571,11 +1589,30 @@ test("a transient GPS timeout keeps its blocker visible until an explicit retry 
   await expect(
     page.getByText(/GPS.*(?:временно недоступен|не ответил)/).first(),
   ).toBeAttached();
+  await expect(
+    page
+      .getByRole("group", { name: "Регионы", exact: true })
+      .getByRole("button")
+      .first(),
+  ).toBeDisabled();
+  expect(
+    (
+      await page.request.get(`${process.env.TEST_API_URL}/orders/available`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+    ).status(),
+  ).toBe(403);
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("synthetic-gps-hold")),
+  );
   await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
   await expect(
     page.getByText(/GPS.*(?:временно недоступен|не ответил)/).first(),
   ).toBeAttached();
   await expect(power).toBeDisabled();
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("synthetic-gps-release")),
+  );
   await expect(power).toBeEnabled({ timeout: 5000 });
   await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
 });
@@ -2283,12 +2320,7 @@ async function createAddressDriver(page: Page, phone: string) {
     `${process.env.TEST_API_URL}/admin/drivers/${driver.id}/balance`,
     {
       headers: { Authorization: `Bearer ${token}` },
-      data: {
-        operationId: crypto.randomUUID(),
-        amount: 500,
-        type: "TOPUP",
-        note: "Synthetic address fixture",
-      },
+      data: { amount: 500, type: "TOPUP", note: "Synthetic address fixture" },
     },
   );
   expect(topup.ok()).toBe(true);
@@ -2518,14 +2550,7 @@ test("underfunded public orders stay visible with disabled acceptance and a top-
       (
         await admin.request.post(
           `${process.env.TEST_API_URL}/admin/drivers/${driverId}/balance`,
-          {
-            headers,
-            data: {
-              operationId: crypto.randomUUID(),
-              amount: 15,
-              type: "TOPUP",
-            },
-          },
+          { headers, data: { amount: 15, type: "TOPUP" } },
         )
       ).ok(),
     ).toBe(true);
@@ -2611,14 +2636,7 @@ test("private offer picker disables an online driver whose balance cannot cover 
       (
         await admin.request.post(
           `${process.env.TEST_API_URL}/admin/drivers/${driverId}/balance`,
-          {
-            headers,
-            data: {
-              operationId: crypto.randomUUID(),
-              amount: 15,
-              type: "TOPUP",
-            },
-          },
+          { headers, data: { amount: 15, type: "TOPUP" } },
         )
       ).ok(),
     ).toBe(true);
@@ -2844,6 +2862,203 @@ test("a hidden driver chat does not mark arriving messages as read", async ({
   } finally {
     await adminContext.close();
     await driverContext.close();
+  }
+});
+
+test("monitoring keeps a claimed driver busy across delayed snapshots and reconnect", async ({
+  browser,
+}) => {
+  test.setTimeout(60000);
+  const fullName = `Проверка занятого водителя ${test.info().repeatEachIndex}`;
+  const phone = `+993600004${51 + test.info().repeatEachIndex}`;
+  const adminContext = await browser.newContext();
+  const driverContext = await browser.newContext();
+  let releaseSnapshot: (() => void) | undefined;
+  try {
+    const admin = await adminContext.newPage();
+    const driver = await driverContext.newPage();
+    await login(admin, "admin");
+    const adminToken = await admin.evaluate(() =>
+      localStorage.getItem("openride.admin.accessToken"),
+    );
+    const headers = { Authorization: `Bearer ${adminToken}` };
+    const created = await admin.request.post(
+      `${process.env.TEST_API_URL}/admin/drivers`,
+      {
+        headers,
+        data: {
+          fullName,
+          phone,
+          password,
+        },
+      },
+    );
+    expect(created.ok()).toBe(true);
+    const driverId = (await created.json()).id;
+    await admin.request.post(
+      `${process.env.TEST_API_URL}/admin/drivers/${driverId}/balance`,
+      { headers, data: { amount: 100, type: "TOPUP" } },
+    );
+    await login(driver, "driver", phone);
+    await startGps(driver);
+    await driver
+      .getByRole("button", { name: "Выйти на линию", exact: true })
+      .click();
+    await expect(
+      driver.getByRole("button", { name: "Уйти с линии", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+    const driverToken = await driver.evaluate(() =>
+      localStorage.getItem("openride.driver.accessToken"),
+    );
+    const driverHeaders = { Authorization: `Bearer ${driverToken}` };
+    expect(
+      (
+        await driver.request.post(
+          `${process.env.TEST_API_URL}/driver/location`,
+          { headers: driverHeaders, data: { lat: 37.96, lng: 58.32 } },
+        )
+      ).ok(),
+    ).toBe(true);
+    expect(
+      (
+        await driver.request.post(`${process.env.TEST_API_URL}/driver/status`, {
+          headers: driverHeaders,
+          data: { isOnline: true },
+        })
+      ).ok(),
+    ).toBe(true);
+    await admin.goto("/adminMonitoring");
+    const row = admin.getByRole("button", {
+      name: fullName,
+      exact: true,
+    });
+    await expect(row).toContainText("Свободен");
+    await row.click();
+    await expect(
+      admin.getByRole("button", { name: "Предложить заказ", exact: true }),
+    ).toBeEnabled();
+    // Hold an actual pre-claim HTTP snapshot while a real Socket.IO claim arrives.
+    let snapshotCaptured!: () => void;
+    const captured = new Promise<void>((resolve) => {
+      snapshotCaptured = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      releaseSnapshot = resolve;
+    });
+    let finishSnapshot!: () => void;
+    const finishedSnapshot = new Promise<void>((resolve) => {
+      finishSnapshot = resolve;
+    });
+    let heldOnce = false;
+    await admin.route("**/api/admin/drivers?**", async (route) => {
+      if (heldOnce) return route.continue();
+      heldOnce = true;
+      const response = await route.fetch();
+      snapshotCaptured();
+      await held;
+      await route.fulfill({ response });
+      finishSnapshot();
+    });
+    await admin.evaluate(() =>
+      document.dispatchEvent(new Event("visibilitychange")),
+    );
+    await captured;
+    const orderResponse = await admin.request.post(
+      `${process.env.TEST_API_URL}/admin/orders`,
+      {
+        headers,
+        data: {
+          districtId: process.env.TEST_REGION_ID,
+          clientPhone: "+99360000888",
+          priceEstimated: 25,
+        },
+      },
+    );
+    expect(orderResponse.ok()).toBe(true);
+    const orderId = (await orderResponse.json()).id;
+    expect(
+      (
+        await driver.request.post(`${process.env.TEST_API_URL}/orders/accept`, {
+          headers: driverHeaders,
+          data: { orderId, arrivalMinutes: 5 },
+        })
+      ).ok(),
+    ).toBe(true);
+    await expect(row).toContainText("В поездке");
+    await expect(
+      admin.getByRole("button", { name: "Предложить заказ", exact: true }),
+    ).toBeDisabled();
+    releaseSnapshot?.();
+    await finishedSnapshot;
+    await admin.unroute("**/api/admin/drivers?**");
+    await expect(row).toContainText("В поездке");
+    await admin.reload();
+    await expect(row).toContainText("В поездке");
+    for (const path of ["waiting", "start", "complete"])
+      expect(
+        (
+          await driver.request.post(
+            `${process.env.TEST_API_URL}/orders/${path}`,
+            { headers: driverHeaders, data: { orderId } },
+          )
+        ).ok(),
+      ).toBe(true);
+    await expect(row).toContainText("Свободен");
+    await row.click();
+    await expect(
+      admin.getByRole("button", { name: "Предложить заказ", exact: true }),
+    ).toBeEnabled();
+  } finally {
+    releaseSnapshot?.();
+    await adminContext.close();
+    await driverContext.close();
+  }
+});
+
+test("today overview stays compact on mobile and separates request failure from real metrics", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 740 });
+  await page.route("**/admin/overview/today", (route) => route.abort("failed"));
+  await login(page, "admin");
+  const today = page.getByRole("region", {
+    name: "Оперативные показатели",
+    exact: true,
+  });
+  await expect(today.getByRole("alert")).toBeVisible();
+  await expect(today.getByText("Создано сегодня", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("heading", {
+      name: "Завершённые поездки за всё время",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.unroute("**/admin/overview/today");
+  await today.getByRole("button", { name: "Повторить", exact: true }).click();
+  await expect(
+    today.getByText("Создано сегодня", { exact: true }),
+  ).toBeVisible();
+  await expect(today.getByText(/Ашхабад, UTC\+5/)).toBeVisible();
+  await expect(
+    today.getByText(/Только заказы, созданные сегодня/),
+  ).toBeVisible();
+  await expect(
+    today.getByText(/Сейчас ждут принятия · за все дни/),
+  ).toBeVisible();
+  await expect(
+    today.getByText(/период доступа только своему району/),
+  ).toBeVisible();
+  for (const dark of [false, true]) {
+    await page.evaluate(
+      (value) => document.documentElement.classList.toggle("dark", value),
+      dark,
+    );
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(320);
+    await expect(today).toBeVisible();
   }
 });
 
