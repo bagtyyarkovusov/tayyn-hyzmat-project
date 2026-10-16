@@ -14,6 +14,7 @@ import { Label } from "@/shared/ui/label";
 import { adminSession, driverSession } from "./session";
 import { errorMessage, publicRequest } from "@/shared/api";
 const route = useRoute();
+const development = import.meta.env.DEV;
 const router = useRouter();
 const isAdmin = computed(() => route.path === "/adminLogin");
 const registering = computed(() => route.path === "/driverRegister");
@@ -76,7 +77,7 @@ async function submit() {
           }}
         </p>
       </div>
-      <div class="flex items-center gap-3 text-sm">
+      <div v-if="development" class="flex items-center gap-3 text-sm">
         <ShieldCheck class="size-5" />Тестовая среда · расчёты только в TMT
       </div>
     </section>

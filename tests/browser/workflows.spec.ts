@@ -1062,7 +1062,7 @@ test("regional queues and counts recover through updates, reconnect and reload",
       trip.getByText("Прибытие: 20 мин", { exact: true }),
     ).toBeVisible();
     await trip.getByRole("button", { name: "Close", exact: true }).click();
-    await expect(driver.getByLabel("Тестовый баланс")).toHaveText("488 TMT");
+    await expect(driver.getByLabel("Баланс")).toHaveText("488 TMT");
     await driver.screenshot({
       path: "test-results/driver-live-trip-strip.png",
       animations: "disabled",
@@ -1072,7 +1072,7 @@ test("regional queues and counts recover through updates, reconnect and reload",
     await driver.screenshot({ path: "test-results/driver-trip-dialog.png" });
     for (const name of ["Я на месте", "Начать поездку", "Завершить поездку"])
       await driver.getByRole("button", { name, exact: true }).click();
-    await expect(driver.getByLabel("Тестовый баланс")).toHaveText("488 TMT");
+    await expect(driver.getByLabel("Баланс")).toHaveText("488 TMT");
     await startGps(driver);
     await driver
       .getByRole("button", { name: "Выйти на линию", exact: true })
@@ -1145,6 +1145,91 @@ test("regional queues and counts recover through updates, reconnect and reload",
   } finally {
     await a.close();
     await b.close();
+  }
+});
+
+test("permission controls distinguish confirmed GPS and enabled notification permission", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+  });
+  const page = await context.newPage();
+  // Headless Chromium's Notification getter can remain denied while its
+  // Permissions API reports granted. Control this browser boundary only.
+  await page.addInitScript(() => {
+    Object.defineProperty(Notification, "permission", {
+      configurable: true,
+      value: "default",
+    });
+  });
+  try {
+    await login(page, "driver");
+    const gps = page.getByRole("button", { name: "Включить GPS", exact: true });
+    const alerts = page.getByRole("button", {
+      name: "Включить уведомления и звук",
+      exact: true,
+    });
+    await expect(gps).toHaveAttribute("data-state", "inactive");
+    await expect(alerts).toHaveAttribute("data-state", "inactive");
+    let releaseReport!: () => void;
+    const reportGate = new Promise<void>((resolve) => {
+      releaseReport = resolve;
+    });
+    await page.route("**/driver/location", async (route) => {
+      await reportGate;
+      await route.continue();
+    });
+    const gpsStarted = startGps(page);
+    await expect(gps).toHaveAttribute("data-state", "pending");
+    await expect(
+      page.getByRole("button", { name: "Выйти на линию", exact: true }),
+    ).toBeDisabled();
+    releaseReport();
+    await gpsStarted;
+    await expect(gps).toHaveAttribute("data-state", "ready");
+    await page
+      .getByRole("button", { name: "Выйти на линию", exact: true })
+      .click();
+    const power = page.getByRole("button", {
+      name: "Уйти с линии",
+      exact: true,
+    });
+    await expect(power).toHaveAttribute(
+      "aria-description",
+      /Связь с диспетчером установлена/,
+    );
+    await context.setOffline(true);
+    await expect(power).toHaveAttribute(
+      "aria-description",
+      /Нет связи с диспетчером/,
+    );
+    await context.setOffline(false);
+    await expect(power).toHaveAttribute(
+      "aria-description",
+      /Связь с диспетчером установлена/,
+    );
+    await power.click();
+    await page.evaluate(() => {
+      Object.defineProperty(Notification, "permission", { value: "granted" });
+      window.dispatchEvent(new Event("focus"));
+    });
+    await expect(alerts).toHaveAttribute(
+      "aria-description",
+      /Уведомления разрешены/,
+    );
+    // Permission alone does not prove audio has been unlocked by a gesture.
+    await expect(alerts).not.toHaveAttribute("data-state", "ready");
+    await alerts.click();
+    await expect(alerts).toHaveAttribute("data-state", "ready");
+    await page.evaluate(() => {
+      Object.defineProperty(Notification, "permission", { value: "denied" });
+      window.dispatchEvent(new Event("focus"));
+    });
+    await expect(alerts).toHaveAttribute("data-state", "blocked");
+    await expect(alerts).toHaveAttribute("aria-description", /заблокированы/);
+  } finally {
+    await context.close();
   }
 });
 

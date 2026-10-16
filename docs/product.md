@@ -31,3 +31,7 @@ Private offers follow the [private-offer flow](private-offers.md): an eligible d
 - What delivery guarantee is required when a browser is suspended or closed?
 
 Record answers here when settled, and use ADRs for resulting architectural choices. Track implementation gaps in GitHub Issues. [Architecture](architecture.md) distinguishes current behavior from this agreed scope.
+
+## Production interface copy
+
+Driver profile uses one compact summary with identity, balance and vehicle rows, followed by existing trip/balance history. Operational labels use neutral balance wording. Test-environment banners and legacy navigation appear only in local Vite development and stay hidden in production builds. Driver dashboard keeps GPS and notification actions together beside a separate compact availability switch; each control retains a 44-pixel touch target. GPS confirmation follows a successful server location report. Notification confirmation requires browser permission and sound activation; it does not establish background delivery. The online pulse requires both GPS readiness and a live dispatcher connection, with an amber switch during a connection outage. Synthetic data and payment restrictions remain unchanged; removing development copy does not enable real payments.

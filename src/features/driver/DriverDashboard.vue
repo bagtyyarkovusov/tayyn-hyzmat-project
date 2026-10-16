@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useDocumentVisibility, useOnline } from "@vueuse/core";
 import {
   MapPin,
   LocateFixed,
   Power,
   Bell,
+  BellRing,
+  BellOff,
+  Check,
+  MapPinOff,
   LoaderCircle,
   ChevronRight,
   CircleAlert,
@@ -19,7 +23,7 @@ import {
   DialogDescription,
 } from "@/shared/ui/dialog";
 import { useDriver } from "./useDriver";
-import { enableOrderAlerts } from "./alerts";
+import { alertState, enableOrderAlerts, syncAlertPermission } from "./alerts";
 import { money, statusLabels } from "./model";
 import IncomingOrder from "./components/IncomingOrder.vue";
 import ActiveTrip from "./components/ActiveTrip.vue";
@@ -45,6 +49,59 @@ const connectionReady = computed(
 const liveOnline = computed(
   () => !!state.profile?.isOnline && state.gpsReady && connectionReady.value,
 );
+const availabilityDescription = computed(() =>
+  !state.profile?.isOnline
+    ? "Не на линии."
+    : !connectionReady.value
+      ? "Нет связи с диспетчером. Переподключаемся."
+      : !state.gpsReady
+        ? "Нет актуального GPS."
+        : "На линии. Связь с диспетчером установлена.",
+);
+const alertsReady = computed(
+  () => alertState.permission === "granted" && alertState.soundReady,
+);
+const alertDescription = computed(() => {
+  if (alertState.pending) return "Включаем уведомления и звук…";
+  if (alertState.permission === "denied")
+    return "Уведомления заблокированы. Разрешите их в настройках браузера.";
+  if (alertState.permission === "unsupported")
+    return "Системные уведомления недоступны в этом браузере.";
+  if (alertState.permission === "granted")
+    return alertState.soundReady
+      ? "Уведомления разрешены. Звук включён."
+      : "Уведомления разрешены. Нажмите, чтобы включить звук.";
+  return "Нажмите, чтобы разрешить уведомления и включить звук.";
+});
+const gpsDescription = computed(() =>
+  state.gpsPending
+    ? "Получаем местоположение…"
+    : state.gpsReady
+      ? "GPS работает. Местоположение передано диспетчеру."
+      : state.gpsError || "GPS не включён. Нажмите, чтобы включить.",
+);
+let permissionStatus: PermissionStatus | undefined;
+let disposed = false;
+onMounted(async () => {
+  syncAlertPermission();
+  window.addEventListener("focus", syncAlertPermission);
+  try {
+    const status = await navigator.permissions.query({ name: "notifications" });
+    if (disposed) return;
+    permissionStatus = status;
+    status.addEventListener("change", syncAlertPermission);
+  } catch {
+    /* Some mobile browsers do not expose notification permission queries. */
+  }
+});
+onUnmounted(() => {
+  disposed = true;
+  window.removeEventListener("focus", syncAlertPermission);
+  permissionStatus?.removeEventListener("change", syncAlertPermission);
+});
+watch(visibility, () => {
+  if (visibility.value === "visible") syncAlertPermission();
+});
 const availabilityPulse = ref(false);
 watch(
   () => state.profile?.isOnline,
@@ -105,57 +162,130 @@ watch(
   <div class="driver-home mx-auto flex h-full max-w-xl flex-col gap-2">
     <h1 class="sr-only">Заказы по районам</h1>
     <div class="driver-controls flex shrink-0 flex-col gap-2">
-      <header class="flex shrink-0 items-center gap-2">
+      <header class="flex min-h-14 shrink-0 items-center gap-3">
         <span
           class="mr-auto text-sm font-semibold tabular-nums"
-          aria-label="Тестовый баланс"
+          aria-label="Баланс"
           >{{ state.balance ? money(state.balance.amount) : "…" }}</span
         >
-        <div class="flex items-center justify-end gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            class="size-11"
-            :disabled="state.gpsPending"
-            aria-label="Включить GPS"
-            @click="enableGps"
+        <div class="flex shrink-0 items-center gap-3">
+          <div
+            role="group"
+            aria-label="Разрешения устройства"
+            class="flex items-center rounded-full bg-secondary/60 px-1"
           >
-            <LocateFixed
-              class="size-5"
-              :class="{
-                'text-primary': state.gpsReady,
-                'motion-safe:animate-pulse': state.gpsPending,
-              }"
-            />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            class="size-11"
-            aria-label="Включить уведомления и звук"
-            @click="enableOrderAlerts"
-            ><Bell class="size-5"
-          /></Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="relative size-11 rounded-full"
+              :class="
+                state.gpsReady
+                  ? 'bg-primary/10 text-primary'
+                  : state.gpsError
+                    ? 'text-destructive'
+                    : 'text-muted-foreground'
+              "
+              :data-state="
+                state.gpsPending
+                  ? 'pending'
+                  : state.gpsReady
+                    ? 'ready'
+                    : state.gpsError
+                      ? 'blocked'
+                      : 'inactive'
+              "
+              :aria-description="gpsDescription"
+              :title="gpsDescription"
+              :disabled="state.gpsPending"
+              aria-label="Включить GPS"
+              @click="enableGps"
+            >
+              <LoaderCircle
+                v-if="state.gpsPending"
+                class="size-5 motion-safe:animate-spin"
+                aria-hidden="true"
+              />
+              <MapPinOff
+                v-else-if="state.gpsError && !state.gpsReady"
+                class="size-5"
+                aria-hidden="true"
+              />
+              <LocateFixed v-else class="size-5" aria-hidden="true" />
+              <Check
+                v-if="state.gpsReady"
+                class="absolute bottom-1 right-1 size-3 rounded-full bg-background"
+                aria-hidden="true"
+              />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="relative size-11 rounded-full"
+              :class="
+                alertsReady
+                  ? 'bg-primary/10 text-primary'
+                  : alertState.permission === 'denied' ||
+                      alertState.permission === 'unsupported'
+                    ? 'text-destructive'
+                    : 'text-muted-foreground'
+              "
+              :data-state="
+                alertState.pending
+                  ? 'pending'
+                  : alertsReady
+                    ? 'ready'
+                    : alertState.permission === 'denied' ||
+                        alertState.permission === 'unsupported'
+                      ? 'blocked'
+                      : 'inactive'
+              "
+              :disabled="alertState.pending"
+              :aria-description="alertDescription"
+              :title="alertDescription"
+              aria-label="Включить уведомления и звук"
+              @click="enableOrderAlerts"
+            >
+              <LoaderCircle
+                v-if="alertState.pending"
+                class="size-5 motion-safe:animate-spin"
+                aria-hidden="true"
+              />
+              <BellRing
+                v-else-if="alertsReady"
+                class="size-5"
+                aria-hidden="true"
+              />
+              <BellOff
+                v-else-if="
+                  alertState.permission === 'denied' ||
+                  alertState.permission === 'unsupported'
+                "
+                class="size-5"
+                aria-hidden="true"
+              />
+              <Bell v-else class="size-5" aria-hidden="true" />
+              <Check
+                v-if="alertsReady"
+                class="absolute bottom-1 right-1 size-3 rounded-full bg-background"
+                aria-hidden="true"
+              />
+            </Button>
+          </div>
           <Button
             variant="outline"
-            class="relative size-12 shrink-0 overflow-visible rounded-full border-2 shadow-none [&_svg]:size-6 motion-safe:transition-[background-color,border-color,color,transform] motion-safe:duration-200 active:scale-95"
+            class="relative size-11 shrink-0 overflow-visible rounded-full border shadow-none [&_svg]:size-5 motion-safe:transition-[background-color,border-color,color,transform] motion-safe:duration-200 active:scale-95"
             :class="
               state.profile?.isOnline
-                ? 'border-emerald-300 bg-emerald-300 text-emerald-950 hover:bg-emerald-200 dark:border-emerald-400 dark:bg-emerald-400 dark:hover:bg-emerald-300'
+                ? liveOnline
+                  ? 'border-emerald-300 bg-emerald-300 text-emerald-950 hover:bg-emerald-200 dark:border-emerald-400 dark:bg-emerald-400 dark:hover:bg-emerald-300'
+                  : 'border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200'
                 : 'border-red-200 bg-red-100 text-red-700 hover:bg-red-200 dark:border-red-800 dark:bg-red-950 dark:text-red-300 dark:hover:bg-red-900'
             "
             :aria-label="
               state.profile?.isOnline ? 'Уйти с линии' : 'Выйти на линию'
             "
-            :aria-description="
-              !state.profile?.isOnline
-                ? 'Не на линии.'
-                : !connectionReady
-                  ? 'Нет связи с диспетчером. Переподключаемся.'
-                  : !state.gpsReady
-                    ? 'Нет актуального GPS.'
-                    : 'На линии. Связь с диспетчером установлена.'
-            "
+            :aria-description="availabilityDescription"
+            :title="availabilityDescription"
             :aria-pressed="!!state.profile?.isOnline"
             :aria-busy="state.busy"
             :disabled="
@@ -187,9 +317,7 @@ watch(
           </Button>
         </div>
       </header>
-      <span class="sr-only" role="status">{{
-        state.profile?.isOnline ? "Вы принимаете заказы" : "Вы не на линии"
-      }}</span>
+      <span class="sr-only" role="status">{{ availabilityDescription }}</span>
       <div class="flex shrink-0 items-center justify-between gap-2">
         <div
           class="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-sm"

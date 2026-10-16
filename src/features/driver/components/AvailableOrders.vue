@@ -122,7 +122,7 @@ onUnmounted(() => {
       </p>
       <p class="muted text-xs">
         Телефон пассажира откроется после принятия. При принятии списывается
-        указанная сумма с тестового баланса.
+        указанная сумма с баланса.
       </p>
       <div class="flex flex-wrap items-end gap-3">
         <label class="grid gap-1 text-sm" :for="`eta-${order.id}`"

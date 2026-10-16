@@ -279,7 +279,7 @@ async function submit() {
           placeholder="Введите сумму"
         />
         <p class="text-xs text-muted-foreground">
-          Сумма списывается с тестового баланса при принятии заказа.
+          Сумма списывается с баланса при принятии заказа.
         </p>
       </div>
       <div class="space-y-2">
