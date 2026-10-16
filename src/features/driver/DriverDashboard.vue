@@ -193,7 +193,7 @@ watch(
               class="relative size-11 rounded-full"
               :class="
                 state.gpsReady
-                  ? 'bg-primary/10 text-primary'
+                  ? 'bg-success/10 text-success'
                   : state.gpsError
                     ? 'text-destructive'
                     : 'text-muted-foreground'
@@ -236,7 +236,7 @@ watch(
               class="relative size-11 rounded-full"
               :class="
                 alertsReady
-                  ? 'bg-primary/10 text-primary'
+                  ? 'bg-success/10 text-success'
                   : alertState.permission === 'denied' ||
                       alertState.permission === 'unsupported'
                     ? 'text-destructive'
@@ -314,13 +314,13 @@ watch(
           >
             <span
               v-if="liveOnline && visibility === 'visible'"
-              class="online-beacon pointer-events-none absolute -inset-1 rounded-full border-2 border-primary"
+              class="online-beacon pointer-events-none absolute -inset-1 rounded-full border-2 border-success"
               aria-hidden="true"
             />
             <span
               v-if="availabilityPulse"
               :key="String(state.profile?.isOnline)"
-              class="availability-pulse pointer-events-none absolute -inset-1 rounded-full border-2 border-primary"
+              class="availability-pulse pointer-events-none absolute -inset-1 rounded-full border-2 border-success"
               aria-hidden="true"
               @animationend="availabilityPulse = false"
             />
@@ -375,7 +375,7 @@ watch(
       @click="tripOpen = true"
     >
       <span
-        class="size-2 shrink-0 rounded-full bg-primary"
+        class="size-2 shrink-0 rounded-full bg-success"
         aria-hidden="true"
       />
       <span class="min-w-0 flex-1 truncate text-sm font-semibold"
