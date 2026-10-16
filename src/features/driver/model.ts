@@ -25,6 +25,8 @@ export interface Order {
   note?: string | null;
   etaMinutes?: number;
   createdAt: string;
+  privateOfferId?: string;
+  privateOfferExpiresAt?: string | null;
   district?: District;
 }
 export interface DriverProfile {

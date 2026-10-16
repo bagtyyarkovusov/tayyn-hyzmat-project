@@ -17,6 +17,7 @@ const state = reactive({
   gpsError: "",
   gpsPending: false,
   gpsReady: false,
+  offerSeconds: 0,
   position: null as { lat: number; lng: number; accuracy: number } | null,
 });
 export const driverState = readonly(state);
@@ -32,6 +33,8 @@ let gpsTimer: ReturnType<typeof setInterval> | undefined;
 let lastFixAt = 0;
 let offlinePending = false;
 let gpsEpoch = 0;
+let offerTimer: ReturnType<typeof setInterval> | undefined;
+let offerVersion = 0;
 const GPS_MAX_AGE_MS = 60000;
 function hasCurrentGps() {
   return (
@@ -67,8 +70,74 @@ async function loseGps(message: string) {
   }
 }
 function dismissIncoming() {
+  offerVersion++;
+  if (offerTimer !== undefined) clearInterval(offerTimer);
+  offerTimer = undefined;
+  state.offerSeconds = 0;
   closeOrderAlerts();
   state.incoming = null;
+}
+
+function receivePrivateOffer(order: Order, sound = true) {
+  if (
+    !order.privateOfferExpiresAt ||
+    !hasCurrentGps() ||
+    !state.profile?.isOnline ||
+    state.active
+  )
+    return;
+  const expiresAt = Date.parse(order.privateOfferExpiresAt);
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return;
+  if (
+    state.incoming?.id === order.id &&
+    state.incoming.privateOfferExpiresAt === order.privateOfferExpiresAt
+  )
+    return;
+  dismissIncoming();
+  state.incoming = order;
+  const tick = () => {
+    state.offerSeconds = Math.max(
+      0,
+      Math.ceil((expiresAt - Date.now()) / 1000),
+    );
+    if (!state.offerSeconds) dismissIncoming();
+  };
+  tick();
+  offerTimer = setInterval(tick, 250);
+  if (sound) notifyOrder(order);
+}
+async function recoverPrivateOffer() {
+  const version = ++offerVersion;
+  const generation = sessionGeneration;
+  try {
+    const { data } = await driverApi.get<Order | null>("/orders/private-offer");
+    if (
+      generation !== sessionGeneration ||
+      version !== offerVersion ||
+      !driverSession.state.accessToken
+    )
+      return;
+    if (data) receivePrivateOffer(data, false);
+    else if (state.incoming?.privateOfferExpiresAt) dismissIncoming();
+  } catch (error) {
+    if (generation === sessionGeneration && version === offerVersion)
+      state.error = errorMessage(error);
+  }
+}
+async function declinePrivateOffer() {
+  const orderId = state.incoming?.id;
+  if (!orderId || !state.incoming?.privateOfferExpiresAt) return;
+  const generation = sessionGeneration;
+  const privateOfferExpiresAt = state.incoming.privateOfferExpiresAt;
+  await act(async () => {
+    await driverApi.post("/orders/private-offer/decline", {
+      orderId,
+      privateOfferExpiresAt,
+    });
+    if (generation !== sessionGeneration) return;
+    dismissIncoming();
+    await refresh();
+  });
 }
 
 // Session cleanup outlives route components, including navigation to login.
@@ -86,6 +155,7 @@ watch(
     state.error = "";
     state.notice = "";
     state.loading = false;
+    state.busy = false;
     state.position = null;
     state.gpsReady = false;
     lastFixAt = 0;
@@ -128,6 +198,8 @@ async function refresh() {
       hideAvailableOrders();
       if (state.profile.isOnline)
         void loseGps("Включите GPS перед выходом на линию.");
+    } else if (state.profile.isOnline && !state.active) {
+      await recoverPrivateOffer();
     }
   } catch (error) {
     if (current()) state.error = errorMessage(error);
@@ -137,15 +209,16 @@ async function refresh() {
 }
 async function act(work: () => Promise<void>) {
   if (state.busy) return;
+  const generation = sessionGeneration;
   state.busy = true;
   state.error = "";
   state.notice = "";
   try {
     await work();
   } catch (error) {
-    state.error = errorMessage(error);
+    if (generation === sessionGeneration) state.error = errorMessage(error);
   } finally {
-    state.busy = false;
+    if (generation === sessionGeneration) state.busy = false;
   }
 }
 async function accept(orderId: string, etaMinutes: number) {
@@ -158,12 +231,22 @@ async function accept(orderId: string, etaMinutes: number) {
     dismissIncoming();
     return;
   }
+  const generation = sessionGeneration;
+  const privateOfferExpiresAt =
+    state.incoming?.id === orderId
+      ? state.incoming.privateOfferExpiresAt
+      : undefined;
   await act(async () => {
+    const { data } = await driverApi.post<Order>(
+      privateOfferExpiresAt ? "/orders/private-offer/accept" : "/orders/accept",
+      {
+        ...(privateOfferExpiresAt ? { privateOfferExpiresAt } : {}),
+        orderId,
+        etaMinutes,
+      },
+    );
+    if (generation !== sessionGeneration) return;
     dismissIncoming();
-    const { data } = await driverApi.post<Order>("/orders/accept", {
-      orderId,
-      etaMinutes,
-    });
     state.active = data;
     await refresh();
   });
@@ -250,7 +333,9 @@ function enableGps() {
       if (epoch !== gpsEpoch) return;
       lastLocationSent = Date.now();
       state.gpsPending = false;
+      const firstFix = !state.gpsReady;
       state.gpsReady = true;
+      if (firstFix && state.profile?.isOnline) void recoverPrivateOffer();
       state.gpsError = "";
       if (state.profile) state.profile.districtId = data.districtId;
     } catch (error) {
@@ -312,6 +397,13 @@ function start() {
       state.districts = payload as District[];
     }
   });
+  on("order:private-offer", (payload) => receivePrivateOffer(payload as Order));
+  on("order:private-offer-ended", (payload) => {
+    offerVersion++;
+    if (state.incoming?.id === (payload as { orderId: string }).orderId)
+      dismissIncoming();
+    void refresh();
+  });
   on("order:new", (payload) => {
     const order = payload as Order;
     if (
@@ -370,6 +462,7 @@ export function useDriver() {
     setDistrict,
     enableGps,
     dismissIncoming,
+    declinePrivateOffer,
     session: driverSession,
   };
 }

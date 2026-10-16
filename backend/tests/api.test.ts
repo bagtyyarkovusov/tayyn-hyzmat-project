@@ -2,7 +2,7 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type Prisma } from '@prisma/client';
 import { io as connect, Socket } from 'socket.io-client';
 import bcrypt from 'bcryptjs';
 import app from '../dist/app';
@@ -47,6 +47,13 @@ async function socket(token: string) {
     client.once('connect_error', error => { clearTimeout(timer); reject(error); });
   });
   return client;
+}
+function nextSocketEvent<T>(client: Socket, event: string, timeout = 5000): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { client.off(event, receive); reject(new Error(`Missing ${event}`)); }, timeout);
+    function receive(payload: T) { clearTimeout(timer); resolve(payload); }
+    client.once(event, receive);
+  });
 }
 async function order(priceEstimated: number | null = 10) {
   const response = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: priceEstimated ?? 10, pickupAddress: 'Synthetic pickup', clientPhone: '+10000000999' });
@@ -405,4 +412,126 @@ test('canonical bootstrap fills a missing boundary without changing an existing 
   assert.equal(restored.length, 1);
   assert.equal(restored[0].id, oldId);
   assert.equal(restored[0].boundary[0].length, 26);
+});
+
+
+test('private offers reserve cross-region orders without disclosing phone or charging until acceptance', async () => {
+  const driver = (await request('/driver/profile', otherToken)).data;
+  const result = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: driver.id });
+  assert.equal(result.status, 201);
+  assert.equal(result.data.privateOfferDriverId, driver.id);
+  const pending = await request('/orders/private-offer', otherToken);
+  assert.equal(pending.status, 200);
+  assert.equal(pending.data.id, result.data.id);
+  assert.equal(pending.data.clientPhone, undefined);
+  assert.ok(Date.parse(pending.data.privateOfferExpiresAt) > Date.now());
+  assert.equal((await request('/driver/balance', otherToken)).data.amount, '500');
+  assert.deepEqual((await request('/orders/available', driverToken)).data, []);
+  assert.equal((await request('/orders/accept', driverToken, { orderId: result.data.id })).status, 409);
+  const accepted = await request('/orders/private-offer/accept', otherToken, { orderId: result.data.id, privateOfferExpiresAt: pending.data.privateOfferExpiresAt });
+  assert.equal(accepted.status, 200);
+  assert.equal(accepted.data.clientPhone, '+99365000000');
+  assert.equal(accepted.data.districtId, regionId);
+  assert.equal((await request('/driver/profile', otherToken)).data.districtId, driver.districtId);
+  assert.equal((await request('/driver/balance', otherToken)).data.amount, '490');
+});
+
+test('declining a private offer releases it publicly and an old response cannot decline a newer reservation', async () => {
+  const driver = (await request('/driver/profile', otherToken)).data;
+  const created = await order();
+  const offered = await request(`/admin/orders/${created.id}/private-offer`, adminToken, { driverId: driver.id });
+  assert.equal(offered.status, 200);
+  const deadline = offered.data.privateOfferExpiresAt;
+  assert.equal((await request('/orders/private-offer/decline', driverToken, { orderId: created.id, privateOfferExpiresAt: deadline })).status, 409);
+  assert.equal((await request('/orders/private-offer/decline', otherToken, { orderId: created.id, privateOfferExpiresAt: deadline })).status, 200);
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, driverToken)).data[0].id, created.id);
+  assert.equal((await request('/driver/balance', otherToken)).data.amount, '500');
+  const renewed = await request(`/admin/orders/${created.id}/private-offer`, adminToken, { driverId: driver.id });
+  assert.equal(renewed.status, 200);
+  assert.notEqual(renewed.data.privateOfferExpiresAt, deadline);
+  assert.equal((await request('/orders/private-offer/decline', otherToken, { orderId: created.id, privateOfferExpiresAt: deadline })).status, 409);
+  assert.equal((await request('/orders/private-offer', otherToken)).data.privateOfferExpiresAt, renewed.data.privateOfferExpiresAt);
+});
+
+test('private offer deadline survives recovery and expires to its regional queue without a debit', async () => {
+  const driver = (await request('/driver/profile', otherToken)).data;
+  const target = await socket(otherToken);
+  const received = nextSocketEvent<{ id: string; privateOfferExpiresAt: string; clientPhone?: string }>(target, 'order:private-offer');
+  const created = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: driver.id });
+  assert.equal(created.status, 201);
+  const notification = await received;
+  assert.equal(notification.id, created.data.id);
+  assert.equal(notification.clientPhone, undefined);
+  const deadline = notification.privateOfferExpiresAt;
+  assert.ok(Date.parse(deadline) - Date.now() <= 20_000);
+  assert.ok(Date.parse(deadline) - Date.now() > 18_000);
+  target.disconnect();
+  const recovered = await request('/orders/private-offer', otherToken);
+  assert.equal(recovered.data.privateOfferExpiresAt, deadline);
+  const reconnected = await socket(otherToken);
+  const ended = nextSocketEvent<{ orderId: string }>(reconnected, 'order:private-offer-ended', 23_000);
+  const end = await ended;
+  assert.equal(end.orderId, created.data.id);
+  assert.equal((await request('/orders/private-offer', otherToken)).data, null);
+  assert.equal((await request('/orders/private-offer/accept', otherToken, { orderId: created.data.id, privateOfferExpiresAt: deadline })).status, 409);
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, driverToken)).data[0].id, created.data.id);
+  assert.equal((await request('/driver/balance', otherToken)).data.amount, '500');
+});
+
+test('one driver cannot claim two different orders concurrently and a pending offer blocks public claims', async () => {
+  const first = await order();
+  const second = await order();
+  const results = await Promise.all([first, second].map(item => request('/orders/accept', driverToken, { orderId: item.id })));
+  assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '490');
+  const driver = (await request('/driver/profile', otherToken)).data;
+  const pending = await order();
+  assert.equal((await request(`/admin/orders/${pending.id}/private-offer`, adminToken, { driverId: driver.id })).status, 200);
+  const another = await order();
+  assert.equal((await request('/orders/accept', otherToken, { orderId: another.id })).status, 409);
+  assert.equal((await request('/driver/balance', otherToken)).data.amount, '500');
+});
+
+test('competing reservations and public claims have one winner and never double charge', async () => {
+  const driver = (await request('/driver/profile', otherToken)).data;
+  const first = await order();
+  const second = await order();
+  const reservations = await Promise.all([first, second].map(item => request(`/admin/orders/${item.id}/private-offer`, adminToken, { driverId: driver.id })));
+  assert.deepEqual(reservations.map(result => result.status).sort(), [200, 409]);
+  const reserved = reservations.find(result => result.status === 200)!.data;
+  const claims = await Promise.all([
+    request('/orders/private-offer/accept', otherToken, { orderId: reserved.id, privateOfferExpiresAt: reserved.privateOfferExpiresAt }),
+    request('/orders/accept', driverToken, { orderId: reserved.id }),
+    request('/orders/private-offer/accept', otherToken, { orderId: reserved.id, privateOfferExpiresAt: reserved.privateOfferExpiresAt })
+  ]);
+  assert.deepEqual(claims.map(result => result.status).sort(), [200, 409, 409]);
+  assert.equal((await request('/driver/balance', otherToken)).data.amount, '490');
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
+  assert.equal((await request(`/admin/orders/${first.id === reserved.id ? second.id : first.id}/private-offer`, adminToken, { driverId: driver.id })).status, 409);
+});
+
+test('private offers reject offline, stale GPS, blocked, busy and zero-balance drivers without reserving', async () => {
+  const driver = (await request('/driver/profile', otherToken)).data;
+  const created = await order();
+  for (const data of [{ isOnline: false }, { lastLocationAt: new Date(Date.now() - 61_000) }, { status: 'BLOCKED' }, { isAvailable: false }]) {
+    await prisma.driver.update({ where: { id: driver.id }, data: { isOnline: true, isAvailable: true, status: 'APPROVED', lastLocationAt: new Date(), ...data } as Prisma.DriverUpdateInput });
+    const result = await request(`/admin/orders/${created.id}/private-offer`, adminToken, { driverId: driver.id });
+    assert.ok([403, 409].includes(result.status));
+  }
+  await prisma.driver.update({ where: { id: driver.id }, data: { isOnline: true, isAvailable: true } });
+  await prisma.balance.update({ where: { userId: driver.userId }, data: { amount: 0 } });
+  assert.equal((await request(`/admin/orders/${created.id}/private-offer`, adminToken, { driverId: driver.id })).status, 409);
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, driverToken)).data[0].id, created.id);
+});
+
+test('dispatcher cancellation immediately dismisses a reserved offer without charging the driver', async () => {
+  const driver = (await request('/driver/profile', otherToken)).data;
+  const target = await socket(otherToken);
+  const created = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: driver.id });
+  assert.equal(created.status, 201);
+  const ended = nextSocketEvent<{ orderId: string }>(target, 'order:private-offer-ended', 1000);
+  assert.equal((await request(`/admin/orders/${created.data.id}/cancel`, adminToken, {})).status, 200);
+  assert.equal((await ended).orderId, created.data.id);
+  assert.equal((await request('/orders/private-offer', otherToken)).data, null);
+  assert.equal((await request('/driver/balance', otherToken)).data.amount, '500');
 });

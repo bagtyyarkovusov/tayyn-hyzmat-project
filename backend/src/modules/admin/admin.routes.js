@@ -16,7 +16,7 @@ const {
   districtBoundarySchema
 } = require('./admin.validation');
 const controller = require('./admin.controller');
-const { createOrderSchema } = require('../orders/orders.validation');
+const { createOrderSchema, privateOfferSchema } = require('../orders/orders.validation');
 
 // Mounted in routes/index.js behind: authenticate, requireRole('ADMIN')
 const router = Router();
@@ -76,6 +76,7 @@ router.post(
 
 // Manual/phone dispatch - there is no client app yet (see migration plan),
 // so this is currently the only way an order enters the system at all.
+router.post('/orders/:id/private-offer', validate({ params: orderIdParamSchema, body: privateOfferSchema }), controller.privateOffer);
 router.post('/orders', validate({ body: createOrderSchema }), controller.createOrder);
 router.get('/orders', validate({ query: listOrdersQuerySchema }), controller.listOrders);
 // Admin cancel - unlike POST /orders/cancel (driver-only, ACCEPTED/WAITING
