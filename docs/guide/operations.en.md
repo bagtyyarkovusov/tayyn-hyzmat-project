@@ -12,7 +12,7 @@ The pilot has one dispatcher and synthetic driver accounts. It uses TMT only and
 
 ## What the driver sees
 
-The home screen shows all saved dispatch regions as a compact grid. Each region card shows the number of online cars and active orders. The driver cannot choose a region manually. The server assigns the current region from the driver's fresh GPS point and the saved polygon. A point outside every polygon shows **Outside region** and the real coordinates. A region centre is only a fallback coordinate, never proof of the driver's exact pickup.
+The home screen shows all saved dispatch regions as a compact grid. Each region card shows the number of online cars and active orders. Active orders include accepted trips until completion or cancellation. The count is not the number available to claim; a claimed offer disappears from the queue even while that region count stays unchanged. The driver cannot choose a region manually. The server assigns the current region from the driver's fresh GPS point and the saved polygon. A point outside every polygon shows **Outside region** and the real coordinates. A region centre is only a fallback coordinate, never proof of the driver's exact pickup.
 
 The driver can open orders, map, chat, and profile from the bottom navigation. The current trip shows its price, call action and next step above the grid. Open its details dialog for route information and permitted cancellation. Region order lists use dialogs. Message history scrolls inside the chat; Enter sends a message and Shift+Enter adds a line.
 
