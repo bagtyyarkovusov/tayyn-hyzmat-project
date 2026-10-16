@@ -83,6 +83,7 @@ model User {
   role         Role
   phone        String     @unique
   email        String?    @unique
+  credentialVersion Int @default(0) @map("credential_version")
   passwordHash String     @map("password_hash")
   fullName     String     @map("full_name")
   avatarUrl    String?    @map("avatar_url")
@@ -436,6 +437,7 @@ model RefreshToken {
   id        String    @id @default(uuid())
   userId    String    @map("user_id")
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  credentialVersion Int @default(0) @map("credential_version")
   tokenHash String    @unique @map("token_hash")
   expiresAt DateTime  @map("expires_at")
   revokedAt DateTime? @map("revoked_at")

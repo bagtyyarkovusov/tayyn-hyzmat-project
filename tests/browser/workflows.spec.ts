@@ -786,6 +786,51 @@ test("dispatcher adds an approved driver and opens their zero TMT balance", asyn
   await expect(
     page.getByRole("heading", { name: "Новый тестовый водитель", exact: true }),
   ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Изменить данные входа", exact: true })
+    .click();
+  await page
+    .getByLabel("Имя водителя", { exact: true })
+    .fill("Изменённый водитель");
+  await page
+    .getByLabel("Телефон для входа", { exact: true })
+    .fill("+99361999889");
+  await page
+    .getByRole("button", { name: "Сохранить данные", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Изменённый водитель", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "+99361999889", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Сбросить пароль", exact: true })
+    .click();
+  await page
+    .getByLabel("Новый пароль", { exact: true })
+    .fill("Replacement123!");
+  await page
+    .getByLabel("Повторите пароль", { exact: true })
+    .fill("Different123!");
+  await page
+    .getByRole("button", { name: "Изменить пароль", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText("Пароли не совпадают");
+  await page
+    .getByLabel("Повторите пароль", { exact: true })
+    .fill("Replacement123!");
+  await page
+    .getByRole("button", { name: "Изменить пароль", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await page
+    .getByRole("button", { name: "Сбросить пароль", exact: true })
+    .click();
+  await expect(page.getByLabel("Новый пароль", { exact: true })).toHaveValue(
+    "",
+  );
+  await page.getByRole("button", { name: "Отмена", exact: true }).click();
   await page.getByRole("button", { name: "Баланс", exact: true }).click();
   await expect(page.getByText("0 TMT", { exact: true }).first()).toBeVisible();
   await page.getByLabel("Сумма, TMT", { exact: true }).fill("100");

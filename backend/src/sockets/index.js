@@ -4,6 +4,7 @@ const env = require('../config/env');
 const logger = require('../config/logger');
 const { verifyAccessToken } = require('../utils/jwt');
 const { setIO } = require('../lib/socket');
+const { validateCredentialSession } = require('../modules/auth/credential-session');
 const prisma = require('../lib/prisma');
 const rooms = require('./rooms');
 const adminService = require('../modules/admin/admin.service');
@@ -11,7 +12,7 @@ const driverService = require('../modules/driver/driver.service');
 
 // Socket.IO auth middleware: expects the JWT access token at
 // `socket.handshake.auth.token` (preferred, e.g. `io(url, { auth: { token } })`).
-function socketAuthMiddleware(socket, next) {
+async function socketAuthMiddleware(socket, next) {
   const token =
     socket.handshake.auth && socket.handshake.auth.token
       ? socket.handshake.auth.token
@@ -21,6 +22,8 @@ function socketAuthMiddleware(socket, next) {
 
   try {
     const payload = verifyAccessToken(token);
+    await validateCredentialSession(payload);
+    socket.data.credentials = payload;
     socket.data.user = {
       id: payload.sub,
       role: payload.role,
@@ -45,6 +48,11 @@ async function handleDriverConnection(socket) {
 
   socket.join(rooms.driver(driverId));
   socket.join(rooms.drivers());
+  await validateCredentialSession(socket.data.credentials);
+  socket.use(async (_packet, next) => {
+    try { await validateCredentialSession(socket.data.credentials); next(); }
+    catch { socket.disconnect(true); }
+  });
   await syncDriverDistrictRoom(driverId);
 
   // Symmetric with the admin side's socket.on('admin:message', ...) below -

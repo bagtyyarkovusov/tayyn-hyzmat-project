@@ -14,6 +14,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/shared/ui/dialog";
+import { adminSession } from "@/features/auth/session";
 import { adminApi, errorMessage } from "@/shared/api";
 import {
   money,
@@ -37,6 +38,66 @@ const tab = ref("info"),
   amount = ref(""),
   note = ref(""),
   historyPage = ref(1);
+const credentialDialog = ref<"" | "profile" | "password">("");
+const identity = ref({ fullName: "", phone: "+993" });
+const newPassword = ref("");
+const passwordConfirmation = ref("");
+const credentialError = ref("");
+const credentialPending = ref(false);
+let credentialGeneration = 0;
+function closeCredentials() {
+  credentialGeneration++;
+  credentialDialog.value = "";
+  newPassword.value = "";
+  passwordConfirmation.value = "";
+  credentialError.value = "";
+  credentialPending.value = false;
+}
+function openCredentials(kind: "profile" | "password") {
+  closeCredentials();
+  identity.value = {
+    fullName: driver.value?.user.fullName || "",
+    phone: driver.value?.user.phone || "+993",
+  };
+  credentialDialog.value = kind;
+}
+watch(() => [props.driverId, adminSession.state.accessToken], closeCredentials);
+onUnmounted(closeCredentials);
+async function saveCredentials() {
+  if (credentialPending.value) return;
+  credentialError.value = "";
+  if (
+    credentialDialog.value === "password" &&
+    newPassword.value !== passwordConfirmation.value
+  ) {
+    credentialError.value = "Пароли не совпадают";
+    return;
+  }
+  const generation = credentialGeneration;
+  const driverId = props.driverId;
+  const kind = credentialDialog.value;
+  credentialPending.value = true;
+  try {
+    await adminApi.post(
+      `/admin/drivers/${driverId}/${kind}`,
+      kind === "profile"
+        ? { ...identity.value }
+        : {
+            password: newPassword.value,
+            passwordConfirmation: passwordConfirmation.value,
+          },
+    );
+    if (generation !== credentialGeneration) return;
+    closeCredentials();
+    notice.value = "Данные сохранены";
+    await load();
+  } catch (error) {
+    if (generation === credentialGeneration)
+      credentialError.value = errorMessage(error);
+  } finally {
+    if (generation === credentialGeneration) credentialPending.value = false;
+  }
+}
 const gpsAddress = ref("");
 let geocodeVersion = 0;
 let geocodedPoint = "";
@@ -177,6 +238,14 @@ function adjust(withdraw: boolean) {
       <p v-if="notice" role="status" class="text-sm text-primary">
         {{ notice }}
       </p>
+      <div v-if="tab === 'info'" class="flex flex-wrap gap-2">
+        <Button variant="outline" @click="openCredentials('profile')"
+          >Изменить данные входа</Button
+        >
+        <Button variant="outline" @click="openCredentials('password')"
+          >Сбросить пароль</Button
+        >
+      </div>
       <section v-if="tab === 'info'" class="grid gap-5 xl:grid-cols-2">
         <div class="space-y-5">
           <div class="rounded-xl border bg-card p-5">
@@ -471,5 +540,98 @@ function adjust(withdraw: boolean) {
         ></DialogContent
       ></Dialog
     >
+    <Dialog
+      :open="!!credentialDialog"
+      @update:open="!$event && closeCredentials()"
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{{
+            credentialDialog === "profile"
+              ? "Данные водителя"
+              : "Сбросить пароль"
+          }}</DialogTitle>
+          <DialogDescription
+            >Смена телефона или пароля завершит все входы водителя и снимет его
+            с линии. Баланс, одобренное устройство и текущая поездка сохранятся.
+            Изменение только имени не завершает вход.</DialogDescription
+          >
+        </DialogHeader>
+        <form class="space-y-4" @submit.prevent="saveCredentials">
+          <template v-if="credentialDialog === 'profile'">
+            <div class="space-y-2">
+              <Label for="driver-name">Имя водителя</Label
+              ><Input
+                id="driver-name"
+                v-model="identity.fullName"
+                required
+                minlength="2"
+                maxlength="120"
+                autocomplete="name"
+                :disabled="credentialPending"
+              />
+            </div>
+            <div class="space-y-2">
+              <Label for="driver-phone">Телефон для входа</Label
+              ><Input
+                id="driver-phone"
+                v-model="identity.phone"
+                type="tel"
+                required
+                pattern="\+[1-9][0-9]{7,14}"
+                autocomplete="tel"
+                :disabled="credentialPending"
+              />
+            </div>
+          </template>
+          <template v-else>
+            <div class="space-y-2">
+              <Label for="driver-password">Новый пароль</Label
+              ><Input
+                id="driver-password"
+                v-model="newPassword"
+                type="password"
+                autocomplete="new-password"
+                required
+                minlength="8"
+                maxlength="128"
+                :disabled="credentialPending"
+              />
+            </div>
+            <div class="space-y-2">
+              <Label for="driver-password-confirmation">Повторите пароль</Label
+              ><Input
+                id="driver-password-confirmation"
+                v-model="passwordConfirmation"
+                type="password"
+                autocomplete="new-password"
+                required
+                minlength="8"
+                maxlength="128"
+                :disabled="credentialPending"
+              />
+            </div>
+          </template>
+          <p
+            v-if="credentialError"
+            role="alert"
+            class="text-sm text-destructive"
+          >
+            {{ credentialError }}
+          </p>
+          <DialogFooter
+            ><Button type="button" variant="outline" @click="closeCredentials"
+              >Отмена</Button
+            ><Button type="submit" :disabled="credentialPending">{{
+              credentialPending
+                ? "Сохраняем…"
+                : credentialDialog === "profile"
+                  ? "Сохранить данные"
+                  : "Изменить пароль"
+            }}</Button></DialogFooter
+          >
+        </form>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>
