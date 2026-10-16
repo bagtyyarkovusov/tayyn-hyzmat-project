@@ -1332,6 +1332,7 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
       activeNativeUser?: string;
       syntheticNativeStopped?: boolean;
       syntheticNativeStopSequence?: number;
+      syntheticNativeStopAfterPermission?: boolean;
     };
     bridge.holdNativePermission = holdPermission;
     bridge.CapacitorCustomPlatform = { name: "android" };
@@ -1380,12 +1381,19 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
           }
           return {};
         }
-        if (method === "permissions" && !bridge.holdNativePermission)
+        if (method === "permissions" && !bridge.holdNativePermission) {
+          if (bridge.syntheticNativeStopAfterPermission)
+            bridge.syntheticNativeStopped = true;
           return {
+            ...status,
+            stopSequence: bridge.syntheticNativeStopped
+              ? (bridge.syntheticNativeStopSequence ?? 1)
+              : 0,
             locationGranted: true,
             ordersEnabled: true,
             chatEnabled: true,
           };
+        }
         if (method === "permissions")
           return new Promise((resolve) => {
             bridge.releaseNativePermission = () =>
@@ -1463,6 +1471,27 @@ test("a stopped native shift does not erase a newly confirmed GPS fix on later s
   await expect(
     page.getByText("Смена завершена сервером", { exact: true }),
   ).toBeVisible();
+});
+
+test("explicit native GPS acknowledges an old stop before its next status poll", async ({
+  page,
+}) => {
+  await emulateNativeBridge(page, false);
+  await login(page, "driver");
+  await page.evaluate(() => {
+    (
+      window as unknown as { syntheticNativeStopAfterPermission: boolean }
+    ).syntheticNativeStopAfterPermission = true;
+  });
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeEnabled();
+  await page.getByRole("link", { name: "Профиль", exact: true }).click();
+  await page.getByRole("link", { name: "Заказы", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeEnabled();
 });
 
 test("a native GPS permission callback from a previous driver cannot post the next driver's location", async ({

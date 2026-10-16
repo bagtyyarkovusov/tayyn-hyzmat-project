@@ -404,6 +404,8 @@ async function enableNativeGps() {
   try {
     const permissions = await nativeShift.permissions();
     if (!account.current()) return;
+    if (!permissions.running && Number.isFinite(permissions.stopSequence))
+      handledNativeStop = permissions.stopSequence;
     if (!permissions.locationGranted)
       throw new Error("Разрешите точный GPS в настройках приложения.");
     const position = await nativeShift.location();
