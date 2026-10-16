@@ -83,6 +83,7 @@ function stopGpsTracking() {
 }
 
 async function forceOffline(message: string) {
+  console.debug("[driver-gps] forceOffline", message);
   stopGpsTracking();
   gpsEpoch++;
   state.gpsReady = false;
@@ -111,6 +112,7 @@ async function loseGps(message: string) {
 }
 
 function markLocationSyncFailure(message: string) {
+  console.debug("[driver-gps] syncFailure", message);
   state.gpsReady = false;
   state.locationSyncPending = false;
   state.locationSyncError = message;
@@ -646,6 +648,7 @@ function enableGps() {
     }
   };
   const failed = (error: GeolocationPositionError) => {
+    console.debug("[driver-gps] geolocationFailure", error.code, error.message);
     if (generation !== sessionGeneration) return;
     state.gpsPending = false;
     void loseGps(
