@@ -16,6 +16,7 @@ const server = createServer(app);
 const sockets = initSockets(server);
 const clients: Socket[] = [];
 let base = '';
+let testClient = 1;
 let adminToken = '';
 let driverToken = '';
 let otherToken = '';
@@ -27,7 +28,7 @@ async function request(path: string, token = '', body?: unknown) {
   const response = await fetch(`${base}${path}`, {
     method: body === undefined ? 'GET' : 'POST',
     signal: AbortSignal.timeout(5000),
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `127.0.1.${testClient}`,  ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) })
   });
   const data = response.status === 204 ? null : await response.json();
@@ -90,6 +91,7 @@ before(async () => {
   otherToken = await login('+10000000102');
 });
 beforeEach(async () => {
+  testClient++;
   await prisma.transaction.deleteMany();
   await prisma.order.deleteMany();
   await prisma.balance.updateMany({ data: { amount: 500 } });
@@ -860,4 +862,29 @@ test('credential reset cannot revive an old native shift after the new session g
   await request('/driver/location', fresh.data.accessToken, { lat: 37.96, lng: 58.32 });
   await request('/driver/status', fresh.data.accessToken, { isOnline: true });
   assert.equal((await request('/native-shift/tick', started.data.shiftToken, { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() })).status, 401);
+});
+
+test('native private offer replay preserves the persisted deadline and acceptance removes its notification', async () => {
+  const auth = await request('/auth/login', '', { phone: '+10000000101', password, deviceId: 'native-test-device' });
+  assert.equal(auth.status, 200);
+  const token = auth.data.accessToken;
+  const started = await request('/driver/shift', token, { deviceId: 'native-test-device', refreshToken: auth.data.refreshToken });
+  assert.equal(started.status, 201);
+  const profile = (await request('/driver/profile', token)).data;
+  const offered = await request('/admin/orders', adminToken, { districtId: otherRegionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: profile.id });
+  assert.equal(offered.status, 201);
+  const fix = () => ({ lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() });
+  const first = await request('/native-shift/tick', started.data.shiftToken, fix());
+  const event = first.data.events.find((item: { orderId?: string }) => item.orderId === offered.data.id);
+  assert.equal(event.expiresAt, offered.data.privateOfferExpiresAt);
+  assert.equal(event.id, `private:${offered.data.id}:${offered.data.privateOfferExpiresAt}`);
+  assert.equal(JSON.stringify(first.data.events).includes('+99365000000'), false);
+  const replay = await request('/native-shift/tick', started.data.shiftToken, fix());
+  assert.deepEqual(replay.data.events.find((item: { orderId?: string }) => item.orderId === offered.data.id), event);
+  const recovered = await request('/orders/private-offer', token);
+  assert.equal(recovered.data.privateOfferExpiresAt, event.expiresAt);
+  assert.equal((await request('/orders/private-offer/accept', token, { orderId: offered.data.id, privateOfferExpiresAt: event.expiresAt })).status, 200);
+  const accepted = await request('/native-shift/tick', started.data.shiftToken, fix());
+  assert.equal(accepted.data.events.some((item: { orderId?: string }) => item.orderId === offered.data.id), false);
+  assert.equal((await request('/driver/balance', token)).data.amount, '490');
 });

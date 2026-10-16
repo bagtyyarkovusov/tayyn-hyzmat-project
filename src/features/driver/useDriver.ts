@@ -19,6 +19,7 @@ const state = reactive({
   loading: false,
   busy: false,
   error: "",
+  actionAttempt: 0,
   notice: "",
   gpsError: "",
   gpsPending: false,
@@ -238,6 +239,7 @@ async function act(work: () => Promise<void>) {
   state.busy = true;
   state.error = "";
   state.notice = "";
+  state.actionAttempt++;
   try {
     await work();
   } catch (error) {

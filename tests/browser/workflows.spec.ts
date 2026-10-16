@@ -1623,3 +1623,91 @@ test("auth throttling blocks repeated attempts from one browser without blocking
     await second.close();
   }
 });
+
+test("driver feedback shows blockers until recovery and action errors without an extra tap", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page, "driver");
+  await expect(
+    page.getByText("Включите GPS, чтобы принимать заказы.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Показать сообщение", exact: true }),
+  ).toHaveCount(0);
+  await startGps(page);
+  await expect(
+    page.getByText("Включите GPS, чтобы принимать заказы.", { exact: true }),
+  ).toHaveCount(0);
+  const failure = "Не удалось выйти на линию. Повторите попытку.";
+  const failNextStatus = () =>
+    page.route(
+      "**/api/driver/status",
+      (route) =>
+        route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ message: failure }),
+        }),
+      { times: 1 },
+    );
+  await failNextStatus();
+  await page.clock.install();
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  const toast = page.getByRole("listitem", {
+    name: "Сообщение водителю",
+    exact: true,
+  });
+  await expect(toast).toContainText(failure);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  // A background refresh must not cut short the error's reading time.
+  const refreshing = page.waitForResponse("**/api/driver/profile");
+  await page.evaluate(() =>
+    document.dispatchEvent(new Event("visibilitychange")),
+  );
+  await (await refreshing).finished();
+  await expect(toast).toContainText(failure);
+  await page.clock.fastForward(9000);
+  await expect(toast).toHaveCount(0);
+  // Repeating the same failure during a background refresh must not reopen it.
+  await page.route(
+    "**/api/driver/profile",
+    (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ message: failure }),
+      }),
+    { times: 1 },
+  );
+  const backgroundFailure = page.waitForResponse("**/api/driver/profile");
+  await page.evaluate(() =>
+    document.dispatchEvent(new Event("visibilitychange")),
+  );
+  await (await backgroundFailure).finished();
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await expect(toast).toHaveCount(0);
+  // A deliberate retry must be allowed to show the same failure again.
+  await failNextStatus();
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  await expect(toast).toContainText(failure);
+  await page.keyboard.press("F8");
+  await page.keyboard.press("Escape");
+  await expect(toast).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Уйти с линии", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(toast).toHaveCount(0);
+});
