@@ -19,3 +19,7 @@ The Geocoder HTTP suite uses a disposable database and intercepts only outbound 
 ### Money command validation
 
 Order prices allow positive TMT amounts through 99,999,999.99 with at most two decimal places. Manual wallet changes allow nonzero signed amounts through 9,999,999,999.99; TOPUP/BONUS are positive, WITHDRAWAL is negative, and ADJUSTMENT accepts either direction. The resulting wallet must stay between zero and 9,999,999,999.99. Adjustments preserve enough headroom to refund any active trip debit. HTTP tests check rejected commands leave history unchanged and accepted cent values agree across the response, balance and socket event.
+
+### Driver deactivation
+
+The dispatcher account-removal command now deactivates access. User/driver IDs, wallet, ledger entries, chats and order attribution remain available to the dispatcher. An ACCEPTED, WAITING or STARTED trip rejects deactivation with409 before any changes. Successful deactivation blocks the user, increments its credential generation, revokes refresh tokens/native leases and disconnects sockets. Driver approval, unblocking, password changes and device approval cannot clear the user-level block.
