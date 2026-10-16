@@ -54,3 +54,17 @@ for path in RES.glob("drawable*/splash.png"):
     icon = mark(icon_size)
     image.alpha_composite(icon, ((width - icon_size) // 2, (height - icon_size) // 2))
     save(image, path)
+
+# Android vector fallback uses precisely the same normalized T as the adaptive
+# foreground raster: map the 80-unit source into 108dp, then apply safe padding.
+source_points = [(18, 21), (62, 21), (62, 31), (45, 31), (45, 62), (35, 62), (35, 31), (18, 31)]
+vector_points = [((x - 40) * 0.82 * 108 / 80 + 54,
+                  (y - 40) * 0.82 * 108 / 80 + 54) for x, y in source_points]
+path_data = "M" + "L".join(f"{x:.4f},{y:.4f}" for x, y in vector_points) + "Z"
+(RES / "drawable-v24/ic_launcher_foreground.xml").write_text(
+    '<vector xmlns:android="http://schemas.android.com/apk/res/android" '
+    'android:width="108dp" android:height="108dp" '
+    'android:viewportWidth="108" android:viewportHeight="108">'
+    f'<path android:fillColor="#FFFFFFFF" android:pathData="{path_data}"/>'
+    '</vector>\n'
+)
