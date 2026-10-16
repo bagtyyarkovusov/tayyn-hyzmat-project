@@ -41,6 +41,7 @@ const {
 const address = useDriverAddress(
   () => state.position,
   () => state.profile?.id,
+  () => state.gpsReady,
 );
 function closeIncoming() {
   if (state.incoming?.privateOfferExpiresAt) void declinePrivateOffer();

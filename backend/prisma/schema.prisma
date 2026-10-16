@@ -106,6 +106,7 @@ model User {
 }
 
 model Driver {
+  addressState DriverAddressState?
   id               String       @id @default(uuid())
   userId           String       @unique @map("user_id")
   user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -481,4 +482,27 @@ model NativeShiftLease {
   revokedAt DateTime? @map("revoked_at") @db.Timestamptz
 
   @@map("native_shift_leases")
+}
+
+// GPS source/attempt metadata is ours. Provider address retention is opt-in.
+model DriverAddressState {
+  driverId String @id @map("driver_id")
+  driver Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  attemptedAt DateTime @map("attempted_at") @db.Timestamptz
+  sourceLat Decimal @map("source_lat") @db.Decimal(10, 7)
+  sourceLng Decimal @map("source_lng") @db.Decimal(10, 7)
+  address String?
+  cacheUntil DateTime? @map("cache_until") @db.Timestamptz
+
+  @@map("driver_address_state")
+}
+
+model GeocoderBudget {
+  provider String @id
+  period String
+  attempts Int @default(0)
+  failures Int @default(0)
+  blockedUntil DateTime? @map("blocked_until") @db.Timestamptz
+
+  @@map("geocoder_budget")
 }

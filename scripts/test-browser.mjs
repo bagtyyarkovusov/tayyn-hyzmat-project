@@ -102,6 +102,10 @@ try {
     JWT_ACCESS_SECRET: randomBytes(32).toString("hex"),
     JWT_REFRESH_SECRET: randomBytes(32).toString("hex"),
     NODE_ENV: "test",
+    YANDEX_GEOCODER_API_KEY: "synthetic-private-test-key",
+    YANDEX_GEOCODER_DAILY_LIMIT: "1000",
+    YANDEX_GEOCODER_QUOTA_TIMEZONE: "UTC",
+    YANDEX_GEOCODER_CACHE_SECONDS: "0",
     LOG_LEVEL: "silent",
     PORT: String(apiPort),
     CORS_ORIGIN: `http://127.0.0.1:${webPort}`,
@@ -201,7 +205,10 @@ try {
     await prisma.$disconnect();
   }
   for (const [command, args] of [
-    ["node", ["backend/dist/server.js"]],
+    [
+      "node",
+      ["--require", "./tests/fixtures/geocoder.cjs", "backend/dist/server.js"],
+    ],
     [
       "pnpm",
       ["exec", "vite", "--host", "127.0.0.1", "--port", String(webPort)],

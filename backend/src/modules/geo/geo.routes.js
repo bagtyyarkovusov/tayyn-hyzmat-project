@@ -1,10 +1,10 @@
 const { Router } = require('express');
 const controller = require('./geo.controller');
 
-// Mounted in routes/index.js behind: authenticate (any role - driver or
-// admin both need reverse geocoding, same as /districts).
+// Authentication is inherited; driver-address additionally enforces actor/driver ownership.
 const router = Router();
 
+router.get('/drivers/:driverId/address', controller.address);
 router.get('/reverse', controller.reverse);
 
 module.exports = router;
