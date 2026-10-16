@@ -14,8 +14,8 @@ function docker(...args) {
     throw new Error(result.stderr || "Docker command failed");
   return result.stdout.trim();
 }
-async function response(url) {
-  for (let attempt = 0; attempt < 80; attempt++) {
+async function response(url, attempts = 80) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       const result = await fetch(url, { signal: AbortSignal.timeout(2000) });
       if (result.ok) return result;
@@ -87,6 +87,12 @@ try {
   assert.ok(socket.startsWith("0{"), "Nginx forwards the Socket.IO handshake");
   async function checkProxy() {
     assert.equal((await response(`${base}/health`)).status, 200);
+    const unknown = await fetch(`${base}/api/proxy-check?encoded=a%2Fb&n=2`);
+    assert.equal(unknown.status, 404);
+    assert.match(
+      (await unknown.json()).message,
+      /GET \/proxy-check\?encoded=a%2Fb&n=2 /,
+    );
     const invalidLogin = await fetch(`${base}/api/auth/login?proxy=checked`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -144,10 +150,20 @@ try {
   docker("stop", api);
   // The web container must recover without a reload or restart when API DNS changes.
   assert.equal(
-    (await (await response(`${base}/api/health`)).json()).status,
+    (await (await response(`${base}/api/health`, 12)).json()).status,
     "ok",
   );
   await checkProxy();
+  docker("network", "disconnect", network, replacement);
+  const unavailable = await fetch(`${base}/health`, {
+    signal: AbortSignal.timeout(10000),
+  });
+  assert.equal(
+    unavailable.status,
+    502,
+    "Web readiness fails when its API is unavailable",
+  );
+  assert.equal((await fetch(`${base}/driverProfile`)).status, 200);
   console.log(
     "Container startup, API replacement recovery, routes, POST and Socket.IO polling/WebSocket pass.",
   );
