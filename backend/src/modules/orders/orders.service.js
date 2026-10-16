@@ -583,11 +583,13 @@ async function adminCancel(orderId, reason) {
 // verifying the ride. The required reason is persisted as an attributable
 // audit event; the original assignment and charge stay intact.
 async function forceResolveStarted(orderId, actorId, reason) {
+  const observed = await prisma.order.findUnique({ where: { id: orderId }, select: { driverId: true } });
+  if (!observed) throw ApiError.notFound('Заказ не найден');
   const completedAt = new Date();
   const result = await prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} FOR UPDATE`;
-    const order = await tx.order.findUnique({ where: { id: orderId } });
-    if (!order) throw ApiError.notFound('Заказ не найден');
+    if (observed.driverId) await lockDriver(tx, observed.driverId);
+    const order = await lockOrder(tx, orderId);
+    if (order.driverId !== observed.driverId) throw ApiError.conflict('Заказ изменился. Повторите завершение');
     if (order.status !== 'STARTED') {
       throw ApiError.conflict('Принудительно завершить можно только начатую поездку', { status: order.status });
     }
