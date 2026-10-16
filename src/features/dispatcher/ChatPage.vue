@@ -6,6 +6,7 @@ import { ArrowLeft } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
 import { Label } from "@/shared/ui/label";
 import ChatComposer from "@/shared/ChatComposer.vue";
+import { useChatRecovery } from "@/shared/useChatRecovery";
 import { useChatScroll } from "@/shared/useChatScroll";
 import { Textarea } from "@/shared/ui/textarea";
 import {
@@ -89,6 +90,10 @@ const {
   null as { messages: Message[]; total: number; driver: Driver } | null,
   ["driver:message", "admin:message"],
 );
+useChatRecovery(() => {
+  void load();
+  void loadThread();
+});
 watch(
   () => props.driverId,
   () => {
@@ -155,7 +160,7 @@ async function send(all = false) {
         :class="driverId ? 'hidden lg:block' : ''"
       >
         <PageState
-          :loading="loading"
+          :loading="loading && !drivers.length"
           :error="error"
           :empty="!drivers.length"
           empty-title="Диалогов пока нет"
@@ -222,7 +227,7 @@ async function send(all = false) {
           @scroll="track"
         >
           <PageState
-            :loading="threadLoading"
+            :loading="threadLoading && !thread"
             :error="threadError"
             @retry="loadThread"
           />

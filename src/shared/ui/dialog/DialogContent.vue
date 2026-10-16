@@ -47,6 +47,14 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
 </template>
 
 <style>
+/* Mobile keyboards resize the visual viewport without changing CSS vh. */
+.app-dialog-content {
+  top: calc(
+    var(--app-viewport-top, 0px) + var(--app-viewport-height, 100dvh) / 2
+  );
+  max-height: calc(var(--app-viewport-height, 100dvh) - 1.5rem);
+}
+
 .app-dialog-overlay[data-state="open"] {
   animation: dialog-overlay-in 160ms ease-out;
 }
