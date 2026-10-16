@@ -2210,3 +2210,28 @@ test("dispatcher overview uses global counts and labels completed trip values as
     ),
   ).toBe(true);
 });
+
+test("authenticated actor shells show exactly one brand at mobile, tablet and desktop widths", async ({
+  page,
+}) => {
+  for (const role of ["admin", "driver"] as const) {
+    await login(page, role);
+    for (const width of [320, 390, 768, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const dark of [false, true]) {
+        await page.evaluate(
+          (value) => document.documentElement.classList.toggle("dark", value),
+          dark,
+        );
+        await expect(page.locator(".brand-lockup:visible")).toHaveCount(1);
+        await expect(page.locator(".connection")).toBeVisible();
+        await expect(page.locator(".connection")).toContainText(
+          role === "admin" ? "На связи" : "Не на линии",
+        );
+        expect(
+          await page.evaluate(() => document.documentElement.scrollWidth),
+        ).toBeLessThanOrEqual(width);
+      }
+    }
+  }
+});
