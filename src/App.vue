@@ -48,6 +48,14 @@ function resizeChat() {
     ? `${window.visualViewport.height}px`
     : undefined;
   viewportTop.value = `${window.visualViewport?.offsetTop ?? 0}px`;
+  document.documentElement.style.setProperty(
+    "--app-viewport-height",
+    viewportHeight.value ?? "100dvh",
+  );
+  document.documentElement.style.setProperty(
+    "--app-viewport-top",
+    viewportTop.value,
+  );
 }
 onMounted(() => {
   resizeChat();

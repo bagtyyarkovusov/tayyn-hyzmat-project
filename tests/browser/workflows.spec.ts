@@ -350,6 +350,9 @@ test("driver and dispatcher exchange real messages across separate role sessions
     await login(dispatcher, "admin");
     await login(driver, "driver");
     await driver.goto("/driverChat");
+    await expect(
+      driver.getByRole("button", { name: "Обновить сообщения" }),
+    ).toHaveCount(0);
     await driver
       .getByLabel("Сообщение диспетчеру")
       .fill("Тестовая связь с диспетчером");
@@ -594,6 +597,118 @@ test("driver and dispatcher exchange real messages across separate role sessions
     await dispatcher.screenshot({
       path: "test-results/dispatcher-chat-mobile.png",
     });
+  } finally {
+    await a.close();
+    await b.close();
+  }
+});
+test("driver history hides single-page navigation and resets the page when switching history", async ({
+  page,
+}) => {
+  await login(page, "admin");
+  await login(page, "driver");
+  const adminToken = await page.evaluate(() =>
+    localStorage.getItem("openride.admin.accessToken"),
+  );
+  const driverToken = await page.evaluate(() =>
+    localStorage.getItem("openride.driver.accessToken"),
+  );
+  const headers = { Authorization: `Bearer ${adminToken}` };
+  const profile = await page.request.get(
+    `${process.env.TEST_API_URL}/driver/profile`,
+    { headers: { Authorization: `Bearer ${driverToken}` } },
+  );
+  const driverId = (await profile.json()).id;
+  await page.goto("/driverProfile");
+  await expect(
+    page.getByText("Поездок пока нет.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Далее", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Баланс", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Далее", exact: true }),
+  ).toHaveCount(0);
+  for (let i = 0; i < 21; i++) {
+    const response = await page.request.post(
+      `${process.env.TEST_API_URL}/admin/drivers/${driverId}/balance`,
+      {
+        headers,
+        data: { amount: 1, type: "TOPUP", note: `Проверка страниц ${i}` },
+      },
+    );
+    expect(response.ok()).toBe(true);
+  }
+  await page.reload();
+  await page.getByRole("button", { name: "Баланс", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Далее", exact: true }),
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Далее", exact: true }).click();
+  await expect(page.getByText("Страница 2", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Назад", exact: true }),
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Поездки", exact: true }).click();
+  await expect(
+    page.getByText("Поездок пока нет.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Страница 2", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Баланс", exact: true }).click();
+  await expect(page.getByText("Страница 1", { exact: true })).toBeVisible();
+});
+test("chat reconnect recovers more than fifty missed messages without losing the draft", async ({
+  browser,
+}) => {
+  const a = await browser.newContext();
+  const b = await browser.newContext();
+  try {
+    const dispatcher = await a.newPage();
+    const driver = await b.newPage();
+    await login(dispatcher, "admin");
+    await login(driver, "driver");
+    await driver.goto("/driverChat");
+    const composer = driver.getByLabel("Сообщение диспетчеру");
+    await composer.fill("Последнее известное сообщение");
+    await composer.press("Enter");
+    await expect(
+      driver.getByText("Последнее известное сообщение", { exact: true }),
+    ).toBeVisible();
+    await composer.fill("Сохранённый черновик");
+    await b.setOffline(true);
+    const adminToken = await dispatcher.evaluate(() =>
+      localStorage.getItem("openride.admin.accessToken"),
+    );
+    const driverToken = await driver.evaluate(() =>
+      localStorage.getItem("openride.driver.accessToken"),
+    );
+    const profile = await a.request.get(
+      `${process.env.TEST_API_URL}/driver/profile`,
+      { headers: { Authorization: `Bearer ${driverToken}` } },
+    );
+    const driverId = (await profile.json()).id;
+    for (let i = 0; i < 55; i++) {
+      const response = await a.request.post(
+        `${process.env.TEST_API_URL}/admin/messages`,
+        {
+          headers: { Authorization: `Bearer ${adminToken}` },
+          data: { driverId, body: `Пропущенное сообщение ${i}` },
+        },
+      );
+      expect(response.ok()).toBe(true);
+    }
+    await b.setOffline(false);
+    await expect(
+      driver.getByText("Пропущенное сообщение 54", { exact: true }),
+    ).toBeAttached();
+    await expect(
+      driver.getByText("Пропущенное сообщение 0", { exact: true }),
+    ).toBeAttached();
+    await expect(composer).toHaveValue("Сохранённый черновик");
+    await expect(
+      driver.getByRole("button", { name: "Обновить сообщения" }),
+    ).toHaveCount(0);
   } finally {
     await a.close();
     await b.close();
