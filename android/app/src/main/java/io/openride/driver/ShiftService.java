@@ -27,7 +27,7 @@ public final class ShiftService extends Service {
   private static final int SHIFT_ID = 1;
   private static volatile ShiftService instance;
   private static volatile String phase = "off", detail = "";
-  private static volatile long lastReportAt;
+  private static volatile long lastReportAt, stopSequence;
   private static volatile double latitude, longitude, accuracy;
   private String apiBase, token;
   private static volatile String userId = "";
@@ -88,6 +88,7 @@ public final class ShiftService extends Service {
           .put("phase", phase)
           .put("detail", detail)
           .put("lastReportAt", lastReportAt)
+          .put("stopSequence", stopSequence)
           .put("lat", latitude)
           .put("lng", longitude)
           .put("accuracy", accuracy)
@@ -330,6 +331,7 @@ public final class ShiftService extends Service {
     closing = true;
     phase = "off";
     detail = reason;
+    stopSequence++;
     lastReportAt = 0;
     if (inbox != null) inbox.stop();
     worker.execute(

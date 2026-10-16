@@ -52,7 +52,9 @@ const networkOnline = useOnline();
 const connectionReady = computed(
   () =>
     networkOnline.value &&
-    (nativeAndroid ? state.nativeConnected : session.state.connected),
+    (nativeAndroid && state.profile?.isOnline
+      ? state.nativeConnected
+      : session.state.connected),
 );
 const liveOnline = computed(
   () => !!state.profile?.isOnline && state.gpsReady && connectionReady.value,

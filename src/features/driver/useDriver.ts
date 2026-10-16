@@ -42,6 +42,7 @@ let gpsTimer: ReturnType<typeof setInterval> | undefined;
 let lastFixAt = 0;
 let offlinePending = false;
 let gpsEpoch = 0;
+let handledNativeStop = -1;
 let offerTimer: ReturnType<typeof setInterval> | undefined;
 let offerVersion = 0;
 const GPS_MAX_AGE_MS = 60000;
@@ -182,6 +183,7 @@ watch(
     state.gpsReady = false;
     state.nativeRunning = false;
     state.nativeConnected = false;
+    handledNativeStop = -1;
     lastFixAt = 0;
     locationSending = false;
     offlinePending = false;
@@ -385,7 +387,10 @@ async function synchronizeNative() {
       state.gpsError = "";
     } else
       state.gpsError = native.detail || "Ожидаем GPS и связь с диспетчером…";
-  } else if (native.detail) {
+  } else if (native.detail && native.stopSequence !== handledNativeStop) {
+    // A stop is an event. Replaying its retained detail must not invalidate a
+    // subsequent explicit GPS fix acknowledged by the server.
+    handledNativeStop = native.stopSequence;
     state.gpsReady = false;
     hideAvailableOrders();
     state.gpsError = native.detail;

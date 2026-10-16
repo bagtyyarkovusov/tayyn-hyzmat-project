@@ -1330,6 +1330,8 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
       holdNativeStart?: boolean;
       releaseNativeStart?: () => void;
       activeNativeUser?: string;
+      syntheticNativeStopped?: boolean;
+      syntheticNativeStopSequence?: number;
     };
     bridge.holdNativePermission = holdPermission;
     bridge.CapacitorCustomPlatform = { name: "android" };
@@ -1339,6 +1341,7 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
       userId: "",
       lastReportAt: 0,
       detail: "",
+      stopSequence: 0,
     };
     let activeToken = "";
     bridge.Capacitor = {
@@ -1394,12 +1397,73 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
           });
         if (method === "location")
           return { lat: 0, lng: 0, accuracy: 10, timestamp: Date.now() };
-        if (method === "status") return status;
+        if (method === "status")
+          return bridge.syntheticNativeStopped
+            ? {
+                ...status,
+                detail: "Смена завершена сервером",
+                stopSequence: bridge.syntheticNativeStopSequence ?? 1,
+              }
+            : status;
         return {};
       },
     };
   }, holdPermission);
 }
+
+test("an offline native driver sees the healthy dispatcher connection before starting a shift", async ({
+  page,
+}) => {
+  await emulateNativeBridge(page, false);
+  await login(page, "driver");
+  await expect(
+    page.getByText("Переподключаемся к диспетчеру…", { exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeEnabled();
+});
+
+test("a stopped native shift does not erase a newly confirmed GPS fix on later status reconciliation", async ({
+  page,
+}) => {
+  await emulateNativeBridge(page, false);
+  await page.addInitScript(() => {
+    (
+      window as unknown as { syntheticNativeStopped: boolean }
+    ).syntheticNativeStopped = true;
+  });
+  await login(page, "driver");
+  await expect(
+    page.getByText("Смена завершена сервером", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeEnabled();
+  await page.getByRole("link", { name: "Профиль", exact: true }).click();
+  await page.getByRole("link", { name: "Заказы", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeEnabled();
+  await expect(
+    page.getByText("Смена завершена сервером", { exact: true }),
+  ).toHaveCount(0);
+  await page.evaluate(() => {
+    (
+      window as unknown as { syntheticNativeStopSequence: number }
+    ).syntheticNativeStopSequence = 2;
+  });
+  await page.getByRole("link", { name: "Профиль", exact: true }).click();
+  await page.getByRole("link", { name: "Заказы", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByText("Смена завершена сервером", { exact: true }),
+  ).toBeVisible();
+});
 
 test("a native GPS permission callback from a previous driver cannot post the next driver's location", async ({
   page,
