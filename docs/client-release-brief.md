@@ -26,4 +26,8 @@ The main order journeys have been exercised in the Android simulator, including 
 - Confirm production Yandex credentials and quota settings for optional address names. GPS and region eligibility continue to work if address lookup is unavailable.
 - Complete the final mobile login and small-screen visual check, then run the release checklist against the production configuration.
 
+## Current progress
+
+The dispatcher trip-resolution safeguard is now live in the shared Railway deployment. It lets the team review trips that remain open too long and resolve them with a recorded reason. The remaining items below are still being validated and are not presented as complete.
+
 The team will keep the shared region boundaries intact while these final checks are completed.
