@@ -205,6 +205,7 @@ test("fresh GPS updates preserve selected driver, focused search and availabilit
       data: {
         phone: "+99361880001",
         password: process.env.TEST_ACCOUNT_PASSWORD,
+        deviceId: "synthetic-approved-browser",
       },
       headers: { "X-Forwarded-For": "198.18.44.78" },
     },

@@ -112,6 +112,7 @@ test("new GPS fixes keep the selected map driver offerable between timer ticks",
       data: {
         phone: "+99361990001",
         password: process.env.TEST_ACCOUNT_PASSWORD,
+        deviceId: "synthetic-approved-browser",
       },
       headers: { "X-Forwarded-For": "198.18.44.78" },
     },
