@@ -72,7 +72,12 @@ export interface Order {
   startedAt?: string | null;
   startedAgeSeconds?: number | null;
   needsCompletion?: boolean;
-  resolutionAudits?: { action: string; reason: string; createdAt: string; actor?: { fullName: string } }[];
+  resolutionAudits?: {
+    action: string;
+    reason: string;
+    createdAt: string;
+    actor?: { fullName: string };
+  }[];
 }
 export interface Message {
   id: string;

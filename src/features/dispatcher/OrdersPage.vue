@@ -89,7 +89,9 @@ async function confirmResolve() {
   pending.value = true;
   actionError.value = "";
   try {
-    await adminApi.post(`/admin/orders/${resolve.value.id}/force-resolve`, { reason: reason.value });
+    await adminApi.post(`/admin/orders/${resolve.value.id}/force-resolve`, {
+      reason: reason.value,
+    });
     resolve.value = null;
     reason.value = "";
     await load();
@@ -225,14 +227,27 @@ async function confirmResolve() {
         ><DialogHeader
           ><DialogTitle>Завершить поездку вручную?</DialogTitle
           ><DialogDescription
-            >Используйте после проверки поездки. Заказ останется за водителем в истории, а списание не изменится.</DialogDescription
+            >Используйте после проверки поездки. Заказ останется за водителем в
+            истории, а списание не изменится.</DialogDescription
           ></DialogHeader
         ><Label for="resolve-reason">Причина обязательна</Label
-        ><Textarea id="resolve-reason" v-model="reason" maxlength="500" placeholder="Например: клиент подтвердил завершение по телефону" />
-        <p v-if="actionError" role="alert" class="text-sm text-destructive">{{ actionError }}</p>
+        ><Textarea
+          id="resolve-reason"
+          v-model="reason"
+          maxlength="500"
+          placeholder="Например: клиент подтвердил завершение по телефону"
+        />
+        <p v-if="actionError" role="alert" class="text-sm text-destructive">
+          {{ actionError }}
+        </p>
         <DialogFooter
-          ><Button variant="outline" :disabled="pending" @click="resolve = null">Оставить в пути</Button
-          ><Button variant="destructive" :disabled="pending || !reason.trim()" @click="confirmResolve">{{ pending ? "Завершаем…" : "Завершить поездку" }}</Button
+          ><Button variant="outline" :disabled="pending" @click="resolve = null"
+            >Оставить в пути</Button
+          ><Button
+            variant="destructive"
+            :disabled="pending || !reason.trim()"
+            @click="confirmResolve"
+            >{{ pending ? "Завершаем…" : "Завершить поездку" }}</Button
           ></DialogFooter
         ></DialogContent
       ></Dialog

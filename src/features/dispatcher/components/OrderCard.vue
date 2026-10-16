@@ -57,8 +57,15 @@ const ageLabel = (seconds?: number | null) => {
           ><Phone class="size-3" />{{ order.clientPhone }}</a
         >
         <p v-if="order.note">{{ order.note }}</p>
-        <p v-if="order.status === 'STARTED'" class="font-medium" :class="order.needsCompletion ? 'text-destructive' : 'text-muted-foreground'">
-          {{ order.needsCompletion ? "Требует завершения" : "В пути" }} · {{ ageLabel(order.startedAgeSeconds) }}
+        <p
+          v-if="order.status === 'STARTED'"
+          class="font-medium"
+          :class="
+            order.needsCompletion ? 'text-destructive' : 'text-muted-foreground'
+          "
+        >
+          {{ order.needsCompletion ? "Требует завершения" : "В пути" }} ·
+          {{ ageLabel(order.startedAgeSeconds) }}
         </p>
       </div>
       <Button
