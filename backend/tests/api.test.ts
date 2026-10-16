@@ -1393,3 +1393,32 @@ test('dispatcher overview invalidates live counts after approval, unblock and ac
     await prisma.user.deleteMany({ where: { id: user.id } });
   }
 });
+
+test('self-registration refreshes admin overview counts without exposing the application to drivers', async () => {
+  const admin = await socket(adminToken);
+  const driver = await socket(driverToken);
+  const leaked: unknown[] = [];
+  driver.on('driver:registered', payload => leaked.push(payload));
+  try {
+    const before = await request('/admin/overview', adminToken);
+    const registered = nextSocketEvent<{ driverId: string }>(admin, 'driver:registered', 750);
+    // Attach rejection handling immediately while the HTTP request is in flight.
+    const notification = registered.then(value => ({ value }), error => ({ error }));
+    const response = await request('/auth/register', '', {
+      phone: '+99361999888', fullName: 'Pending overview applicant', password: '123456'
+    });
+    assert.equal(response.status, 201);
+    const result = await notification;
+    assert.ok('value' in result, 'admin must receive registration invalidation after the account is committed');
+    assert.deepEqual(result.value, { driverId: response.data.user.driver.id });
+    const overview = await request('/admin/overview', adminToken);
+    assert.equal(overview.data.totalDrivers, before.data.totalDrivers + 1);
+    assert.equal(overview.data.pendingDrivers, before.data.pendingDrivers + 1);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.deepEqual(leaked, [], 'driver sockets must not receive applicant registration events');
+  } finally {
+    admin.disconnect();
+    driver.disconnect();
+    await prisma.user.deleteMany({ where: { phone: '+99361999888' } });
+  }
+});
