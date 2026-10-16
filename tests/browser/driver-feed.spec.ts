@@ -69,6 +69,7 @@ async function fixture(
     await expect(
       page.getByRole("button", { name: "Уйти с линии", exact: true }),
     ).toBeVisible();
+    const createdOrderIds: string[] = [];
     async function create(pickupAddress: string) {
       const response = await context.request.post(
         `${process.env.TEST_API_URL}/admin/orders`,
@@ -83,7 +84,9 @@ async function fixture(
         },
       );
       expect(response.ok()).toBe(true);
-      return response.json();
+      const order = await response.json();
+      createdOrderIds.push(order.id);
+      return order;
     }
     async function post(path: string, data: object) {
       return context.request.post(`${process.env.TEST_API_URL}${path}`, {
@@ -91,7 +94,24 @@ async function fixture(
         data,
       });
     }
-    return { page, context, create, post };
+    async function close() {
+      await context.setOffline(false);
+      for (const orderId of createdOrderIds) {
+        const response = await context.request.post(
+          `${process.env.TEST_API_URL}/admin/orders/${orderId}/cancel`,
+          {
+            headers: { Authorization: `Bearer ${adminToken}` },
+            data: { reason: "Disposable browser fixture cleanup" },
+          },
+        );
+        expect([200, 409]).toContain(response.status());
+      }
+      expect((await post("/driver/status", { isOnline: false })).ok()).toBe(
+        true,
+      );
+      await context.close();
+    }
+    return { page, context, create, post, close };
   } finally {
     await prisma.$disconnect();
   }
@@ -135,7 +155,7 @@ for (const viewport of [
   test(`active trip has a direct next step and client call without page scrolling at ${viewport.width}x${viewport.height}`, async ({
     browser,
   }) => {
-    const { page, context, create, post } = await fixture(browser, viewport);
+    const { page, create, post, close } = await fixture(browser, viewport);
     try {
       const order = await create("Торговый центр, главный вход");
       expect(
@@ -199,7 +219,7 @@ for (const viewport of [
       await expect(feed).toHaveCount(0);
       await expect(page.getByLabel("Баланс")).toHaveText("475 TMT");
     } finally {
-      await context.close();
+      await close();
     }
   });
 }
@@ -273,7 +293,7 @@ test("regional queue keeps ETA through live updates and reconnect, and removes a
       path: test.info().outputPath("queue-many-orders-mobile.png"),
     });
   } finally {
-    await first.context.close();
-    await rival.context.close();
+    await first.close();
+    await rival.close();
   }
 });
