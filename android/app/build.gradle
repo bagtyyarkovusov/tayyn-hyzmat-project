@@ -19,12 +19,8 @@ android {
         applicationId "io.openride.driver"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        // Bumped on every real release from here on - the in-app update
-        // checker (DriverProfile.vue, services/appVersion.js) compares
-        // this build's own versionCode against /apk/latest.json to decide
-        // whether to show "Доступна новая версия". Keep both in sync by
-        // hand: bump this, then rebuild and update latest.json to match
-        // (see android/README.md).
+        // Increment packaged app versions before distributing updates.
+        // The active Vue app has no automatic APK updater; see docs/android.md.
         versionCode 10
         versionName "1.9"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
