@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import { canFundOrder } from "@/shared/order-funding";
-import { MapPin, ArrowDown, RefreshCw } from "lucide-vue-next";
+import { MapPin, ArrowDown } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
 import { driverApi, errorMessage } from "@/shared/api";
 import { driverSession } from "@/features/auth/session";
@@ -26,6 +26,7 @@ async function load() {
     });
     if (id === request) {
       orders.value = data;
+      for (const order of data) eta.value[order.id] ??= 10;
       loaded.value = true;
     }
   } catch (e) {
@@ -47,8 +48,18 @@ watch(
   },
   { immediate: true },
 );
-const off = ["order:new", "order:taken", "districts:stats", "connect"].map(
-  (event) => driverSession.on(event, () => void load()),
+const off = ["order:new", "districts:stats", "connect"].map((event) =>
+  driverSession.on(event, () => void load()),
+);
+off.push(
+  driverSession.on("order:taken", (payload) => {
+    const { orderId } = payload as { orderId: string };
+    // Remove the claimed order before the reconciliation request finishes.
+    // Incrementing request also prevents an older in-flight list restoring it.
+    request++;
+    orders.value = orders.value.filter((order) => order.id !== orderId);
+    void load();
+  }),
 );
 const resume = () => {
   if (!document.hidden) void load();
@@ -61,27 +72,30 @@ onUnmounted(() => {
 });
 </script>
 <template>
-  <section class="space-y-4" aria-label="Доступные заказы" :aria-busy="loading">
-    <div class="flex items-center justify-between gap-3">
-      <div>
-        <h2 class="text-lg font-semibold">{{ districtName }}</h2>
-        <p class="muted text-sm">Доступные заказы</p>
-      </div>
-      <Button
-        variant="outline"
-        size="icon"
-        aria-label="Обновить заказы"
-        :disabled="loading"
-        @click="load"
-        ><RefreshCw class="size-4" :class="{ 'animate-spin': loading }"
-      /></Button>
-    </div>
+  <section
+    class="queue-list min-h-0 overflow-y-auto overscroll-contain space-y-3"
+    aria-label="Доступные заказы"
+    :aria-busy="loading"
+    tabindex="0"
+  >
+    <h2 class="text-base font-semibold">{{ districtName }}</h2>
+    <p class="text-xs text-muted-foreground">
+      Телефон клиента откроется после принятия. При принятии списывается цена
+      заказа.
+    </p>
     <p
       v-if="error || state.error"
       role="alert"
       class="text-sm text-destructive"
     >
       {{ error || state.error }}
+      <Button
+        variant="link"
+        class="min-h-11 px-1"
+        :disabled="loading"
+        @click="load"
+        >Повторить</Button
+      >
     </p>
     <p v-if="loading && !loaded" role="status" class="muted py-6 text-center">
       Загружаем заказы…
@@ -93,7 +107,7 @@ onUnmounted(() => {
       v-for="order in orders"
       v-else
       :key="order.id"
-      class="space-y-4 border-t pt-5"
+      class="space-y-3 border-t py-3"
     >
       <div class="flex items-start justify-between gap-3">
         <div class="min-w-0 space-y-2">
@@ -114,18 +128,17 @@ onUnmounted(() => {
             }}</span>
           </p>
         </div>
-        <span class="shrink-0 font-semibold tabular-nums">{{
-          money(order.priceEstimated)
-        }}</span>
+        <span
+          class="shrink-0 text-2xl font-semibold leading-none tabular-nums"
+          >{{ money(order.priceEstimated) }}</span
+        >
       </div>
       <p v-if="order.note" class="muted text-sm break-words">
         {{ order.note }}
       </p>
-      <p class="muted text-xs">
-        Телефон пассажира откроется после принятия. При принятии списывается
-        указанная сумма с баланса.
-      </p>
-      <div class="flex flex-wrap items-end gap-3">
+      <div
+        class="grid grid-cols-[auto_minmax(0,1fr)] items-end gap-2 bg-background pb-1"
+      >
         <label class="grid gap-1 text-sm" :for="`eta-${order.id}`"
           >Буду через<select
             :id="`eta-${order.id}`"
@@ -133,7 +146,6 @@ onUnmounted(() => {
             class="native-select min-h-11"
             :disabled="state.busy"
           >
-            <option :value="undefined" disabled>10 мин</option>
             <option
               v-for="minutes in [5, 10, 15, 20]"
               :key="minutes"
@@ -143,7 +155,7 @@ onUnmounted(() => {
             </option>
           </select></label
         ><Button
-          class="flex-1"
+          class="min-h-11"
           :disabled="
             state.busy ||
             !!state.active ||
