@@ -51,7 +51,7 @@ export async function getTodayOverview() {
         SELECT created_at,
           (private_offer_driver_id IS NOT NULL AND private_offer_expires_at IS NOT NULL
             AND private_offer_expires_at > reporting.now) AS reserved
-        FROM orders, reporting WHERE status = 'NEW'
+        FROM orders, reporting WHERE status = 'NEW' AND private_offer_stopped_at IS NULL
       ), queue AS (
         SELECT COUNT(*) FILTER (WHERE NOT reserved)::int AS public,
           COUNT(*) FILTER (WHERE reserved)::int AS private,

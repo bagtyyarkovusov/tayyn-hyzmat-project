@@ -1875,3 +1875,21 @@ test('today acceptance includes a cohort order accepted after the reporting day 
   assert.equal(result.data.cohort.cancellationRate, 1);
   assert.deepEqual(result.data.acceptance, { samples: 1, missing: 0, invalid: 0, medianSeconds: 60, p90Seconds: 60 });
 });
+
+test('stopped private orders remain unfinished in today cohort but leave the live waiting queue', async () => {
+  const clock = (await request('/admin/overview/today', adminToken)).data;
+  const start = Date.parse(clock.dayStart);
+  const driver = (await request('/driver/profile', driverToken)).data;
+  await prisma.order.createMany({ data: [
+    { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'NEW', createdAt: new Date(start + 1), privateOfferStoppedAt: new Date() },
+    { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'NEW', createdAt: new Date(start - 86_400_000), privateOfferStoppedAt: new Date() },
+    { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'NEW', createdAt: new Date(start + 2), publicRegionOnlyUntil: new Date(Date.now() + 20_000) },
+    { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'NEW', createdAt: new Date(start + 3), privateOfferDriverId: driver.id, privateOfferExpiresAt: new Date(Date.now() + 20_000) }
+  ] });
+  const result = (await request('/admin/overview/today', adminToken)).data;
+  assert.equal(result.cohort.created, 3);
+  assert.equal(result.cohort.unfinished, 3);
+  assert.deepEqual({ publicOrders: result.waiting.publicOrders, privateReservations: result.waiting.privateReservations }, { publicOrders: 1, privateReservations: 1 });
+  const expectedOldest = (Date.parse(result.asOf) - (start + 2)) / 1000;
+  assert.ok(Math.abs(result.waiting.oldestSeconds - expectedOldest) < 0.01);
+});
