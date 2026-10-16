@@ -65,23 +65,24 @@ async function listDistrictsWithStats() {
   }));
 }
 
-// Prefers a real drawn boundary (see the admin "Границы районов" editor,
-// admin.service.js#updateDistrictBoundary) over the older nearest-center
-// guess - a point actually inside a district's polygon wins regardless of
-// which center it's closer to. Falls back to nearest-center for any point
-// no polygon claims, so districts without a drawn boundary yet (or a point
-// genuinely outside all of them) still resolve to *something*, exactly as
-// before this function existed.
+// Driver GPS uses saved dispatch polygons only. A nearby center is not
+// evidence that a position belongs to that region.
+async function findDistrictForGpsPoint(lat, lng) {
+  const districts = await prisma.district.findMany({
+    where: { isActive: true },
+    select: { id: true, centerLat: true, centerLng: true, boundary: true }
+  });
+  return findDistrictByBoundary(districts, { lat, lng });
+}
+
+// Retain the inherited nearest-center interface for callers that explicitly
+// request that fallback. Driver location must use findDistrictForGpsPoint.
 async function findNearestDistrictForPoint(lat, lng) {
   const districts = await prisma.district.findMany({
     where: { isActive: true },
     select: { id: true, centerLat: true, centerLng: true, boundary: true }
   });
-  const point = { lat, lng };
-  const byBoundary = findDistrictByBoundary(districts, point);
-  if (byBoundary) return byBoundary;
-  const result = findNearestDistrict(districts, point);
-  return result ? result.district : null;
+  return findDistrictByBoundary(districts, { lat, lng }) || findNearestDistrict(districts, { lat, lng })?.district || null;
 }
 
 // Called after anything that can change a district's card: an order
@@ -99,4 +100,4 @@ async function broadcastDistrictStats() {
   }
 }
 
-module.exports = { listDistrictsWithStats, findNearestDistrictForPoint, broadcastDistrictStats };
+module.exports = { listDistrictsWithStats, findDistrictForGpsPoint, findNearestDistrictForPoint, broadcastDistrictStats };

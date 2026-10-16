@@ -57,8 +57,8 @@ function emitToInterestedRooms(driver, event, payload) {
 async function updateLocation(driver, data) {
   const { lat, lng, heading, speed, accuracy } = data;
 
-  const nearest = await districtsService.findNearestDistrictForPoint(lat, lng);
-  const newDistrictId = nearest ? nearest.id : driver.districtId;
+  const nearest = await districtsService.findDistrictForGpsPoint(lat, lng);
+  const newDistrictId = nearest?.id ?? null;
   const districtChanged = newDistrictId !== driver.districtId;
 
   const [updatedDriver] = await prisma.$transaction([
