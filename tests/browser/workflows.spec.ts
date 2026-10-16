@@ -2944,7 +2944,7 @@ test("monitoring keeps a claimed driver busy across delayed snapshots and reconn
     await expect(
       admin.getByRole("button", { name: "Предложить заказ", exact: true }),
     ).toBeDisabled();
-    releaseSnapshot();
+    releaseSnapshot?.();
     await finishedSnapshot;
     await admin.unroute("**/api/admin/drivers?**");
     await expect(row).toContainText("В поездке");
