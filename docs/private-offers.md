@@ -6,7 +6,7 @@ Private offers require an approved, online, idle driver with a fresh GPS report 
 
 The server reserves the order for 20 seconds and persists the deadline. Only the selected driver can explicitly accept it. Reserving the order does not charge the balance or reveal the customer phone. Successful acceptance charges the quoted TMT price once, reveals the phone and continues through the existing accepted → waiting → started → completed trip controls.
 
-Declining or reaching the deadline releases the order to its original region's public queue. A late private response cannot accept or decline a later reservation. Dispatcher cancellation dismisses the private offer immediately. Public claims, reservations and private acceptance compete through conditional order writes and a driver row lock.
+A normal public order is available in its original region for its persisted first 20 seconds, then expands to every active region. Declining a private offer releases it immediately to its original region's public queue, retaining the original private deadline rather than starting another timer. At that fixed 20-second deadline (including after an early decline), the dispatcher-selected **Предложить другим водителям после 20 секунд** policy decides what happens: ON (the default) emits the public order simultaneously to every active region; OFF stops private delivery without exposing it to driver queues, while leaving the order unassigned for dispatcher follow-up. A late private response cannot accept or decline a later reservation. Dispatcher cancellation dismisses the private offer immediately. Public claims, reservations and private acceptance compete through conditional order writes and a driver row lock; the first public claim wins globally regardless of region.
 
 ```mermaid
 stateDiagram-v2
@@ -14,7 +14,9 @@ stateDiagram-v2
   [*] --> Reserved: private creation
   Public --> Reserved: dispatcher selects eligible driver
   Reserved --> Accepted: selected driver confirms before deadline
-  Reserved --> Public: decline or 20-second expiry
+  Reserved --> Public: decline
+  Reserved --> Public: expiry + expansion ON
+  Reserved --> Unassigned: expiry + expansion OFF
   Public --> Accepted: eligible driver claims
   Public --> Cancelled: dispatcher cancels
   Reserved --> Cancelled: dispatcher cancels
@@ -30,6 +32,7 @@ This delivery works while the browser is running and connected. Native backgroun
 ## Public contracts
 
 - Admin order creation accepts optional `privateOfferDriverId`.
+- Admin order creation accepts optional `broadcastAfterPrivateExpiry` (defaults to `true`); the fixed private deadline is always 20 seconds.
 - `POST /admin/orders/:id/private-offer` takes `{ driverId }`.
 - `GET /orders/private-offer` returns the selected driver's current safe offer or `null`; fresh GPS and online status are required.
 - `POST /orders/private-offer/accept` takes `{ orderId, privateOfferExpiresAt, etaMinutes? }`.
@@ -40,6 +43,6 @@ The original deadline identifies a reservation. Public acceptance cannot bypass 
 
 ## Migration and verification
 
-The additive migration adds nullable reservation columns, a driver foreign key and a partial unique index allowing one NEW reservation per driver. Existing orders remain public. Roll back application code before dropping columns through a later forward migration; expire outstanding reservations first. No canonical region geometry changes.
+The additive migration adds the expansion policy and stopped-at marker alongside the reservation columns, driver foreign key and partial unique index allowing one NEW reservation per driver. Existing orders default to expansion and remain public. Roll back application code before dropping columns through a later forward migration; expire outstanding reservations first. No canonical region geometry changes.
 
 HTTP and Socket.IO tests use disposable PostgreSQL and cover persisted deadlines, real-time expiry, recovery, phone privacy, no preacceptance debit, cross-region eligibility, decline, stale responses, cancellation and concurrent claims/reservations. Browser workflows cover private creation and trip completion, map-selected existing-order offers, reconnect and decline. Delayed-response and skewed-phone-clock browser cases guard reservation identity and the countdown. Native delivery is not exercised by these tests.

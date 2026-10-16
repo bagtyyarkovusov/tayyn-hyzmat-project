@@ -1229,7 +1229,9 @@ test("regional queues and counts recover through updates, reconnect and reload",
       await dispatcher.request.get("/api/districts", { headers })
     ).json();
     const other = regions.find(
-      (r: { id: string }) => r.id !== process.env.TEST_REGION_ID,
+      // This recovery test uses the driver's initial regional window.
+      // Cross-region deadline/claim behavior has dedicated API/socket coverage.
+      (r: { id: string }) => r.id === process.env.TEST_REGION_ID,
     );
     const card = driver
       .getByRole("group", { name: "Регионы", exact: true })
@@ -1340,7 +1342,7 @@ test("regional queues and counts recover through updates, reconnect and reload",
     await test.step("an older HTTP snapshot cannot replace newer live counts", async () => {
       let release = () => {};
       try {
-        await expect(card.getByText("0:0", { exact: true })).toBeVisible();
+        await expect(card.getByText("1:0", { exact: true })).toBeVisible();
         let captured = () => {};
         const ready = new Promise<void>((r) => {
           captured = r;
@@ -1373,7 +1375,18 @@ test("regional queues and counts recover through updates, reconnect and reload",
         });
         expect(response.ok()).toBe(true);
         const order = await response.json();
-        await expect(card.getByText("0:1", { exact: true })).toBeVisible();
+        // The driver's own-region order opens the normal incoming-offer modal.
+        // Dismiss it so the background region card is observable for the
+        // stale-HTTP-snapshot assertion below.
+        const incoming = driver.getByRole("dialog", {
+          name: "Предложение заказа",
+          exact: true,
+        });
+        await expect(incoming).toBeVisible();
+        await incoming
+          .getByRole("button", { name: "Скрыть предложение", exact: true })
+          .click();
+        await expect(card.getByText("1:1", { exact: true })).toBeVisible();
         const refreshed = driver.waitForResponse("**/api/districts");
         release();
         await (await refreshed).finished();
@@ -1385,7 +1398,7 @@ test("regional queues and counts recover through updates, reconnect and reload",
               ),
             ),
         );
-        await expect(card.getByText("0:1", { exact: true })).toBeVisible();
+        await expect(card.getByText("1:1", { exact: true })).toBeVisible();
         expect(
           (
             await dispatcher.request.post(
@@ -1397,7 +1410,7 @@ test("regional queues and counts recover through updates, reconnect and reload",
             )
           ).ok(),
         ).toBe(true);
-        await expect(card.getByText("0:0", { exact: true })).toBeVisible();
+        await expect(card.getByText("1:0", { exact: true })).toBeVisible();
       } finally {
         release();
       }

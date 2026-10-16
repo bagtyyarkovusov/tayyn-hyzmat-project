@@ -22,7 +22,9 @@ Driver and dispatcher chat keep the app header, composer and navigation inside t
 
 Drivers need a positive synthetic balance to go online or receive public work. A positive balance does not hide orders priced above it: those orders remain visible with acceptance disabled and a top-up explanation. Acceptance requires enough balance for the full quoted TMT charge and cannot make the balance negative; an exact balance is sufficient. Private creation and reoffers check the selected driver's balance against the actual order quote, and acceptance rechecks it. Reservations do not charge or hold funds. Inherited unpriced orders retain their no-debit behavior and still require a positive balance for acceptance. Zero balance never removes accepted-trip controls or cancels a trip.
 
-Private offers follow the [private-offer flow](private-offers.md): an eligible driver in any region explicitly confirms within a persisted 20-second deadline. Decline or expiry releases the order to its original regional public queue. Reservations alone do not charge balances or expose customer phones.
+Public orders are limited to their original region for the first persisted 20 seconds, then expand simultaneously to all active regions. Saved release state gates HTTP queues, claims and the native notification inbox; claiming or cancelling removes the offer for all viewers.
+
+Private offers follow the [private-offer flow](private-offers.md): an eligible driver in any region explicitly confirms within a persisted 20-second deadline. The dispatcher chooses whether expiry stops delivery or simultaneously releases the order to every eligible region; the default is release. Public claims are global once released, and the first atomic claim wins. Reservations alone do not charge balances or expose customer phones.
 
 ## Unresolved questions
 

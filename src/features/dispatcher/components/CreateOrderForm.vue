@@ -32,6 +32,7 @@ const form = reactive({
   clientPhone: "+993",
   priceEstimated: "",
   note: "",
+  broadcastAfterPrivateExpiry: true,
 });
 let map: any,
   marker: any,
@@ -191,6 +192,27 @@ async function submit() {
         :price-estimated="form.priceEstimated"
         :disabled="pending"
       />
+      <label
+        v-if="mode === 'private'"
+        for="broadcast-after-private-expiry"
+        class="flex items-start gap-3 rounded-md border border-border/70 p-3 text-sm"
+      >
+        <input
+          id="broadcast-after-private-expiry"
+          v-model="form.broadcastAfterPrivateExpiry"
+          type="checkbox"
+          class="mt-0.5 size-4 accent-primary"
+          :disabled="pending"
+        />
+        <span>
+          <span class="font-medium"
+            >Предложить другим водителям после 20 секунд</span
+          >
+          <span class="mt-0.5 block text-xs text-muted-foreground">
+            При включении заказ одновременно появится во всех доступных районах.
+          </span>
+        </span>
+      </label>
     </fieldset>
     <div class="grid gap-4 sm:grid-cols-2">
       <div class="space-y-2">

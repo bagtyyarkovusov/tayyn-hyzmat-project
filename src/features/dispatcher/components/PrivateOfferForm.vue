@@ -11,6 +11,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ offered: [] }>();
 const driverId = ref(props.initialDriverId ?? "");
+const broadcastAfterPrivateExpiry = ref(true);
 const pending = ref(false),
   error = ref("");
 let disposed = false;
@@ -25,6 +26,7 @@ async function submit() {
   try {
     await adminApi.post(`/admin/orders/${props.orderId}/private-offer`, {
       driverId: driverId.value,
+      broadcastAfterPrivateExpiry: broadcastAfterPrivateExpiry.value,
     });
     if (!disposed && userId === adminSession.state.user?.id) emit("offered");
   } catch (cause) {
@@ -43,6 +45,26 @@ async function submit() {
       :price-estimated="priceEstimated"
       :disabled="pending"
     />
+    <label
+      for="broadcast-after-private-expiry-existing"
+      class="flex items-start gap-3 rounded-md border border-border/70 p-3 text-sm"
+    >
+      <input
+        id="broadcast-after-private-expiry-existing"
+        v-model="broadcastAfterPrivateExpiry"
+        type="checkbox"
+        class="mt-0.5 size-4 accent-primary"
+        :disabled="pending"
+      />
+      <span>
+        <span class="font-medium"
+          >Предложить другим водителям после 20 секунд</span
+        >
+        <span class="mt-0.5 block text-xs text-muted-foreground">
+          При включении заказ одновременно появится во всех доступных районах.
+        </span>
+      </span>
+    </label>
     <p v-if="error" role="alert" class="text-sm text-destructive">
       {{ error }}
     </p>

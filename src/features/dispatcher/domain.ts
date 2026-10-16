@@ -78,6 +78,8 @@ export interface Order {
     createdAt: string;
     actor?: { fullName: string };
   }[];
+  broadcastAfterPrivateExpiry?: boolean;
+  privateOfferStoppedAt?: string | null;
 }
 export interface Message {
   id: string;
