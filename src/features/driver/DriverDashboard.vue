@@ -154,9 +154,12 @@ watch(
   },
 );
 watch(
-  () => state.gpsReady,
-  (ready) => {
-    if (!ready) selected.value = null;
+  () => state.profile?.isOnline,
+  (online) => {
+    // Keep the selected queue through a transient connection/GPS sync loss so
+    // it can recover live when readiness returns. Close it only after the
+    // driver actually leaves the line.
+    if (!online) selected.value = null;
   },
 );
 const tripOpen = ref(false);
