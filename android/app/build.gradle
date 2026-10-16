@@ -45,6 +45,12 @@ android {
         }
     }
     buildTypes {
+        debug {
+            applicationIdSuffix ".test"
+            versionNameSuffix "-test"
+            resValue "string", "app_name", "Tayyn Hyzmat Test"
+            resValue "string", "title_activity_main", "Tayyn Hyzmat Test"
+        }
         release {
             // R8 code shrinking + obfuscation, and unused-resource removal -
             // both meaningfully cut the final APK size and, since R8 renames
