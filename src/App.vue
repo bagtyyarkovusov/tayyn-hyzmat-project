@@ -419,6 +419,12 @@ async function logout() {
     padding: 0 1.5rem;
   }
 }
+/* The sidebar owns dispatcher branding whenever it is visible. */
+@media (min-width: 761px) {
+  .workspace:not(.driver-workspace) .workspace-header .brand-lockup {
+    display: none;
+  }
+}
 @media (max-width: 760px) {
   .sidebar {
     display: none;
