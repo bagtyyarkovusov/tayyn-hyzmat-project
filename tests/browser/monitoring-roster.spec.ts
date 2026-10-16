@@ -128,6 +128,19 @@ test("monitoring loads beyond a hundred drivers and keeps a compact searchable r
   });
   await expect(roster.getByRole("status")).toContainText("из 108");
   await expect(roster.getByRole("button")).toHaveCount(108);
+  const regionFilter = roster.getByLabel("Район", { exact: true });
+  await expect
+    .poll(() => regionFilter.locator("option").count())
+    .toBeGreaterThan(3);
+  const configuredRegion = await regionFilter
+    .getByRole("option", { name: "ТЕСТ · Мир", exact: true })
+    .getAttribute("value");
+  expect(configuredRegion).toBeTruthy();
+  await regionFilter.selectOption(configuredRegion!);
+  await expect(
+    roster.getByText("Водители не найдены", { exact: true }),
+  ).toBeVisible();
+  await roster.getByRole("button", { name: "Сбросить фильтры" }).click();
   const row = roster.getByRole("button", {
     name: /Monitoring roster fixture 001/,
   });
@@ -246,4 +259,41 @@ test("fresh GPS updates preserve selected driver, focused search and availabilit
     await expect(focused).toBeFocused();
   }
   expect(before).toHaveLength(0);
+});
+
+test("all saved regions stay selectable when every driver is offline outside regions", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.route("**/admin/drivers?**", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.items = body.items.map((driver: Record<string, unknown>) => ({
+      ...driver,
+      isOnline: false,
+      district: null,
+    }));
+    await route.fulfill({ response, json: body });
+  });
+  await login(page);
+  const roster = page.getByRole("region", {
+    name: "Список водителей",
+    exact: true,
+  });
+  const regions = roster.getByLabel("Район", { exact: true });
+  await expect(
+    regions.getByRole("option", { name: "ТЕСТ · Мир", exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    regions.getByRole("option", { name: "Вне районов", exact: true }),
+  ).toHaveCount(1);
+  const emptyRegion = await regions
+    .getByRole("option", { name: "ТЕСТ · Мир", exact: true })
+    .getAttribute("value");
+  await regions.selectOption(emptyRegion!);
+  await expect(
+    roster.getByText("Водители не найдены", { exact: true }),
+  ).toBeVisible();
+  await regions.selectOption("outside");
+  await expect(roster.getByRole("status")).toContainText("Показано 108 из 108");
 });
