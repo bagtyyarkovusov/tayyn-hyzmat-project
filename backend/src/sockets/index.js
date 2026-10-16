@@ -91,15 +91,17 @@ function initSockets(httpServer) {
   io.use(socketAuthMiddleware);
 
   io.on('connection', async (socket) => {
+    const { role, id: userId } = socket.data.user;
+    // Join the revocation audience before revalidation: either the concurrent
+    // sweep sees this socket or this query observes its revoked generation.
+    socket.join(rooms.user(userId));
     try { await validateCredentialSession(socket.data.credentials); }
     catch { socket.disconnect(true); return; }
     socket.use(async (_packet, next) => {
       try { await validateCredentialSession(socket.data.credentials); next(); }
       catch { socket.disconnect(true); }
     });
-    const { role, id: userId } = socket.data.user;
     logger.debug({ userId, role, socketId: socket.id }, 'Socket connected');
-    socket.join(rooms.user(userId));
 
     if (role === 'DRIVER') {
       handleDriverConnection(socket).catch((err) => {
