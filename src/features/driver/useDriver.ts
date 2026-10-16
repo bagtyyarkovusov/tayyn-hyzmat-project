@@ -87,7 +87,15 @@ function receivePrivateOffer(order: Order, sound = true) {
   )
     return;
   const expiresAt = Date.parse(order.privateOfferExpiresAt);
-  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return;
+  const remainingMs = order.privateOfferRemainingMs;
+  if (
+    !Number.isFinite(expiresAt) ||
+    typeof remainingMs !== "number" ||
+    !Number.isFinite(remainingMs) ||
+    remainingMs <= 0
+  )
+    return;
+  const until = performance.now() + Math.min(20_000, remainingMs);
   if (
     state.incoming?.id === order.id &&
     state.incoming.privateOfferExpiresAt === order.privateOfferExpiresAt
@@ -98,7 +106,7 @@ function receivePrivateOffer(order: Order, sound = true) {
   const tick = () => {
     state.offerSeconds = Math.max(
       0,
-      Math.ceil((expiresAt - Date.now()) / 1000),
+      Math.ceil((until - performance.now()) / 1000),
     );
     if (!state.offerSeconds) dismissIncoming();
   };
@@ -135,7 +143,11 @@ async function declinePrivateOffer() {
       privateOfferExpiresAt,
     });
     if (generation !== sessionGeneration) return;
-    dismissIncoming();
+    if (
+      state.incoming?.id === orderId &&
+      state.incoming.privateOfferExpiresAt === privateOfferExpiresAt
+    )
+      dismissIncoming();
     await refresh();
   });
 }
@@ -400,7 +412,14 @@ function start() {
   on("order:private-offer", (payload) => receivePrivateOffer(payload as Order));
   on("order:private-offer-ended", (payload) => {
     offerVersion++;
-    if (state.incoming?.id === (payload as { orderId: string }).orderId)
+    const ended = payload as {
+      orderId: string;
+      privateOfferExpiresAt?: string;
+    };
+    if (
+      state.incoming?.id === ended.orderId &&
+      state.incoming.privateOfferExpiresAt === ended.privateOfferExpiresAt
+    )
       dismissIncoming();
     void refresh();
   });

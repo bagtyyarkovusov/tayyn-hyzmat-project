@@ -23,7 +23,7 @@ stateDiagram-v2
   Started --> Completed: trip finishes
 ```
 
-Socket.IO delivers private offers to the selected driver's room. HTTP recovery returns the same persisted deadline after reconnect. Full browser reload retains the reservation on the server, but the existing GPS rule requires enabling GPS and going online again before recovering available work. Reload never extends the deadline. Server expiry is checked during actions and by a one-second sweep; after a server restart the sweep releases elapsed reservations.
+Socket.IO delivers private offers to the selected driver's room. HTTP recovery returns the same persisted deadline after reconnect. Full browser reload retains the reservation on the server, but the existing GPS rule requires enabling GPS and going online again before recovering available work. Reload never extends the deadline. The response includes the server-computed remaining duration; the browser counts down with a monotonic clock, so a wrong phone clock does not discard a valid offer. Server expiry is checked during actions and by a one-second sweep; after a server restart the sweep releases elapsed reservations.
 
 This delivery works while the browser is running and connected. Native background delivery and locked-phone availability remain separate APK work. The audit also tracks unrelated authentication, stale-request and trip/refund concurrency gaps; this feature does not establish APK release readiness.
 
@@ -34,7 +34,7 @@ This delivery works while the browser is running and connected. Native backgroun
 - `GET /orders/private-offer` returns the selected driver's current safe offer or `null`; fresh GPS and online status are required.
 - `POST /orders/private-offer/accept` takes `{ orderId, privateOfferExpiresAt, etaMinutes? }`.
 - `POST /orders/private-offer/decline` takes `{ orderId, privateOfferExpiresAt }`.
-- `order:private-offer` contains safe order information and the ISO `privateOfferExpiresAt` deadline; `order:private-offer-ended` contains `{ orderId }`.
+- `order:private-offer` contains safe order information and the ISO `privateOfferExpiresAt` deadline and `privateOfferRemainingMs`; `order:private-offer-ended` contains `{ orderId, privateOfferExpiresAt }`.
 
 The original deadline identifies a reservation. Public acceptance cannot bypass an active reservation, including for its selected driver. No preacceptance HTTP or driver socket payload contains `clientPhone`.
 
@@ -42,4 +42,4 @@ The original deadline identifies a reservation. Public acceptance cannot bypass 
 
 The additive migration adds nullable reservation columns, a driver foreign key and a partial unique index allowing one NEW reservation per driver. Existing orders remain public. Roll back application code before dropping columns through a later forward migration; expire outstanding reservations first. No canonical region geometry changes.
 
-HTTP and Socket.IO tests use disposable PostgreSQL and cover persisted deadlines, real-time expiry, recovery, phone privacy, no preacceptance debit, cross-region eligibility, decline, stale responses, cancellation and concurrent claims/reservations. Browser workflows cover private creation and trip completion, map-selected existing-order offers, reconnect and decline. Native delivery is not exercised by these tests.
+HTTP and Socket.IO tests use disposable PostgreSQL and cover persisted deadlines, real-time expiry, recovery, phone privacy, no preacceptance debit, cross-region eligibility, decline, stale responses, cancellation and concurrent claims/reservations. Browser workflows cover private creation and trip completion, map-selected existing-order offers, reconnect and decline. Delayed-response and skewed-phone-clock browser cases guard reservation identity and the countdown. Native delivery is not exercised by these tests.

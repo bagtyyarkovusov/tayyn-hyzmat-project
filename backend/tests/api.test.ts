@@ -456,12 +456,13 @@ test('declining a private offer releases it publicly and an old response cannot 
 test('private offer deadline survives recovery and expires to its regional queue without a debit', async () => {
   const driver = (await request('/driver/profile', otherToken)).data;
   const target = await socket(otherToken);
-  const received = nextSocketEvent<{ id: string; privateOfferExpiresAt: string; clientPhone?: string }>(target, 'order:private-offer');
+  const received = nextSocketEvent<{ id: string; privateOfferExpiresAt: string; privateOfferRemainingMs: number; clientPhone?: string }>(target, 'order:private-offer');
   const created = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: driver.id });
   assert.equal(created.status, 201);
   const notification = await received;
   assert.equal(notification.id, created.data.id);
   assert.equal(notification.clientPhone, undefined);
+  assert.ok(notification.privateOfferRemainingMs > 18_000 && notification.privateOfferRemainingMs <= 20_000);
   const deadline = notification.privateOfferExpiresAt;
   assert.ok(Date.parse(deadline) - Date.now() <= 20_000);
   assert.ok(Date.parse(deadline) - Date.now() > 18_000);
@@ -469,9 +470,10 @@ test('private offer deadline survives recovery and expires to its regional queue
   const recovered = await request('/orders/private-offer', otherToken);
   assert.equal(recovered.data.privateOfferExpiresAt, deadline);
   const reconnected = await socket(otherToken);
-  const ended = nextSocketEvent<{ orderId: string }>(reconnected, 'order:private-offer-ended', 23_000);
+  const ended = nextSocketEvent<{ orderId: string; privateOfferExpiresAt: string }>(reconnected, 'order:private-offer-ended', 23_000);
   const end = await ended;
   assert.equal(end.orderId, created.data.id);
+  assert.equal(end.privateOfferExpiresAt, deadline);
   assert.equal((await request('/orders/private-offer', otherToken)).data, null);
   assert.equal((await request('/orders/private-offer/accept', otherToken, { orderId: created.data.id, privateOfferExpiresAt: deadline })).status, 409);
   assert.equal((await request(`/orders/available?districtId=${regionId}`, driverToken)).data[0].id, created.data.id);

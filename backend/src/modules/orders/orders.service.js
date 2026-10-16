@@ -128,7 +128,10 @@ async function lockDriver(tx, driverId) {
 }
 
 function safePrivateOffer(order) {
-  return Object.fromEntries(Object.keys(AVAILABLE_ORDER_SELECT).map(key => [key, order[key]]));
+  return {
+    ...Object.fromEntries(Object.keys(AVAILABLE_ORDER_SELECT).map(key => [key, order[key]])),
+    privateOfferRemainingMs: order.privateOfferExpiresAt ? Math.max(0, order.privateOfferExpiresAt.getTime() - Date.now()) : 0
+  };
 }
 
 async function assertPrivateOfferDriver(tx, driverId) {
@@ -157,7 +160,7 @@ async function expirePrivateOffers() {
 async function publishPrivateRelease(order) {
   await refreshOrderRecipients();
   safeEmit(io => {
-    io.to(rooms.driver(order.privateOfferDriverId)).emit('order:private-offer-ended', { orderId: order.id });
+    io.to(rooms.driver(order.privateOfferDriverId)).emit('order:private-offer-ended', { orderId: order.id, privateOfferExpiresAt: order.privateOfferExpiresAt });
     if (order.districtId) io.to(rooms.district(order.districtId)).emit('order:new', { ...safePrivateOffer(order), privateOfferExpiresAt: null });
     io.to(rooms.admins()).emit('order:updated', { ...order, privateOfferDriverId: null, privateOfferExpiresAt: null });
   });
@@ -168,7 +171,8 @@ async function getPrivateOffer(driver) {
   await expirePrivateOffers();
   // Offline/GPS expiry must not expose any new work, even via recovery.
   assertOrderEligibility(driver);
-  return prisma.order.findFirst({ where: { status: 'NEW', privateOfferDriverId: driver.id, privateOfferExpiresAt: { gt: new Date() } }, select: AVAILABLE_ORDER_SELECT });
+  const offer = await prisma.order.findFirst({ where: { status: 'NEW', privateOfferDriverId: driver.id, privateOfferExpiresAt: { gt: new Date() } }, select: AVAILABLE_ORDER_SELECT });
+  return offer ? safePrivateOffer(offer) : null;
 }
 
 async function offerPrivately(orderId, driverId) {
@@ -269,7 +273,7 @@ async function accept(orderId, driver, etaMinutes, privateOfferExpiresAt) {
   });
 
   safeEmit((io) => {
-    io.to(rooms.driver(driver.id)).emit('order:private-offer-ended', { orderId: order.order.id });
+    io.to(rooms.driver(driver.id)).emit('order:private-offer-ended', { orderId: order.order.id, privateOfferExpiresAt });
     io.to(rooms.admins()).emit('order:accepted', order.order);
     io.to(rooms.order(order.order.id)).emit('order:accepted', order.order);
     // Tell every other driver watching this district that the order is gone.
@@ -517,7 +521,7 @@ async function adminCancel(orderId, reason) {
   });
 
   safeEmit((io) => {
-    if (result.order.privateOfferDriverId) io.to(rooms.driver(result.order.privateOfferDriverId)).emit('order:private-offer-ended', { orderId });
+    if (result.order.privateOfferDriverId) io.to(rooms.driver(result.order.privateOfferDriverId)).emit('order:private-offer-ended', { orderId, privateOfferExpiresAt: result.order.privateOfferExpiresAt });
     io.to(rooms.admins()).emit('order:cancelled', result.order);
     io.to(rooms.order(result.order.id)).emit('order:cancelled', result.order);
     if (order.driverId) {

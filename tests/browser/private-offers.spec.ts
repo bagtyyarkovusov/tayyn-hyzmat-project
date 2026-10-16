@@ -259,3 +259,137 @@ test("map-selected driver recovers a missed private offer on reconnect and decli
     await close();
   }
 });
+
+async function createPrivateOrder(
+  dispatcher: Page,
+  driverId: string,
+  pickupAddress: string,
+) {
+  const token = await dispatcher.evaluate(() =>
+    localStorage.getItem("openride.admin.accessToken"),
+  );
+  const headers = { Authorization: `Bearer ${token}` };
+  const response = await dispatcher.request.post("/api/admin/orders", {
+    headers,
+    data: {
+      districtId: process.env.TEST_REGION_ID,
+      clientPhone: "+99365000999",
+      priceEstimated: 10,
+      pickupAddress,
+      privateOfferDriverId: driverId,
+    },
+  });
+  expect(response.ok()).toBe(true);
+  return { ...(await response.json()), headers };
+}
+
+test("a phone clock 30 seconds ahead still shows the server confirmation window", async ({
+  browser,
+}) => {
+  const { dispatcher, driver, driverId, close } = await actors(browser);
+  let created: Awaited<ReturnType<typeof createPrivateOrder>> | undefined;
+  try {
+    await dispatcher.goto("/adminOrders");
+    await driver.clock.install();
+    await driver.clock.setSystemTime(new Date(Date.now() + 30_000));
+    created = await createPrivateOrder(
+      dispatcher,
+      driverId,
+      "Подача с другим временем",
+    );
+    const incoming = driver.getByRole("dialog", {
+      name: "Предложение заказа",
+      exact: true,
+    });
+    await expect(
+      incoming.getByRole("heading", { name: "Личное предложение" }),
+    ).toBeVisible();
+    await expect(incoming.getByRole("timer")).toHaveText(/(?:1[0-9]|20) сек/);
+    await incoming
+      .getByRole("button", { name: "Принять заказ", exact: true })
+      .click();
+    await expect(
+      driver.getByRole("dialog", { name: "Управление поездкой", exact: true }),
+    ).toBeVisible();
+  } finally {
+    if (created)
+      await dispatcher.request.post(`/api/admin/orders/${created.id}/cancel`, {
+        headers: created.headers,
+        data: {},
+      });
+    await close();
+  }
+});
+
+test("a delayed decline response leaves the newer private offer visible", async ({
+  browser,
+}) => {
+  const { dispatcher, driver, driverId, close } = await actors(browser);
+  const created: Awaited<ReturnType<typeof createPrivateOrder>>[] = [];
+  let releaseDecline!: () => void, declineCommitted!: () => void;
+  const declineGate = new Promise<void>((resolve) => {
+    releaseDecline = resolve;
+  });
+  const committed = new Promise<void>((resolve) => {
+    declineCommitted = resolve;
+  });
+  let releaseRecovery!: () => void, recoveryStarted!: () => void;
+  const recoveryGate = new Promise<void>((resolve) => {
+    releaseRecovery = resolve;
+  });
+  const recovering = new Promise<void>((resolve) => {
+    recoveryStarted = resolve;
+  });
+  try {
+    await dispatcher.goto("/adminOrders");
+    created.push(
+      await createPrivateOrder(dispatcher, driverId, "Первое предложение"),
+    );
+    const incoming = driver.getByRole("dialog", {
+      name: "Предложение заказа",
+      exact: true,
+    });
+    await expect(
+      incoming.getByText("Первое предложение", { exact: true }),
+    ).toBeVisible();
+    await driver.route("**/orders/private-offer/decline", async (route) => {
+      const response = await route.fetch();
+      declineCommitted();
+      await declineGate;
+      await route.fulfill({ response });
+    });
+    await incoming
+      .getByRole("button", { name: "Отказаться", exact: true })
+      .click();
+    await committed;
+    created.push(
+      await createPrivateOrder(dispatcher, driverId, "Новое предложение"),
+    );
+    await expect(
+      incoming.getByText("Новое предложение", { exact: true }),
+    ).toBeVisible();
+    // Delay only transport recovery. The latest visible offer must survive the old response.
+    await driver.route("**/orders/private-offer", async (route) => {
+      recoveryStarted();
+      await recoveryGate;
+      await route.continue();
+    });
+    releaseDecline();
+    await recovering;
+    await expect(
+      incoming.getByText("Новое предложение", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      incoming.getByRole("heading", { name: "Личное предложение" }),
+    ).toBeVisible();
+  } finally {
+    releaseDecline();
+    releaseRecovery();
+    for (const order of created)
+      await dispatcher.request.post(`/api/admin/orders/${order.id}/cancel`, {
+        headers: order.headers,
+        data: {},
+      });
+    await close();
+  }
+});
