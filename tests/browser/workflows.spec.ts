@@ -544,11 +544,46 @@ test("driver and dispatcher exchange real messages across separate role sessions
 
     // A long message exercises internal history scrolling through the real message endpoint.
     const longMessage = "История\n" + "Строка сообщения\n".repeat(40);
-    await dispatcher.getByLabel("Сообщение водителю").fill(longMessage);
-    await dispatcher.getByLabel("Сообщение водителю").press("Enter");
-    await expect(
-      driver.getByText(longMessage.trim(), { exact: true }),
-    ).toBeVisible();
+    let releaseLongMessage!: () => void;
+    const longMessageResponse = new Promise<void>((resolve) => {
+      releaseLongMessage = resolve;
+    });
+    await dispatcher.route("**/api/admin/messages", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      const response = await route.fetch();
+      await longMessageResponse;
+      await route.fulfill({ response });
+    });
+    const sendingHistory = dispatcher.getByRole("region", {
+      name: "Переписка",
+    });
+    try {
+      await dispatcher.getByLabel("Сообщение водителю").fill(longMessage);
+      await dispatcher.getByLabel("Сообщение водителю").press("Enter");
+      await expect(
+        driver.getByText(longMessage.trim(), { exact: true }),
+      ).toBeVisible();
+      await expect(
+        dispatcher.getByText(longMessage.trim(), { exact: true }),
+      ).toBeVisible();
+      // Socket delivery may beat the sender's HTTP response. Reading earlier
+      // history while that response is pending must win over its auto-scroll.
+      await sendingHistory.evaluate((el) => {
+        el.scrollTop = 0;
+        el.dispatchEvent(new Event("scroll"));
+      });
+    } finally {
+      releaseLongMessage();
+    }
+    await expect(dispatcher.getByLabel("Сообщение водителю")).toHaveJSProperty(
+      "readOnly",
+      false,
+    );
+    await expect(dispatcher.getByLabel("Сообщение водителю")).toHaveValue("");
+    await expect
+      .poll(() => sendingHistory.evaluate((el) => el.scrollTop))
+      .toBeLessThan(10);
+    await dispatcher.unroute("**/api/admin/messages");
     const history = driver.getByRole("region", { name: "Переписка" });
     await history.evaluate((el) => {
       el.scrollTop = 0;
@@ -1582,6 +1617,11 @@ test("a transient GPS timeout keeps its blocker visible until an explicit retry 
         TIMEOUT: 3,
       }),
     );
+    window.addEventListener("synthetic-gps-watch-probe", () => {
+      window.dispatchEvent(
+        new CustomEvent("synthetic-gps-watch-ready", { detail: !!failure }),
+      );
+    });
   });
   await login(page, "driver");
   const token = await page.evaluate(() =>
@@ -1606,6 +1646,22 @@ test("a transient GPS timeout keeps its blocker visible until an explicit retry 
   await expect(
     page.getByRole("button", { name: "Уйти с линии", exact: true }),
   ).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        let ready = false;
+        window.addEventListener(
+          "synthetic-gps-watch-ready",
+          (event) => {
+            ready = (event as CustomEvent<boolean>).detail;
+          },
+          { once: true },
+        );
+        window.dispatchEvent(new Event("synthetic-gps-watch-probe"));
+        return ready;
+      }),
+    )
+    .toBe(true);
   await page.evaluate(() =>
     window.dispatchEvent(new Event("synthetic-gps-timeout")),
   );
