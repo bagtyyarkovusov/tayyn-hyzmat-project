@@ -16,11 +16,18 @@ const {
   districtBoundarySchema
 } = require('./admin.validation');
 const controller = require('./admin.controller');
+const credentials = require('./driver-credentials');
+const asyncHandler = require('../../utils/asyncHandler');
+const { z } = require('zod');
+const passwordSchema = z.object({ password: z.string().min(8).max(72).refine(value => Buffer.byteLength(value, 'utf8') <= 72, 'Пароль должен занимать не более 72 байт'), passwordConfirmation: z.string().min(8).max(128) }).strict().refine(value => value.password === value.passwordConfirmation, { message: 'Пароли не совпадают', path: ['passwordConfirmation'] });
+const profileSchema = z.object({ fullName: z.string().trim().min(2).max(120), phone: z.string().trim().regex(/^\+[1-9]\d{7,14}$/) }).strict();
 const { createOrderSchema, privateOfferSchema } = require('../orders/orders.validation');
 
 // Mounted in routes/index.js behind: authenticate, requireRole('ADMIN')
 const router = Router();
 
+router.post('/drivers/:id/password', validate({ params: driverIdParamSchema, body: passwordSchema }), asyncHandler(async (req, res) => { res.json(await credentials.resetDriverPassword(req.params.id, req.body.password)); }));
+router.post('/drivers/:id/profile', validate({ params: driverIdParamSchema, body: profileSchema }), asyncHandler(async (req, res) => { res.json(await credentials.updateDriverProfile(req.params.id, req.body)); }));
 router.post('/drivers', validate({ body: createDriverSchema }), controller.createDriver);
 router.get('/drivers', validate({ query: listDriversQuerySchema }), controller.listDrivers);
 router.get('/drivers/:id', validate({ params: driverIdParamSchema }), controller.getDriver);

@@ -145,7 +145,7 @@ async function logout() {
         <div class="flex min-w-0 items-center gap-3">
           <Truck v-if="driver" class="size-5 text-primary" /><span
             class="font-semibold"
-            >{{ driver ? "Тайын Хызмат" : "Диспетчерская" }}</span
+            >Tayyn Hyzmat</span
           ><span class="connection"
             ><i
               :class="{

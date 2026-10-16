@@ -55,10 +55,10 @@ async function submit() {
 </script>
 <template>
   <div class="auth-layout">
-    <section class="auth-story" aria-label="Тайын Хызмат">
+    <section class="auth-story" aria-label="Tayyn Hyzmat">
       <RouterLink to="/" class="brand"
         ><span class="brand-symbol">т</span
-        ><span>тайын хызмат</span></RouterLink
+        ><span>Tayyn Hyzmat</span></RouterLink
       >
       <div>
         <h1>
@@ -149,11 +149,6 @@ async function submit() {
             >{{ registering ? "Войти" : "Подать заявку" }}</RouterLink
           >
         </p>
-        <RouterLink
-          :to="isAdmin ? '/driverLogin' : '/adminLogin'"
-          class="mt-10 inline-block text-sm text-muted-foreground underline underline-offset-4"
-          >{{ isAdmin ? "Я водитель" : "Вход для диспетчера" }}</RouterLink
-        >
       </div>
     </section>
   </div>
