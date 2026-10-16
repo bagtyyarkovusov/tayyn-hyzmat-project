@@ -565,3 +565,30 @@ test('a same-region existing-order reservation removes the public offer only for
   assert.deepEqual(targetTaken, []);
   assert.equal((await request('/orders/private-offer', driverToken)).data.id, created.data.id);
 });
+
+test('a private acceptance blocked by database contention cannot cross the server deadline', async () => {
+  const driver = (await request('/driver/profile', otherToken)).data;
+  const created = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: driver.id });
+  assert.equal(created.status, 201);
+  // Fixture: move the already elapsed portion of the window forward, then
+  // hold a real database write lock to model a delayed competing operation.
+  const deadline = new Date(Date.now() + 1500);
+  await prisma.order.update({ where: { id: created.data.id }, data: { privateOfferExpiresAt: deadline } });
+  let release!: () => void, locked!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { locked = resolve; });
+  const blocker = prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM orders WHERE id = ${created.data.id} FOR UPDATE`;
+    locked();
+    await gate;
+  });
+  try {
+    await ready;
+    const accepting = request('/orders/private-offer/accept', otherToken, { orderId: created.data.id, privateOfferExpiresAt: deadline.toISOString() });
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    release();
+    await blocker;
+    assert.equal((await accepting).status, 409);
+    assert.equal((await request('/driver/balance', otherToken)).data.amount, '500');
+  } finally { release(); await blocker; }
+});

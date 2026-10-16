@@ -145,6 +145,7 @@ async function assertPrivateOfferDriver(tx, driverId) {
   ] } })) throw ApiError.conflict('У водителя уже есть заказ или предложение');
   const balance = await tx.balance.findUnique({ where: { userId: driver.userId } });
   if (!balance || !balance.amount.greaterThan(0)) throw ApiError.conflict('У водителя недостаточно средств');
+  return driver;
 }
 
 // Swept on every queue/offer action and once a second while the server runs.
@@ -178,7 +179,9 @@ async function getPrivateOffer(driver) {
 async function offerPrivately(orderId, driverId) {
   await expirePrivateOffers();
   const order = await prisma.$transaction(async tx => {
-    await assertPrivateOfferDriver(tx, driverId);
+    const driver = await assertPrivateOfferDriver(tx, driverId);
+    await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} FOR UPDATE`;
+    assertOrderEligibility(driver);
     const changed = await tx.order.updateMany({ where: { id: orderId, status: 'NEW', driverId: null, privateOfferDriverId: null }, data: { privateOfferDriverId: driverId, privateOfferExpiresAt: new Date(Date.now() + 20_000) } });
     if (!changed.count) throw ApiError.conflict('Заказ уже принят или предложен другому водителю');
     return tx.order.findUnique({ where: { id: orderId }, include: { district: true } });
@@ -238,6 +241,12 @@ async function accept(orderId, driver, etaMinutes, privateOfferExpiresAt) {
     if (existingActive) {
       throw ApiError.conflict('У вас уже есть активный заказ');
     }
+
+    // Evaluate time-sensitive eligibility only after any competing order
+    // write has completed. A bound timestamp captured before a row-lock wait
+    // must not let a queued acceptance cross the reservation deadline.
+    await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} FOR UPDATE`;
+    assertOrderEligibility(currentDriver);
 
     // Was district-restricted (districtId: driver.districtId in this
     // where clause) - a driver could only accept an order in their own
