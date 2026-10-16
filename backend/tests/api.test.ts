@@ -1401,7 +1401,7 @@ test('self-registration refreshes admin overview counts without exposing the app
   driver.on('driver:registered', payload => leaked.push(payload));
   try {
     const before = await request('/admin/overview', adminToken);
-    const registered = nextSocketEvent<{ driverId: string }>(admin, 'driver:registered', 750);
+    const registered = nextSocketEvent<{ driverId: string }>(admin, 'driver:registered');
     // Attach rejection handling immediately while the HTTP request is in flight.
     const notification = registered.then(value => ({ value }), error => ({ error }));
     const response = await request('/auth/register', '', {
