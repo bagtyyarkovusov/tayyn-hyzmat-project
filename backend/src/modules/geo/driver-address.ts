@@ -62,7 +62,7 @@ export async function driverAddress(actor: AddressActor, driverId: string) {
         lng: Number(previous.sourceLng),
       }) < 0.15
     )
-      return { address: previous.address } as const;
+      return { address: previous.address, resolvedAt: previous.attemptedAt.toISOString() } as const;
     if (
       previous &&
       (now.getTime() - previous.attemptedAt.getTime() < 300_000 ||
@@ -94,11 +94,11 @@ export async function driverAddress(actor: AddressActor, driverId: string) {
         cacheUntil: null,
       },
     });
-    return 'reserved' as const;
+    return { attemptedAt: now } as const;
   });
-  if (typeof reserved === 'object')
-    return { address: reserved.address, position, reason: 'cached' };
-  if (reserved !== 'reserved')
+  if (typeof reserved === 'object' && 'address' in reserved)
+    return { address: reserved.address, resolvedAt: reserved.resolvedAt, position, reason: 'cached' };
+  if (typeof reserved === 'string')
     return { address: null, position, reason: reserved };
   try {
     const address = await reverseAddress(position, config.key);
@@ -111,7 +111,7 @@ export async function driverAddress(actor: AddressActor, driverId: string) {
         },
       });
     // A success must not clear a concurrent failure/circuit breaker.
-    return { address, position, reason: 'resolved' };
+    return { address, resolvedAt: reserved.attemptedAt.toISOString(), position, reason: 'resolved' };
   } catch (error) {
     await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(58720314)`;

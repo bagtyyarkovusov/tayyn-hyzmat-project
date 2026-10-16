@@ -468,3 +468,22 @@ test('a hung provider times out and subsequent fleet demand falls back during ba
   );
   assert.equal(providerRequests.length, 1);
 });
+
+
+test('licensed cache replies preserve source age and retention cannot exceed five minutes', async () => {
+  process.env.YANDEX_GEOCODER_API_KEY = 'synthetic-private-geocoder';
+  process.env.YANDEX_GEOCODER_DAILY_LIMIT = '1000';
+  process.env.YANDEX_GEOCODER_QUOTA_TIMEZONE = 'UTC';
+  process.env.YANDEX_GEOCODER_CACHE_SECONDS = '300';
+  const initial = await request(`/geo/drivers/${driverId}/address`, driverToken);
+  assert.equal(initial.data.reason, 'resolved');
+  const sourceTime = new Date(Date.now() - 240_000);
+  await prisma.driverAddressState.update({ where: { driverId }, data: { attemptedAt: sourceTime } });
+  const cached = await request(`/geo/drivers/${driverId}/address`, adminToken);
+  assert.equal(cached.data.reason, 'cached');
+  assert.equal(cached.data.resolvedAt, sourceTime.toISOString());
+  assert.equal(providerRequests.length, 1);
+  process.env.YANDEX_GEOCODER_CACHE_SECONDS = '301';
+  assert.equal((await request(`/geo/drivers/${driverId}/address`, driverToken)).data.reason, 'unconfigured');
+  assert.equal(providerRequests.length, 1);
+});

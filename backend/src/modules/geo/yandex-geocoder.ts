@@ -17,7 +17,7 @@ export function geocoderConfig() {
   if (
     !Number.isInteger(cacheSeconds) ||
     cacheSeconds < 0 ||
-    cacheSeconds > 86_400
+    cacheSeconds > 300
   )
     return null;
   return { key, dailyLimit, timezone, resetHour, cacheSeconds };

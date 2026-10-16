@@ -7,6 +7,7 @@ interface Position {
 }
 interface AddressReply {
   address: string | null;
+  resolvedAt?: string;
   position: Position | null;
 }
 interface AddressApi {
@@ -81,12 +82,17 @@ export function useLocationAddress(
       const latest = position();
       if (!latest || !data.position || distance(latest, data.position) >= 150)
         return;
-      if (data.address) {
+      const resolvedAt = Date.parse(data.resolvedAt || "");
+      if (
+        data.address &&
+        Number.isFinite(resolvedAt) &&
+        Date.now() - resolvedAt < 300_000
+      ) {
         resolved = {
           driverId: id,
           point: data.position,
           address: data.address,
-          at: Date.now(),
+          at: resolvedAt,
         };
         address.value = data.address;
       }
