@@ -6,7 +6,12 @@ import { Label } from "@/shared/ui/label";
 import { Textarea } from "@/shared/ui/textarea";
 import { adminApi, errorMessage } from "@/shared/api";
 import { hasYandexMapsApiKey, loadYandexMaps } from "@/shared/maps/yandex";
+import PrivateOfferDriverPicker from "./PrivateOfferDriverPicker.vue";
+import { adminSession } from "@/features/auth/session";
 import type { District } from "../domain";
+const props = defineProps<{ initialDriverId?: string }>();
+const mode = ref(props.initialDriverId ? "private" : "public");
+const privateDriverId = ref(props.initialDriverId ?? "");
 const phonePattern = String.raw`[+]?[0-9][0-9\s\-]{5,19}`;
 const emit = defineEmits<{ created: [] }>();
 const districts = ref<District[]>([]),
@@ -130,11 +135,19 @@ async function submit() {
     error.value = "Укажите стоимость больше нуля в TMT";
     return;
   }
+  if (mode.value === "private" && !privateDriverId.value) {
+    error.value = "Выберите водителя для личного предложения";
+    return;
+  }
+  const userId = adminSession.state.user?.id;
   pending.value = true;
   error.value = "";
   try {
     await adminApi.post("/admin/orders", {
       ...Object.fromEntries(Object.entries(form).filter(([, v]) => v !== "")),
+      ...(mode.value === "private"
+        ? { privateOfferDriverId: privateDriverId.value }
+        : {}),
       clientPhone: phone,
       priceEstimated: Number(form.priceEstimated),
       ...(point.value
@@ -144,11 +157,12 @@ async function submit() {
         ? { dropoffLat: destination.value[0], dropoffLng: destination.value[1] }
         : {}),
     });
-    emit("created");
+    if (!disposed && userId === adminSession.state.user?.id) emit("created");
   } catch (e) {
-    error.value = errorMessage(e);
+    if (!disposed && userId === adminSession.state.user?.id)
+      error.value = errorMessage(e);
   } finally {
-    pending.value = false;
+    if (!disposed) pending.value = false;
   }
 }
 </script>
@@ -158,6 +172,31 @@ async function submit() {
       Обязательны район, телефон и стоимость в TMT. Остальные поля можно
       оставить пустыми.
     </p>
+    <fieldset class="space-y-3">
+      <legend class="mb-2 text-sm font-medium">Кому предложить заказ</legend>
+      <div class="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          :variant="mode === 'public' ? 'default' : 'outline'"
+          :aria-pressed="mode === 'public'"
+          @click="mode = 'public'"
+          >Всем в районе</Button
+        >
+        <Button
+          type="button"
+          :variant="mode === 'private' ? 'default' : 'outline'"
+          :aria-pressed="mode === 'private'"
+          @click="mode = 'private'"
+          >Лично водителю</Button
+        >
+      </div>
+      <PrivateOfferDriverPicker
+        v-if="mode === 'private'"
+        id="create-offer-driver"
+        v-model="privateDriverId"
+        :disabled="pending"
+      />
+    </fieldset>
     <div class="grid gap-4 sm:grid-cols-2">
       <div class="space-y-2">
         <div class="flex items-center gap-1">
@@ -325,7 +364,13 @@ async function submit() {
           !form.clientPhone.trim() ||
           !form.priceEstimated
         "
-        >{{ pending ? "Создаём…" : "Отправить водителям" }}</Button
+        >{{
+          pending
+            ? "Создаём…"
+            : mode === "private"
+              ? "Предложить на 20 секунд"
+              : "Отправить водителям"
+        }}</Button
       >
     </div>
   </form>

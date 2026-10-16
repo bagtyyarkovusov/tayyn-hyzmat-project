@@ -27,7 +27,7 @@ const postLocation = asyncHandler(async (req, res) => {
 });
 
 const postStatus = asyncHandler(async (req, res) => {
-  const updated = await service.setStatus(req.driver, req.body);
+  const updated = await service.setStatus(req.driver, req.body, req.user.credentialVersion);
   res.json({ driverId: updated.id, isOnline: updated.isOnline, isAvailable: updated.isAvailable });
 });
 

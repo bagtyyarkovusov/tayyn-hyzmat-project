@@ -55,6 +55,7 @@ async function registerDriver({ phone, fullName, password }) {
 async function issueTokenPair(user) {
   const payload = {
     sub: user.id,
+    credentialVersion: user.credentialVersion,
     role: user.role,
     driverId: user.driver ? user.driver.id : undefined,
     adminId: user.admin ? user.admin.id : undefined
@@ -66,6 +67,7 @@ async function issueTokenPair(user) {
   await prisma.refreshToken.create({
     data: {
       userId: user.id,
+      credentialVersion: user.credentialVersion,
       tokenHash: hashRefreshToken(refreshToken),
       expiresAt: new Date(Date.now() + parseDurationToMs(env.jwtRefreshExpiresIn))
     }
@@ -207,7 +209,7 @@ async function refresh(refreshToken) {
     where: { id: stored.userId },
     include: { driver: true, admin: true }
   });
-  if (!user || user.status === 'BLOCKED') {
+  if (!user || user.status === 'BLOCKED' || user.credentialVersion !== stored.credentialVersion) {
     throw ApiError.unauthorized('Недействительный refresh-токен');
   }
   if (user.role === 'DRIVER' && user.driver && user.driver.status !== 'APPROVED') {
