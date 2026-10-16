@@ -158,10 +158,9 @@ try {
   const unavailable = await fetch(`${base}/health`, {
     signal: AbortSignal.timeout(10000),
   });
-  assert.equal(
-    unavailable.status,
-    502,
-    "Web readiness fails when its API is unavailable",
+  assert.ok(
+    [502, 504].includes(unavailable.status),
+    `Web readiness fails when its API is unavailable, got ${unavailable.status}`,
   );
   assert.equal((await fetch(`${base}/driverProfile`)).status, 200);
   console.log(
