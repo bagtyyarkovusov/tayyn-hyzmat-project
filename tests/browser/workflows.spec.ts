@@ -1504,6 +1504,8 @@ test("a transient GPS timeout keeps its blocker visible until an explicit retry 
   await page.context().grantPermissions(["geolocation"]);
   await page.addInitScript(() => {
     let watch: PositionCallback | undefined;
+    let pendingPosition: PositionCallback | undefined;
+    let holdPosition = false;
     let failure: PositionErrorCallback | null | undefined;
     const position = () =>
       ({
@@ -1534,9 +1536,18 @@ test("a transient GPS timeout keeps its blocker visible until an explicit retry 
           watch = undefined;
         },
         getCurrentPosition(success: PositionCallback) {
-          setTimeout(() => success(position()), 1500);
+          if (holdPosition) pendingPosition = success;
+          else queueMicrotask(() => success(position()));
         },
       },
+    });
+    window.addEventListener("synthetic-gps-hold", () => {
+      holdPosition = true;
+    });
+    window.addEventListener("synthetic-gps-release", () => {
+      holdPosition = false;
+      pendingPosition?.(position());
+      pendingPosition = undefined;
     });
     window.addEventListener("synthetic-gps-timeout", () =>
       failure?.({
@@ -1549,6 +1560,18 @@ test("a transient GPS timeout keeps its blocker visible until an explicit retry 
     );
   });
   await login(page, "driver");
+  const token = await page.evaluate(() =>
+    localStorage.getItem("openride.driver.accessToken"),
+  );
+  expect(
+    (
+      await page.request.post(`${process.env.TEST_API_URL}/driver/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+        data: { isOnline: false },
+      })
+    ).ok(),
+  ).toBe(true);
+  await page.reload();
   await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
   const power = page.getByRole("button", {
     name: "Выйти на линию",
@@ -1566,11 +1589,30 @@ test("a transient GPS timeout keeps its blocker visible until an explicit retry 
   await expect(
     page.getByText(/GPS.*(?:временно недоступен|не ответил)/).first(),
   ).toBeAttached();
+  await expect(
+    page
+      .getByRole("group", { name: "Регионы", exact: true })
+      .getByRole("button")
+      .first(),
+  ).toBeDisabled();
+  expect(
+    (
+      await page.request.get(`${process.env.TEST_API_URL}/orders/available`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+    ).status(),
+  ).toBe(403);
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("synthetic-gps-hold")),
+  );
   await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
   await expect(
     page.getByText(/GPS.*(?:временно недоступен|не ответил)/).first(),
   ).toBeAttached();
   await expect(power).toBeDisabled();
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("synthetic-gps-release")),
+  );
   await expect(power).toBeEnabled({ timeout: 5000 });
   await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
 });
@@ -2827,6 +2869,8 @@ test("monitoring keeps a claimed driver busy across delayed snapshots and reconn
   browser,
 }) => {
   test.setTimeout(60000);
+  const fullName = `Проверка занятого водителя ${test.info().repeatEachIndex}`;
+  const phone = `+993600004${51 + test.info().repeatEachIndex}`;
   const adminContext = await browser.newContext();
   const driverContext = await browser.newContext();
   let releaseSnapshot: (() => void) | undefined;
@@ -2843,8 +2887,8 @@ test("monitoring keeps a claimed driver busy across delayed snapshots and reconn
       {
         headers,
         data: {
-          fullName: "Проверка занятого водителя",
-          phone: "+99360000451",
+          fullName,
+          phone,
           password,
         },
       },
@@ -2855,7 +2899,7 @@ test("monitoring keeps a claimed driver busy across delayed snapshots and reconn
       `${process.env.TEST_API_URL}/admin/drivers/${driverId}/balance`,
       { headers, data: { amount: 100, type: "TOPUP" } },
     );
-    await login(driver, "driver", "+99360000451");
+    await login(driver, "driver", phone);
     await startGps(driver);
     await driver
       .getByRole("button", { name: "Выйти на линию", exact: true })
@@ -2885,7 +2929,7 @@ test("monitoring keeps a claimed driver busy across delayed snapshots and reconn
     ).toBe(true);
     await admin.goto("/adminMonitoring");
     const row = admin.getByRole("button", {
-      name: "Проверка занятого водителя",
+      name: fullName,
       exact: true,
     });
     await expect(row).toContainText("Свободен");

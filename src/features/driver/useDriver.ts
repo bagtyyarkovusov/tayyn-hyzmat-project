@@ -272,7 +272,7 @@ async function refresh() {
     if (!state.gpsReady) {
       hideAvailableOrders();
       if (state.profile.isOnline && !state.gpsFixReady && !state.nativeRunning)
-        void loseGps("Включите GPS перед выходом на линию.");
+        void loseGps(state.gpsError || "Включите GPS перед выходом на линию.");
     } else if (state.profile.isOnline && !state.active) {
       await recoverPrivateOffer();
     }
