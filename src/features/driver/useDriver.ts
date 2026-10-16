@@ -142,7 +142,9 @@ function dismissIncoming() {
   if (offerTimer !== undefined) clearInterval(offerTimer);
   offerTimer = undefined;
   state.offerSeconds = 0;
-  closeOrderAlerts();
+  // Empty queue reconciliation must not pause a user-initiated sound unlock.
+  // Only an actual incoming order owns the order-alert playback.
+  if (state.incoming) closeOrderAlerts();
   state.incoming = null;
 }
 
@@ -836,7 +838,9 @@ function start() {
     on(event, () => void refresh());
   const visibility = () => {
     if (!document.hidden) {
-      closeOrderAlerts();
+      // Native notifications may exist before the WebView recovers an offer.
+      // Browser playback belongs to an incoming order, not a permission probe.
+      if (nativeAndroid || state.incoming) closeOrderAlerts();
       if (nativeAndroid)
         void checkNativeLocationPermission().then(() => refresh());
       else void refresh();

@@ -232,6 +232,7 @@ test("a driver must explicitly accept after five minutes, then completes a quote
   const dispatcher = await dispatchContext.newPage();
   const driver = await driverContext.newPage();
   try {
+    await driver.clock.install();
     await login(dispatcher, "admin");
     await login(driver, "driver");
     await startGps(driver);
@@ -241,7 +242,6 @@ test("a driver must explicitly accept after five minutes, then completes a quote
     await expect(
       driver.getByRole("button", { name: "Уйти с линии", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
-    await driver.clock.install();
     let claimRequests = 0;
     driver.on("request", (request) => {
       if (new URL(request.url()).pathname.endsWith("/orders/accept"))
