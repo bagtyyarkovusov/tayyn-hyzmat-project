@@ -1506,6 +1506,7 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
       syntheticNativeStopped?: boolean;
       syntheticNativeStopSequence?: number;
       syntheticNativeStopAfterPermission?: boolean;
+      syntheticNativePermissionDenied?: boolean;
     };
     bridge.holdNativePermission = holdPermission;
     bridge.CapacitorCustomPlatform = { name: "android" };
@@ -1562,7 +1563,7 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
             stopSequence: bridge.syntheticNativeStopped
               ? (bridge.syntheticNativeStopSequence ?? 1)
               : 0,
-            locationGranted: true,
+            locationGranted: !bridge.syntheticNativePermissionDenied,
             ordersEnabled: true,
             chatEnabled: true,
           };
@@ -1591,6 +1592,26 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
     };
   }, holdPermission);
 }
+
+test("native foreground detects revoked GPS permission while the shift is off", async ({
+  page,
+}) => {
+  await emulateNativeBridge(page, false);
+  await login(page, "driver");
+  const gps = page.getByRole("button", { name: "Включить GPS", exact: true });
+  await gps.click();
+  await expect(gps).toHaveAttribute("data-state", "ready");
+  await page.evaluate(() => {
+    (
+      window as unknown as { syntheticNativePermissionDenied: boolean }
+    ).syntheticNativePermissionDenied = true;
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(gps).toHaveAttribute("data-state", "blocked");
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeDisabled();
+});
 
 test("an offline native driver sees the healthy dispatcher connection before starting a shift", async ({
   page,
@@ -2429,4 +2450,33 @@ test("private offer picker disables an online driver whose balance cannot cover 
     await adminContext.close();
     await driverContext.close();
   }
+});
+
+test("fresh acknowledged GPS enters a shift without another preflight upload and stops reporting offline", async ({
+  page,
+}) => {
+  await login(page, "driver");
+  await startGps(page);
+  let uploads = 0;
+  await page.route("**/driver/location", async (route) => {
+    uploads++;
+    await route.continue();
+  });
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Уйти с линии", exact: true }),
+  ).toBeVisible();
+  expect(uploads).toBe(0);
+  await page.getByRole("button", { name: "Уйти с линии", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(/Последнее обновление/)).toBeVisible();
+  await page
+    .context()
+    .setGeolocation({ latitude: 37.97, longitude: 58.33, accuracy: 10 });
+  await page.waitForTimeout(300);
+  expect(uploads).toBe(0);
 });
