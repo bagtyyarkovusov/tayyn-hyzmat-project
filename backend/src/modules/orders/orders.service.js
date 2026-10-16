@@ -446,7 +446,7 @@ async function complete(orderId, driver) {
   return updatedOrder;
 }
 
-// ACCEPTED/WAITING: once a trip has STARTED, cancelling would abandon a
+// Cancellation is available only while WAITING. Once a trip has STARTED, cancelling would abandon a
 // passenger mid-ride, which needs different handling than this endpoint.
 //
 // A driver who took this order was already charged its price at accept()
@@ -459,7 +459,7 @@ async function cancel(orderId, driver, reason) {
     await lockDriver(tx, driver.id);
     const order = await lockOrder(tx, orderId);
     assertOwnedByDriver(order, driver);
-    if (!['ACCEPTED', 'WAITING'].includes(order.status)) {
+    if (order.status !== 'WAITING') {
       throw ApiError.conflict('Невозможно отменить заказ в текущем статусе', { status: order.status });
     }
     const updated = await tx.order.update({
