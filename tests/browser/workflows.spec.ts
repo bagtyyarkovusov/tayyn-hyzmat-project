@@ -2919,10 +2919,14 @@ test("monitoring keeps a claimed driver busy across delayed snapshots and reconn
     );
     expect(created.ok()).toBe(true);
     const driverId = (await created.json()).id;
-    await admin.request.post(
+    const funded = await admin.request.post(
       `${process.env.TEST_API_URL}/admin/drivers/${driverId}/balance`,
-      { headers, data: { amount: 100, type: "TOPUP" } },
+      {
+        headers,
+        data: { operationId: crypto.randomUUID(), amount: 100, type: "TOPUP" },
+      },
     );
+    expect(funded.ok()).toBe(true);
     await login(driver, "driver", phone);
     await startGps(driver);
     await driver
