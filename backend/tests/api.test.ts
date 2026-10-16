@@ -524,3 +524,27 @@ test('dispatcher cancellation and trip completion have one terminal winner', asy
     assert.equal((await request('/driver/profile', driverToken)).data.isAvailable, true);
   }
 });
+
+test('a claim racing dispatcher cancellation never leaves an unpaid active trip', async () => {
+  for (let round = 0; round < 20; round++) {
+    const created = await order();
+    const responses = await Promise.all([
+      request('/orders/accept', driverToken, { orderId: created.id }),
+      request(`/admin/orders/${created.id}/cancel`, adminToken, {})
+    ]);
+    assert.ok(responses.every(response => [200, 409].includes(response.status)));
+    const current = (await request('/orders/current', driverToken)).data;
+    const balance = (await request('/driver/balance', driverToken)).data.amount;
+    if (current) {
+      assert.equal(current.id, created.id);
+      assert.equal(current.status, 'ACCEPTED');
+      assert.equal(balance, '490');
+      assert.equal((await request('/orders/cancel', driverToken, { orderId: created.id })).status, 200);
+    } else {
+      assert.equal(balance, '500');
+      assert.equal(responses[1].status, 200);
+    }
+    assert.equal((await request('/driver/profile', driverToken)).data.isAvailable, true);
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
+  }
+});
