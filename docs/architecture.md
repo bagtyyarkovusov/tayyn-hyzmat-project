@@ -17,3 +17,9 @@ The Nginx web image serves browser assets and proxies `/api` and `/socket.io` to
 ## Known limits
 
 Cross-region claims/browsing remain [issue #1](https://github.com/bagtyyarkovusov/tayyn-hyzmat-project/issues/1), contrary to agreed own-region policy. Concurrent cancellations or multiple orders for one driver need separate review. Socket.IO alone does not guarantee notifications after a browser closes. Outside-polygon policy and fare semantics remain unresolved in [product scope](product.md). Legacy customer functionality remains available but inherited dependencies still require later assessment.
+
+## Monitoring roster
+
+Monitoring loads every approved-driver page rather than treating the first 100 as the fleet. Location socket events patch known drivers locally without reloading the list; structural events coalesce with a five-second minimum read interval, plus visible-page reconciliation every 30 seconds and on foreground return/reconnect. Reconciliation preserves existing row positions and selection, rejects responses after unmount and keeps newer received location events over older HTTP snapshots. Coordinates remain actual last-reported positions; stale or future GPS never counts as fresh. Availability labels describe online/free/fresh GPS, while the server remains authoritative for offer eligibility and balance policy.
+
+The desktop roster uses compact rows with name/phone/plate search and region/status filters. On narrow screens it opens as an accessible bottom sheet; Escape restores the trigger, and selecting a driver focuses its detail controls. Yandex attribution is unchanged. Live vendor clustering/spiderfying is deferred until it can be verified with a working isolated SDK key; drivers remain accessible through the roster when markers overlap. No address/geocoding requests are added by monitoring.
