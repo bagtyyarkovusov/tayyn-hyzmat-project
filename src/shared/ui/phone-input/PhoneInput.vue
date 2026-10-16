@@ -141,7 +141,7 @@ function beforeInput(event: Event) {
         inputmode="tel"
         autocomplete="tel-national"
         pattern="[0-9]{2} [0-9]{2} [0-9]{2} [0-9]{2}"
-        placeholder="65 99 54 24"
+        placeholder="Номер телефона"
         :aria-invalid="showError ? 'true' : undefined"
         :aria-describedby="describedBy"
         class="min-w-0 rounded-none border-0 pl-2 shadow-none focus-visible:ring-0"
