@@ -135,8 +135,8 @@ function safePrivateOffer(order) {
   };
 }
 
-async function assertPrivateOfferDriver(tx, driverId) {
-  await lockDriver(tx, driverId);
+// Caller holds the driver row lock, and the order lock for existing work.
+async function assertPrivateOfferDriver(tx, driverId, priceEstimated) {
   const driver = await tx.driver.findUnique({ where: { id: driverId }, include: { user: true } });
   if (!driver || driver.status !== 'APPROVED' || driver.user.status === 'BLOCKED') throw ApiError.conflict('Водитель недоступен');
   assertOrderEligibility(driver);
@@ -144,8 +144,9 @@ async function assertPrivateOfferDriver(tx, driverId) {
     { driverId, status: { in: ACTIVE_DRIVER_ORDER_STATUSES } },
     { privateOfferDriverId: driverId, status: 'NEW' }
   ] } })) throw ApiError.conflict('У водителя уже есть заказ или предложение');
-  const balance = await tx.balance.findUnique({ where: { userId: driver.userId } });
-  if (!balance || !balance.amount.greaterThan(0)) throw ApiError.conflict('У водителя недостаточно средств');
+  const balance = await lockedBalance(tx, driver.userId);
+  const price = D(priceEstimated);
+  if (!balance.amount.greaterThan(0) || balance.amount.lessThan(price)) throw ApiError.conflict('У водителя недостаточно средств для этого заказа');
   return driver;
 }
 
@@ -180,8 +181,9 @@ async function getPrivateOffer(driver) {
 async function offerPrivately(orderId, driverId) {
   await expirePrivateOffers();
   const order = await prisma.$transaction(async tx => {
-    const driver = await assertPrivateOfferDriver(tx, driverId);
-    await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} FOR UPDATE`;
+    await lockDriver(tx, driverId);
+    const existing = await lockOrder(tx, orderId);
+    const driver = await assertPrivateOfferDriver(tx, driverId, existing.priceEstimated);
     assertOrderEligibility(driver);
     const changed = await tx.order.updateMany({ where: { id: orderId, status: 'NEW', driverId: null, privateOfferDriverId: null }, data: { privateOfferDriverId: driverId, privateOfferExpiresAt: new Date(Date.now() + 20_000) } });
     if (!changed.count) throw ApiError.conflict('Заказ уже принят или предложен другому водителю');
@@ -475,7 +477,10 @@ async function createOrder(data) {
   await expirePrivateOffers();
   const { privateOfferDriverId, ...publicData } = data;
   const order = await prisma.$transaction(async tx => {
-    if (privateOfferDriverId) await assertPrivateOfferDriver(tx, privateOfferDriverId);
+    if (privateOfferDriverId) {
+      await lockDriver(tx, privateOfferDriverId);
+      await assertPrivateOfferDriver(tx, privateOfferDriverId, publicData.priceEstimated);
+    }
     return tx.order.create({
       data: { ...publicData, pickupLat, pickupLng, districtId, status: 'NEW', ...(privateOfferDriverId ? { privateOfferDriverId, privateOfferExpiresAt: new Date(Date.now() + 20_000) } : {}) },
       include: { district: true }

@@ -1,12 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { canFundOrder } from "@/shared/order-funding";
+import { money } from "../domain";
 import { adminApi } from "@/shared/api";
 import { Label } from "@/shared/ui/label";
 import { canOfferToDriver } from "../private-offers";
 import { useResource } from "../useResource";
 import type { Driver, Page } from "../domain";
 const selected = defineModel<string>({ required: true });
-defineProps<{ id: string; disabled?: boolean }>();
+const props = defineProps<{
+  id: string;
+  disabled?: boolean;
+  priceEstimated?: number | string | null;
+}>();
 const now = ref(Date.now());
 let timer: ReturnType<typeof setInterval> | undefined;
 const { data, loading, error, load } = useResource(
@@ -19,6 +25,7 @@ const { data, loading, error, load } = useResource(
   [] as Driver[],
   [
     "driver:status",
+    "balance:updated",
     "driver:location",
     "order:accepted",
     "order:completed",
@@ -31,6 +38,18 @@ const { data, loading, error, load } = useResource(
 const eligible = computed(() =>
   data.value.filter((driver) => canOfferToDriver(driver, now.value)),
 );
+watch([selected, data, loading, () => props.priceEstimated], () => {
+  if (
+    !loading.value &&
+    selected.value &&
+    !eligible.value.some(
+      (driver) =>
+        driver.id === selected.value &&
+        canFundOrder(driver.user.balance?.amount, props.priceEstimated),
+    )
+  )
+    selected.value = "";
+});
 onMounted(() => {
   timer = setInterval(() => {
     now.value = Date.now();
@@ -57,10 +76,21 @@ onUnmounted(() => {
       <option value="">
         {{ loading ? "Загружаем водителей…" : "Выберите водителя" }}
       </option>
-      <option v-for="driver in eligible" :key="driver.id" :value="driver.id">
+      <option
+        v-for="driver in eligible"
+        :key="driver.id"
+        :value="driver.id"
+        :disabled="!canFundOrder(driver.user.balance?.amount, priceEstimated)"
+      >
         {{ driver.user.fullName }} ·
         {{ driver.currentVehicle?.plateNumber || "Без машины" }} ·
-        {{ driver.district?.name || "Без района" }}
+        {{ driver.district?.name || "Без района" }} ·
+        {{ money(driver.user.balance?.amount)
+        }}{{
+          !canFundOrder(driver.user.balance?.amount, priceEstimated)
+            ? " · недостаточно средств"
+            : ""
+        }}
       </option>
     </select>
     <p v-if="error" role="alert" class="text-sm text-destructive">

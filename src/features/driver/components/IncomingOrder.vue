@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import { canFundOrder } from "@/shared/order-funding";
 import { Button } from "@/shared/ui/button";
 import { useDriver } from "../useDriver";
 import { money } from "../model";
@@ -52,6 +53,17 @@ const eta = ref(10);
       При принятии спишется {{ money(state.incoming.priceEstimated) }} с
       баланса. Телефон клиента откроется после принятия.
     </p>
+    <p
+      v-if="!canFundOrder(state.balance?.amount, state.incoming.priceEstimated)"
+      class="text-sm text-destructive"
+    >
+      Недостаточно средств.
+      <template v-if="Number(state.incoming.priceEstimated) > 0"
+        >Пополните баланс до {{ money(state.incoming.priceEstimated) }}, чтобы
+        принять заказ.</template
+      >
+      <template v-else>Пополните баланс, чтобы принять заказ.</template>
+    </p>
     <label class="grid gap-1.5 text-sm" for="incoming-eta"
       >Буду через<select
         id="incoming-eta"
@@ -71,7 +83,10 @@ const eta = ref(10);
     <div class="grid gap-1">
       <Button
         class="min-h-11 w-full"
-        :disabled="state.busy"
+        :disabled="
+          state.busy ||
+          !canFundOrder(state.balance?.amount, state.incoming.priceEstimated)
+        "
         @click="accept(state.incoming!.id, eta)"
         >Принять заказ</Button
       ><Button
