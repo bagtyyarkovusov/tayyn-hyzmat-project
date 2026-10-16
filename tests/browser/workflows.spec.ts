@@ -1058,3 +1058,50 @@ test("regional queues and counts recover through updates, reconnect and reload",
     await b.close();
   }
 });
+
+for (const [savedAdminSession, driverEntry] of [
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true],
+] as const) {
+  test(`driver reload never renders dispatcher navigation with ${savedAdminSession ? "both sessions saved" : "only a driver session"} via ${driverEntry ? "driver bundle" : "web bundle"}`, async ({
+    page,
+  }) => {
+    if (savedAdminSession) await login(page, "admin");
+    await login(page, "driver");
+    let release!: () => void;
+    let reached!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const restoring = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    await page.route("**/api/driver/profile", async (route) => {
+      reached();
+      await gate;
+      await route.continue();
+    });
+    try {
+      if (driverEntry)
+        await page.goto("/driver.html", { waitUntil: "domcontentloaded" });
+      else await page.reload({ waitUntil: "domcontentloaded" });
+      await restoring;
+      await expect(
+        page.getByRole("navigation", { name: "Разделы диспетчера" }),
+      ).toHaveCount(0);
+      release();
+      await expect(
+        page.getByRole("button", { name: "Включить GPS", exact: true }),
+      ).toBeVisible();
+      await expect(page).toHaveURL(/driverDashboard/);
+      await expect(
+        page.getByRole("navigation", { name: "Разделы диспетчера" }),
+      ).toHaveCount(0);
+    } finally {
+      release();
+      await page.unroute("**/api/driver/profile");
+    }
+  });
+}

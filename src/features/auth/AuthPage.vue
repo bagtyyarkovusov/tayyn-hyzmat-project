@@ -149,7 +149,6 @@ async function submit() {
             >{{ registering ? "Войти" : "Подать заявку" }}</RouterLink
           >
         </p>
-
       </div>
     </section>
   </div>
