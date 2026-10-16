@@ -2,7 +2,7 @@
 
 ## Agreed scope
 
-Start with one dispatcher and three to five drivers. The dispatcher adds an order to a chosen region; eligible drivers in that region receive a notification and claim available orders. Customer self-booking and Android-specific work are outside this phase.
+Start with one dispatcher and three to five drivers. The dispatcher adds an order to a chosen region; eligible drivers in that region receive a notification and claim available orders. Customer self-booking is outside this phase. Mobile-browser testing comes first. Android release additionally requires the background availability and notification behavior below.
 
 Drivers must explicitly accept orders. Receiving an offer or leaving it open for five minutes never claims it or charges the balance. Hiding an offer is a local dismissal. Offer expiration and expansion timing remain separate unresolved policies.
 
@@ -18,12 +18,16 @@ The driver home shows every region in a fixed viewport grid. Each card shows onl
 
 Driver and dispatcher chat keep the app header, composer and navigation inside the visible viewport. Message history scrolls independently. Enter sends, Shift+Enter adds a line, and text composition never submits a message. Empty or pending messages cannot be submitted; a failed send preserves its draft. Incoming messages follow the bottom only while the reader is already near it. Theme selection uses an icon dropdown with persisted system, light and dark preferences.
 
+## Android release requirements
+
+While on shift, drivers must remain available and receive orders with the app backgrounded or the phone locked. Explicit offline and logout must end availability immediately. Force-closing ends availability, but Android may provide no callback; the server must expire a missed availability lease within a documented maximum timeout. That timeout and the native implementation remain to be designed. The current foreground browser GPS flow does not meet this release requirement.
+
 ## Unresolved questions
 
 - Which offer strategy and driver eligibility rules should be used, and what should happen when pickup or fresh driver GPS is unavailable?
 
 - Should a pickup outside every polygon be refused, or assigned by nearest center?
 - What does the quoted price represent, and how much should acceptance debit from a driver's balance?
-- What delivery guarantee is required when a browser is suspended or closed?
+- Must notification permission be granted before a driver can go online?
 
 Record answers here when settled, and use ADRs for resulting architectural choices. Track implementation gaps in GitHub Issues. [Architecture](architecture.md) distinguishes current behavior from this agreed scope.
