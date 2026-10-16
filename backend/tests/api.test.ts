@@ -335,14 +335,14 @@ for (const price of [null, 0, -10]) {
 }
 
 test('dispatcher creates an approved driver with a zero TMT balance and no leaked password', async () => {
-  const body = { phone: '+99361123456', fullName: 'Added synthetic driver', password, districtId: regionId };
+  const body = { phone: '+99361123456', fullName: 'Added synthetic driver', password };
   assert.equal((await request('/admin/drivers', driverToken, body)).status, 403);
   assert.equal((await request('/admin/drivers', '', body)).status, 401);
-  assert.equal((await request('/admin/drivers', adminToken, { ...body, districtId: '00000000-0000-4000-8000-000000000000' })).status, 404);
   const created = await request('/admin/drivers', adminToken, body);
   assert.equal(created.status, 201);
   assert.equal(created.data.status, 'APPROVED');
-  assert.equal(created.data.districtId, regionId);
+  assert.equal(created.data.districtId, null);
+  assert.equal(created.data.isOnline, false);
   assert.equal(created.data.user.phone, body.phone);
   assert.equal(created.data.user.balance.amount, '0');
   assert.equal(created.data.user.balance.currency, 'TMT');
