@@ -31,6 +31,9 @@ export async function revokeDriverShift(driverId: string): Promise<void> {
 export async function revokeUserShift(userId: string): Promise<void> {
   await prisma.$executeRaw`UPDATE native_shift_leases SET revoked_at = NOW() WHERE driver_id IN (SELECT id FROM drivers WHERE user_id = ${userId}) AND revoked_at IS NULL`;
   await prisma.driver.updateMany({ where: { userId }, data: { isOnline: false } });
+  await publishUserShiftState(userId);
+}
+export async function publishUserShiftState(userId: string): Promise<void> {
   const driver = await prisma.driver.findUnique({ where: { userId } });
   if (driver) { await broadcastStopped(driver.id); await syncDriverDistrictRoom(driver.id); await districts.broadcastDistrictStats(); }
 }

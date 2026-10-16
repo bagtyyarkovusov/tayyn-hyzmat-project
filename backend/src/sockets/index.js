@@ -49,10 +49,6 @@ async function handleDriverConnection(socket) {
   socket.join(rooms.driver(driverId));
   socket.join(rooms.drivers());
   await validateCredentialSession(socket.data.credentials);
-  socket.use(async (_packet, next) => {
-    try { await validateCredentialSession(socket.data.credentials); next(); }
-    catch { socket.disconnect(true); }
-  });
   await syncDriverDistrictRoom(driverId);
 
   // Symmetric with the admin side's socket.on('admin:message', ...) below -
@@ -94,9 +90,16 @@ function initSockets(httpServer) {
 
   io.use(socketAuthMiddleware);
 
-  io.on('connection', (socket) => {
+  io.on('connection', async (socket) => {
+    try { await validateCredentialSession(socket.data.credentials); }
+    catch { socket.disconnect(true); return; }
+    socket.use(async (_packet, next) => {
+      try { await validateCredentialSession(socket.data.credentials); next(); }
+      catch { socket.disconnect(true); }
+    });
     const { role, id: userId } = socket.data.user;
     logger.debug({ userId, role, socketId: socket.id }, 'Socket connected');
+    socket.join(rooms.user(userId));
 
     if (role === 'DRIVER') {
       handleDriverConnection(socket).catch((err) => {

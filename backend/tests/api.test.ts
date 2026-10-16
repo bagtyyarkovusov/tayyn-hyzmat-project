@@ -36,7 +36,7 @@ async function request(path: string, token = '', body?: unknown) {
   return { status: response.status, data };
 }
 async function login(phone: string) {
-  const result = await request('/auth/login', '', { phone, password });
+  const result = await request('/auth/login', '', { phone, password, deviceId: 'synthetic-approved-browser' });
   assert.equal(result.status, 200);
   return result.data.accessToken as string;
 }
@@ -96,11 +96,15 @@ before(async () => {
 });
 beforeEach(async () => {
   testClient++;
+  await prisma.user.updateMany({ where: { phone: { in: ['+99360000101', '+99360000102'] } }, data: { passwordHash: await bcrypt.hash(password, 4) } });
   await prisma.transaction.deleteMany();
   await prisma.order.deleteMany();
   await prisma.balance.updateMany({ data: { amount: 500 } });
-  await prisma.driver.updateMany({ data: { isAvailable: true, isOnline: false } });
+  await prisma.driver.updateMany({ data: { isAvailable: true, isOnline: false, currentDeviceId: null } });
   await prisma.driver.updateMany({ where: { user: { phone: '+99360000102' } }, data: { districtId: otherRegionId } });
+  driverToken = await login('+99360000101');
+  otherToken = await login('+99360000102');
+  await prisma.driver.updateMany({ where: { user: { phone: { in: ['+99360000101', '+99360000102'] } } }, data: { currentDeviceId: null } });
   for (const [token, lng] of [[driverToken, 58.32], [otherToken, 58.42]] as const) {
     assert.equal((await request('/driver/location', token, { lat: 37.96, lng })).status, 200);
     assert.equal((await request('/driver/status', token, { isOnline: true })).status, 200);
@@ -420,7 +424,7 @@ test('dispatcher creates an approved driver with a zero TMT balance and no leake
   assert.equal('passwordHash' in created.data.user, false);
   assert.equal('password' in created.data.user, false);
   assert.equal((await request('/admin/drivers', adminToken, body)).status, 409);
-  const loggedIn = await request('/auth/login', '', { phone: body.phone, password });
+  const loggedIn = await request('/auth/login', '', { phone: body.phone, password, deviceId: 'synthetic-approved-browser' });
   assert.equal(loggedIn.status, 200);
   assert.equal(loggedIn.data.user.role, 'DRIVER');
 });
@@ -429,7 +433,7 @@ test('a newly registered driver can log in only after dispatcher approval', asyn
   const phone = '+99360000103';
   const registered = await request('/auth/register', '', { phone, password, fullName: 'Pending synthetic driver' });
   assert.equal(registered.status, 201);
-  assert.equal((await request('/auth/login', '', { phone, password })).status, 403);
+  assert.equal((await request('/auth/login', '', { phone, password, deviceId: 'synthetic-approved-browser' })).status, 403);
   const approved = await request(`/admin/drivers/${registered.data.user.driver.id}/approve`, adminToken, {});
   assert.equal(approved.status, 200);
   const token = await login(phone);
@@ -543,7 +547,9 @@ test('native shift cannot start without matching device and GPS or renew with a 
   assert.equal((await request('/native-shift/tick', second.data.shiftToken, fix)).status, 200);
   await request('/auth/logout', '', { refreshToken: auth.data.refreshToken });
   assert.equal((await request('/native-shift/tick', second.data.shiftToken, fix)).status, 401);
-  assert.equal((await request('/driver/profile', auth.data.accessToken)).data.isOnline, false);
+  assert.equal((await request('/driver/profile', auth.data.accessToken)).status, 401);
+  const renewed = await request('/auth/login', '', { phone: '+99360000101', password, deviceId: 'native-test-device' });
+  assert.equal((await request('/driver/profile', renewed.data.accessToken)).data.isOnline, false);
 });
 
 test('native task stop publishes persisted offline state to the driver and dispatcher', async () => {
@@ -1133,7 +1139,7 @@ test('changing driver login phone revokes old sessions and keeps approved device
   await disconnected;
   assert.equal((await request('/driver/profile', session.data.accessToken)).status, 401);
   assert.equal((await request('/auth/refresh', '', { refreshToken: session.data.refreshToken })).status, 401);
-  assert.equal((await request('/auth/login', '', { phone: '+99361001003', password })).status, 401);
+  assert.equal((await request('/auth/login', '', { phone: '+99361001003', password, deviceId: 'synthetic-approved-browser' })).status, 401);
   const recovered = await request('/auth/login', '', { phone: '+99361001002', password, deviceId: 'credential-device' });
   assert.equal(recovered.status, 200);
   const restored = await request('/driver/profile', recovered.data.accessToken);
@@ -1149,7 +1155,7 @@ test('changing driver login phone revokes old sessions and keeps approved device
 
 test('dispatcher resets driver password with confirmation and revokes all prior refresh generations', async () => {
   await request('/admin/drivers', adminToken, { fullName: 'Password fixture', phone: '+99361001004', password });
-  const session = await request('/auth/login', '', { phone: '+99361001004', password });
+  const session = await request('/auth/login', '', { phone: '+99361001004', password, deviceId: 'synthetic-approved-browser' });
   const rotated = await request('/auth/refresh', '', { refreshToken: session.data.refreshToken });
   const id = (await request('/driver/profile', session.data.accessToken)).data.id;
   const body = { password: 'Replacement123!', passwordConfirmation: 'Replacement123!' };
@@ -1164,13 +1170,13 @@ test('dispatcher resets driver password with confirmation and revokes all prior 
   for (const token of [session.data.refreshToken, rotated.data.refreshToken])
     assert.equal((await request('/auth/refresh', '', { refreshToken: token })).status, 401);
   assert.equal((await request('/driver/profile', rotated.data.accessToken)).status, 401);
-  assert.equal((await request('/auth/login', '', { phone: '+99361001004', password })).status, 401);
-  assert.equal((await request('/auth/login', '', { phone: '+99361001004', password: body.password })).status, 200);
+  assert.equal((await request('/auth/login', '', { phone: '+99361001004', password, deviceId: 'synthetic-approved-browser' })).status, 401);
+  assert.equal((await request('/auth/login', '', { phone: '+99361001004', password: body.password, deviceId: 'synthetic-approved-browser' })).status, 200);
 });
 
 test('a credential change keeps the driver offline when an old online request is already in flight', async () => {
   const fixture = await request('/admin/drivers', adminToken, { fullName: 'Concurrent credential fixture', phone: '+99361001005', password });
-  const session = await request('/auth/login', '', { phone: '+99361001005', password });
+  const session = await request('/auth/login', '', { phone: '+99361001005', password, deviceId: 'synthetic-approved-browser' });
   const token = session.data.accessToken;
   await request('/driver/location', token, { lat: 37.96, lng: 58.32 });
   // Fixture database locks arrange an in-flight request; assertions stay at HTTP seams.
@@ -1219,7 +1225,7 @@ test('credential reset revokes a private offer session while the new login can r
   assert.equal(reset.status, 200);
   assert.equal((await request('/orders/private-offer', otherToken)).status, 401);
   assert.equal((await request('/orders/private-offer/accept', otherToken, { orderId: created.data.id, privateOfferExpiresAt: created.data.privateOfferExpiresAt })).status, 401);
-  const session = await request('/auth/login', '', { phone: '+99360000102', password: 'SyntheticReplacement123!' });
+  const session = await request('/auth/login', '', { phone: '+99360000102', password: 'SyntheticReplacement123!', deviceId: 'synthetic-approved-browser' });
   assert.equal(session.status, 200);
   const token = session.data.accessToken;
   assert.equal((await request('/orders/private-offer', token)).status, 403);
@@ -1358,7 +1364,7 @@ test('numeric six-character driver passwords work consistently for creation and 
   assert.equal((await request('/driver/profile', token)).status, 401);
   assert.equal((await request('/auth/refresh', '', { refreshToken: auth.data.refreshToken })).status, 401);
   assert.equal((await request('/native-shift/tick', shift.data.shiftToken, { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() })).status, 401);
-  assert.equal((await request('/auth/login', '', { phone, password: '123456' })).status, 401);
+  assert.equal((await request('/auth/login', '', { phone, password: '123456', deviceId: 'synthetic-approved-browser' })).status, 401);
   assert.equal((await request('/auth/login', '', { phone, password: '654321', deviceId: 'numeric-password-device' })).status, 200);
 });
 
@@ -1373,7 +1379,7 @@ test('new driver passwords reject short values and bcrypt-truncated UTF-8 values
     const reset = await request(`/admin/drivers/${fixture.data.id}/password`, adminToken, { password: invalid, passwordConfirmation: invalid });
     assert.equal(reset.status, 400);
   }
-  assert.equal((await request('/auth/login', '', { phone: '+99361001092', password: '123456' })).status, 200);
+  assert.equal((await request('/auth/login', '', { phone: '+99361001092', password: '123456', deviceId: 'synthetic-approved-browser' })).status, 200);
 });
 
 test('driver registration rejects a UTF-8 password beyond bcrypt 72-byte capacity even when character length is short', async () => {
@@ -1387,7 +1393,7 @@ test('Turkmen phone inputs normalize formatting and reject other countries or in
   const created = await request('/admin/drivers', adminToken, { fullName: 'Phone policy fixture', phone: formatted, password: '123456' });
   assert.equal(created.status, 201);
   assert.equal(created.data.user.phone, '+99361001095');
-  assert.equal((await request('/auth/login', '', { phone: formatted, password: '123456' })).status, 200);
+  assert.equal((await request('/auth/login', '', { phone: formatted, password: '123456', deviceId: 'synthetic-approved-browser' })).status, 200);
   const invalidPhones = ['+10000000999', '+9936100109', '+993610010950', '61001095', '+99361x01095', '+993+61001095'];
   for (const phone of invalidPhones) {
     assert.equal((await request('/auth/register', '', { fullName: 'Invalid phone', phone, password: '123456' })).status, 400);
@@ -2057,9 +2063,9 @@ test('deactivating a driver preserves ledger and completed attribution while rev
   assert.equal((await request('/driver/me', token)).status, 401);
   assert.equal((await request('/auth/refresh', '', { refreshToken: auth.data.refreshToken })).status, 401);
   assert.equal((await request('/native-shift/tick', shift.data.shiftToken, { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() })).status, 401);
-  assert.equal((await request('/auth/login', '', { phone: '+99361999981', password })).status, 403);
+  assert.equal((await request('/auth/login', '', { phone: '+99361999981', password, deviceId: 'synthetic-approved-browser' })).status, 403);
   await request(`/admin/drivers/${id}/unblock`, adminToken, {});
-  assert.equal((await request('/auth/login', '', { phone: '+99361999981', password })).status, 403);
+  assert.equal((await request('/auth/login', '', { phone: '+99361999981', password, deviceId: 'synthetic-approved-browser' })).status, 403);
 });
 
 test('deactivation refuses an active trip and preserves its balance and driver linkage', async () => {
@@ -2122,4 +2128,115 @@ test('operation IDs are scoped to the acting dispatcher and rollback permits a s
   } finally {
     await prisma.user.delete({ where: { id: admin.id } });
   }
+});
+
+
+test('explicit logout rejects rotated refresh replay and immediately revokes only that user HTTP and socket authority', async () => {
+  const phone = '+99361999121';
+  assert.equal((await request('/admin/drivers', adminToken, { phone, fullName: 'Logout fixture', password })).status, 201);
+  const auth = await request('/auth/login', '', { phone, password, deviceId: 'logout-fixture-device' });
+  assert.equal(auth.status, 200);
+  const connected = await socket(auth.data.accessToken);
+  const rotated = await request('/auth/refresh', '', { refreshToken: auth.data.refreshToken });
+  assert.equal(rotated.status, 200);
+  assert.equal((await request('/auth/refresh', '', { refreshToken: auth.data.refreshToken })).status, 200, 'legitimate rotation races retain grace');
+  await request('/auth/logout', '', { refreshToken: auth.data.refreshToken });
+  assert.equal((await request('/auth/refresh', '', { refreshToken: auth.data.refreshToken })).status, 401);
+  assert.equal((await request('/auth/refresh', '', { refreshToken: rotated.data.refreshToken })).status, 401);
+  assert.equal((await request('/driver/profile', auth.data.accessToken)).status, 401);
+  assert.equal((await request('/driver/profile', rotated.data.accessToken)).status, 401);
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(connected.connected, false);
+  assert.equal((await request('/admin/drivers', adminToken)).status, 200);
+  assert.equal((await request('/driver/profile', driverToken)).status, 200);
+  const fresh = await request('/auth/login', '', { phone, password, deviceId: 'logout-fixture-device' });
+  const freshSocket = await socket(fresh.data.accessToken);
+  await request('/auth/logout', '', { refreshToken: auth.data.refreshToken });
+  assert.equal((await request('/driver/profile', fresh.data.accessToken)).status, 200, 'an obsolete logout cannot revoke a later generation');
+  assert.equal(freshSocket.connected, true);
+});
+
+test('driver login cannot bypass an approved device by omitting its identity', async () => {
+  const phone = '+99361999122';
+  assert.equal((await request('/admin/drivers', adminToken, { phone, fullName: 'Binding fixture', password })).status, 201);
+  const auth = await request('/auth/login', '', { phone, password, deviceId: 'approved-fixture-device' });
+  assert.equal(auth.status, 200);
+  assert.equal((await request('/auth/login', '', { phone, password })).status, 400);
+  assert.equal((await request('/auth/login', '', { phone, password, deviceId: 'unapproved-fixture-device' })).status, 403);
+  assert.equal((await request('/driver/profile', auth.data.accessToken)).status, 200);
+});
+
+
+test('switching to an approved device revokes the previous access refresh and socket generation', async () => {
+  const phone = '+99361999123';
+  const created = await request('/admin/drivers', adminToken, { phone, fullName: 'Device switch fixture', password });
+  const first = await request('/auth/login', '', { phone, password, deviceId: 'first-approved-device' });
+  assert.equal(first.status, 200);
+  const connected = await socket(first.data.accessToken);
+  await prisma.driverDevice.create({ data: { driverId: created.data.id, deviceId: 'second-approved-device' } });
+  const second = await request('/auth/login', '', { phone, password, deviceId: 'second-approved-device' });
+  assert.equal(second.status, 200);
+  assert.equal((await request('/driver/profile', second.data.accessToken)).status, 200);
+  assert.equal((await request('/driver/profile', first.data.accessToken)).status, 401);
+  assert.equal((await request('/auth/refresh', '', { refreshToken: first.data.refreshToken })).status, 401);
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(connected.connected, false);
+});
+
+test('a password reset winning the user lock cannot authorize an in-flight old-password login', async () => {
+  const phone = '+99361999124';
+  const created = await request('/admin/drivers', adminToken, { phone, fullName: 'Login race fixture', password });
+  let release!: () => void;
+  let locked!: () => void;
+  const gate = new Promise<void>(resolve => release = resolve);
+  const ready = new Promise<void>(resolve => locked = resolve);
+  const blocker = prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM users WHERE phone = ${phone} FOR UPDATE`;
+    locked(); await gate;
+  }, { timeout: 10000 });
+  async function waitForBlocked(count: number) {
+    const end = Date.now() + 5000;
+    while (Date.now() < end) {
+      const [row] = await prisma.$queryRaw<Array<{ count: number }>>`SELECT COUNT(*)::int AS count FROM pg_stat_activity WHERE datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0`;
+      if (row.count >= count) return;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    throw new Error('Expected HTTP operations to reach the fixture database barrier');
+  }
+  await ready;
+  const resetting = request(`/admin/drivers/${created.data.id}/password`, adminToken, { password: '654321', passwordConfirmation: '654321' });
+  let pending: ReturnType<typeof request> | undefined;
+  try {
+    await waitForBlocked(1);
+    pending = request('/auth/login', '', { phone, password, deviceId: 'racing-login-device' });
+    await waitForBlocked(2);
+  } finally { release(); await blocker; }
+  assert.equal((await resetting).status, 200);
+  assert.ok(pending);
+  assert.equal((await pending).status, 401);
+  const current = await request('/auth/login', '', { phone, password: '654321', deviceId: 'racing-login-device' });
+  assert.equal(current.status, 200);
+  assert.equal((await request('/driver/profile', current.data.accessToken)).status, 200);
+});
+
+
+test('dispatcher logout revokes its own HTTP and socket authority without signing out another dispatcher', async () => {
+  const phone = '+99361999125';
+  await prisma.user.create({ data: { phone, fullName: 'Logout dispatcher fixture', role: 'ADMIN', passwordHash: await bcrypt.hash(password, 4), admin: { create: { permissionLevel: 'SUPER' } } } });
+  const auth = await request('/auth/login', '', { phone, password });
+  const own = await socket(auth.data.accessToken);
+  const unaffected = await socket(adminToken);
+  assert.equal((await request('/auth/logout', '', { refreshToken: auth.data.refreshToken })).status, 204);
+  assert.equal((await request('/admin/drivers', auth.data.accessToken)).status, 401);
+  assert.equal((await request('/admin/drivers', adminToken)).status, 200);
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(own.connected, false);
+  assert.equal(unaffected.connected, true);
+  const refused = connect(base, { auth: { token: auth.data.accessToken }, transports: ['websocket'], reconnection: false, forceNew: true });
+  clients.push(refused);
+  const error = await new Promise<Error>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Revoked socket did not reject authentication')), 3000);
+    refused.once('connect_error', error => { clearTimeout(timer); resolve(error); });
+  });
+  assert.equal(error.message, 'unauthorized');
 });

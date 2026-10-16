@@ -2,6 +2,7 @@
 // layer (sockets/index.js) and REST controllers/services that need to emit
 // events triggered by an HTTP request (e.g. POST /driver/location).
 module.exports = {
+  user: (userId) => `user:${userId}`,
   admins: () => 'admins',
   drivers: () => 'drivers', // every connected driver socket, for global broadcasts
   driver: (driverId) => `driver:${driverId}`,

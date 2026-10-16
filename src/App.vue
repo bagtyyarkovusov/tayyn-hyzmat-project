@@ -100,6 +100,10 @@ watch(
       router.replace(driver.value ? "/driverLogin" : "/adminLogin");
   },
 );
+watch([networkOnline, visibility], ([online, visible]) => {
+  if (online && visible === "visible" && session.value.state.verificationError)
+    void session.value.restore();
+});
 async function logout() {
   await session.value.logout();
   await router.replace(driver.value ? "/driverLogin" : "/adminLogin");
@@ -107,6 +111,23 @@ async function logout() {
 </script>
 <template>
   <RouterView v-if="auth" />
+  <main
+    v-else-if="session.state.restoring || session.state.verificationError"
+    class="flex min-h-dvh flex-col items-center justify-center gap-4 p-6 text-center"
+    aria-live="polite"
+  >
+    <BrandLogo />
+    <p>
+      {{
+        session.state.restoring
+          ? "Проверяем подключение…"
+          : session.state.verificationError
+      }}
+    </p>
+    <Button v-if="!session.state.restoring" @click="session.restore()"
+      >Повторить подключение</Button
+    >
+  </main>
   <div
     v-else
     :style="chat ? { height: viewportHeight, top: viewportTop } : undefined"

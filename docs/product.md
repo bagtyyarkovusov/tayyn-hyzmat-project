@@ -58,3 +58,9 @@ Dispatcher order lists use exclusive lifecycle filters: **Ожидают** shows
 Dispatcher cancellation is allowed only in NEW, ACCEPTED or WAITING. It closes the unstarted order, refunds a recorded debit once and frees the driver. STARTED orders reject ordinary cancellation with 409. Manual completion requires a reason, records service under the same driver and keeps the existing charge. Exceptional refunds/recovery are separate reviewed actions and must not be disguised as cancellation.
 
 Диспетчер может отменить заказ только до начала поездки: NEW, ACCEPTED или WAITING. Отмена возвращает списание и освобождает водителя. Для STARTED обычная отмена запрещена. Ручное завершение требует причину, сохраняет выполненную услугу и списание без возврата. Исключительный возврат или восстановление разбираются отдельно.
+
+## Session recovery and revocation
+
+Drivers must identify their device at login; approved-device switching revokes the previous credential generation. Both current driver clients already supply this identity. A missing identity is a 400 error, never a device-approval bypass. Logout ends the account's current generation, including access tokens, rotated refresh tokens, sockets and native shifts; other accounts remain signed in. An obsolete logout cannot revoke a later login. Normal concurrent refreshes retain the bounded rotation grace while their generation remains current.
+
+A temporary network or server failure during launch preserves credentials behind a connection-retry screen. Protected workflows remain hidden until the session is verified again. A response from an older session cannot clear a replacement login or replay its mutation with the replacement driver's credentials.
