@@ -16,6 +16,7 @@ interface Overview {
   averageCompletedTripValue: string;
 }
 import PageState from "./components/PageState.vue";
+import OperationalToday from "./components/OperationalToday.vue";
 const { data, loading, error, load } = useResource(
   async () => {
     const [regions, overview] = await Promise.all([
@@ -130,6 +131,7 @@ const { data, loading, error, load } = useResource(
           </div>
         </div>
       </section>
+      <OperationalToday />
       <section class="border-t pt-4" aria-label="История завершённых поездок">
         <h2 class="mb-3 text-sm font-semibold">
           Завершённые поездки за всё время

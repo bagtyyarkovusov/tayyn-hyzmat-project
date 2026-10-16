@@ -51,7 +51,7 @@ const messageSchema = z
 const readMessageSchema = z.object({ throughMessageId: z.string().uuid().optional() });
 
 const listOrdersQuerySchema = z.object({
-  status: z.enum(['active', 'accepted', 'completed', 'cancelled', 'all']).default('all'),
+  status: z.enum(['waiting', 'active', 'accepted', 'completed', 'cancelled', 'all']).default('all'),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20)
 });

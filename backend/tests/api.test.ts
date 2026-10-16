@@ -327,7 +327,6 @@ test('cancelling a claimed order refunds the synthetic charge and rejects a seco
   const created = await order();
   const body = { orderId: created.id };
   assert.equal((await request('/orders/accept', driverToken, body)).status, 200);
-  assert.equal((await request('/orders/waiting', driverToken, body)).status, 200);
   assert.equal((await request('/orders/cancel', driverToken, body)).data.status, 'CANCELLED');
   assert.equal((await request('/orders/cancel', driverToken, body)).status, 409);
   const balance = await request('/driver/balance', driverToken);
@@ -397,7 +396,6 @@ for (const price of [null, 0, -10]) {
     const body = { orderId: created.id };
     assert.equal((await request('/orders/accept', driverToken, body)).status, 200);
     assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
-    assert.equal((await request('/orders/waiting', driverToken, body)).status, 200);
     assert.equal((await request('/orders/cancel', driverToken, body)).status, 200);
     assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
     assert.equal((await request('/driver/history', driverToken)).data.transactions.total, 0);
@@ -588,7 +586,6 @@ for (const scenario of ['driver-driver', 'admin-admin', 'driver-admin']) {
       const created = await order();
       const body = { orderId: created.id };
       assert.equal((await request('/orders/accept', driverToken, body)).status, 200);
-      assert.equal((await request('/orders/waiting', driverToken, body)).status, 200);
       const driverCancel = () => request('/orders/cancel', driverToken, body);
       const adminCancel = () => request(`/admin/orders/${created.id}/cancel`, adminToken, {});
       const responses = await Promise.all(scenario === 'driver-driver' ? [driverCancel(), driverCancel()] : scenario === 'admin-admin' ? [adminCancel(), adminCancel()] : [driverCancel(), adminCancel()]);
@@ -605,7 +602,6 @@ test('cancellation flow: closes without requeue, frees driver, and forbids drive
   const created = await order();
   const body = { orderId: created.id };
   assert.equal((await request('/orders/accept', driverToken, body)).status, 200);
-  assert.equal((await request('/orders/waiting', driverToken, body)).status, 200);
   assert.equal((await request('/orders/cancel', driverToken, body)).status, 200);
   assert.equal((await request('/orders/current', driverToken)).data, null);
   assert.equal((await request('/driver/profile', driverToken)).data.isAvailable, true);
@@ -649,7 +645,6 @@ test('concurrent claims of different orders keep one active trip and one debit',
     assert.ok([first.id, second.id].includes(current.id));
     assert.equal((await request('/driver/profile', driverToken)).data.isAvailable, false);
     assert.equal((await request('/driver/balance', driverToken)).data.amount, '490');
-    assert.equal((await request('/orders/waiting', driverToken, { orderId: current.id })).status, 200);
     assert.equal((await request('/orders/cancel', driverToken, { orderId: current.id })).status, 200);
     assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
   }
@@ -660,7 +655,6 @@ test('cancellation wins once over repeated arrival and emits one committed refun
   const created = await order();
   const body = { orderId: created.id };
   assert.equal((await request('/orders/accept', driverToken, body)).status, 200);
-  assert.equal((await request('/orders/waiting', driverToken, body)).status, 200);
   const cancelled: string[] = [];
   const refunds: string[] = [];
   client.on('order:cancelled', event => { if (event.id === created.id) cancelled.push(event.id); });
@@ -716,7 +710,6 @@ test('a claim racing dispatcher cancellation never leaves an unpaid active trip'
       assert.equal(current.id, created.id);
       assert.equal(current.status, 'ACCEPTED');
       assert.equal(balance, '490');
-      assert.equal((await request('/orders/waiting', driverToken, { orderId: created.id })).status, 200);
       assert.equal((await request('/orders/cancel', driverToken, { orderId: created.id })).status, 200);
     } else {
       assert.equal(balance, '500');
@@ -799,7 +792,6 @@ test('topups racing order charges and refunds reconcile through public history',
     ]);
     assert.ok(responses.every(response => response.status === 200));
     assert.equal((await request('/driver/balance', driverToken)).data.amount, String(491 + round * 2));
-    assert.equal((await request('/orders/waiting', driverToken, { orderId: created.id })).status, 200);
     const cancelled = await Promise.all([
       request('/orders/cancel', driverToken, { orderId: created.id }),
       request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 1, type: 'TOPUP' })
@@ -1782,20 +1774,147 @@ test('public orders stay regional until their persisted deadline then disappear 
   regional.disconnect(); outside.disconnect();
 });
 
-test('driver cancellation is restricted to waiting and refunds once without abandoning an accepted or started ride', async () => {
-  const created = await order();
-  const body = { orderId: created.id };
-  assert.equal((await request('/orders/accept', driverToken, body)).status, 200);
-  assert.equal((await request('/orders/cancel', driverToken, body)).status, 409);
-  assert.equal((await request('/orders/current', driverToken)).data.status, 'ACCEPTED');
-  assert.equal((await request('/driver/balance', driverToken)).data.amount, '490');
-  assert.equal((await request('/orders/waiting', driverToken, body)).status, 200);
-  const results = await Promise.all([1, 2].map(() => request('/orders/cancel', driverToken, body)));
-  assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
-  assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
-  assert.equal((await request('/orders/current', driverToken)).data, null);
-  const next = await order();
-  for (const action of ['accept', 'waiting', 'start']) assert.equal((await request(`/orders/${action}`, driverToken, { orderId: next.id })).status, 200);
-  assert.equal((await request('/orders/cancel', driverToken, { orderId: next.id })).status, 409);
-  assert.equal((await request('/orders/current', driverToken)).data.status, 'STARTED');
+test('dispatcher lifecycle filters separate unclaimed waiting from in-progress orders and preserve legacy active queries', async () => {
+  const statuses = ['NEW', 'ACCEPTED', 'WAITING', 'STARTED', 'COMPLETED', 'CANCELLED'] as const;
+  const ids = new Map<string, string>();
+  for (const status of statuses) {
+    const created = await prisma.order.create({ data: { districtId: regionId, status, pickupLat: 37.96, pickupLng: 58.32, clientPhone: '+99365000000', priceEstimated: 25 } });
+    ids.set(status, created.id);
+  }
+  const expectations = [
+    ['waiting', ['NEW']],
+    ['accepted', ['ACCEPTED', 'WAITING', 'STARTED']],
+    ['completed', ['COMPLETED']],
+    ['cancelled', ['CANCELLED']],
+    ['active', ['NEW', 'ACCEPTED', 'WAITING', 'STARTED']],
+    ['all', [...statuses]],
+  ] as const;
+  for (const [filter, wanted] of expectations) {
+    const response = await request(`/admin/orders?status=${filter}`, adminToken);
+    assert.equal(response.status, 200);
+    assert.equal(response.data.total, wanted.length);
+    assert.deepEqual(response.data.items.map((item: { id: string }) => item.id).sort(), wanted.map(status => ids.get(status)).sort());
+  }
+  assert.equal((await request('/admin/orders', adminToken)).data.total, 6);
+  assert.equal((await request('/admin/orders?status=unknown', adminToken)).status, 400);
+});
+
+for (const status of ['ACCEPTED', 'WAITING', 'STARTED'] as const) {
+  test(`active ${status} trip stays busy across Online and legacy availability snapshots`, async () => {
+    const driver = (await request('/driver/profile', driverToken)).data;
+    const active = await order(25);
+    assert.equal((await request('/orders/accept', driverToken, { orderId: active.id, arrivalMinutes: 5 })).status, 200);
+    if (status !== 'ACCEPTED') assert.equal((await request('/orders/waiting', driverToken, { orderId: active.id })).status, 200);
+    if (status === 'STARTED') assert.equal((await request('/orders/start', driverToken, { orderId: active.id })).status, 200);
+    const adminSocket = await socket(adminToken);
+    const statusEvent = nextSocketEvent<{ driverId: string; isAvailable: boolean }>(adminSocket, 'driver:status');
+    const online = await request('/driver/status', driverToken, { isOnline: true, isAvailable: true });
+    assert.equal(online.status, 200);
+    assert.equal(online.data.isAvailable, false);
+    assert.equal((await statusEvent).isAvailable, false);
+    // Imported rows/old clients must not make the monitoring UI claim a busy driver is free.
+    await prisma.driver.update({ where: { id: driver.id }, data: { isAvailable: true } });
+    const list = await request('/admin/drivers?status=APPROVED&limit=100', adminToken);
+    assert.equal(list.data.items.find((item: { id: string }) => item.id === driver.id).isAvailable, false);
+    assert.equal((await request(`/admin/drivers/${driver.id}`, adminToken)).data.isAvailable, false);
+    const regions = await request('/districts', driverToken);
+    assert.equal(regions.data.find((item: { id: string }) => item.id === regionId).freeDrivers, 0);
+    const offer = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: driver.id });
+    assert.equal(offer.status, 409);
+    const next = await order(10);
+    assert.equal((await request('/orders/accept', driverToken, { orderId: next.id, arrivalMinutes: 5 })).status, 409);
+    assert.equal((await request('/orders/current', driverToken)).data.id, active.id);
+    adminSocket.disconnect();
+  });
+}
+test('today operations use the Ashgabat creation cohort, terminal denominator and honest acceptance samples', async () => {
+  assert.equal((await request('/admin/overview/today')).status, 401);
+  assert.equal((await request('/admin/overview/today', driverToken)).status, 403);
+  const empty = await request('/admin/overview/today', adminToken);
+  assert.equal(empty.status, 200);
+  assert.equal(empty.data.timeZone, 'Asia/Ashgabat');
+  assert.match(empty.data.dayStart, /T19:00:00\.000Z$/);
+  assert.match(empty.data.dayEnd, /T19:00:00\.000Z$/);
+  assert.equal(empty.data.dayEnd.slice(0, 10), empty.data.date);
+  assert.equal(Date.parse(empty.data.dayEnd) - Date.parse(empty.data.dayStart), 86_400_000);
+  assert.deepEqual(empty.data.cohort, { created: 0, completed: 0, cancelled: 0, unfinished: 0, terminal: 0, completionRate: null, cancellationRate: null });
+  assert.deepEqual(empty.data.acceptance, { samples: 0, missing: 0, invalid: 0, medianSeconds: null, p90Seconds: null });
+  assert.deepEqual(empty.data.waiting, { publicOrders: 0, privateReservations: 0, oldestSeconds: null });
+  const start = Date.parse(empty.data.dayStart);
+  const end = Date.parse(empty.data.dayEnd);
+  const baseOrder = { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32 };
+  await prisma.order.createMany({ data: [
+    { ...baseOrder, status: 'COMPLETED', createdAt: new Date(start), acceptedAt: new Date(start + 10_000) },
+    { ...baseOrder, status: 'CANCELLED', createdAt: new Date(start + 1000), acceptedAt: new Date(start + 31_000) },
+    { ...baseOrder, status: 'STARTED', createdAt: new Date(start + 2000), acceptedAt: new Date(start + 92_000) },
+    { ...baseOrder, status: 'CANCELLED', createdAt: new Date(start + 3000) },
+    { ...baseOrder, status: 'ACCEPTED', createdAt: new Date(start + 4000), acceptedAt: new Date(start + 3999) },
+    // One millisecond outside each bound must not enter today's cohort.
+    { ...baseOrder, status: 'COMPLETED', createdAt: new Date(start - 1), acceptedAt: new Date(start + 999_999) },
+    { ...baseOrder, status: 'CANCELLED', createdAt: new Date(end), acceptedAt: new Date(end + 999_999) }
+  ] });
+  const result = await request('/admin/overview/today', adminToken);
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.data.cohort, { created: 5, completed: 1, cancelled: 2, unfinished: 2, terminal: 3, completionRate: 1 / 3, cancellationRate: 2 / 3 });
+  assert.deepEqual(result.data.acceptance, { samples: 3, missing: 1, invalid: 1, medianSeconds: 30, p90Seconds: 78 });
+});
+
+test('live waiting includes overnight public orders and expired reservations but separates active private offers', async () => {
+  const clock = await request('/admin/overview/today', adminToken);
+  assert.equal(clock.status, 200);
+  const start = Date.parse(clock.data.dayStart);
+  const now = Date.now();
+  const drivers = await prisma.driver.findMany({ take: 2 });
+  const baseOrder = { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32 };
+  await prisma.order.createMany({ data: [
+    { ...baseOrder, status: 'NEW', createdAt: new Date(start - 60_000) },
+    // A fresh regional-only order is public; public is not globally claimable.
+    { ...baseOrder, status: 'NEW', createdAt: new Date(now) },
+    { ...baseOrder, status: 'NEW', createdAt: new Date(now), privateOfferDriverId: drivers[0].id, privateOfferExpiresAt: new Date(now - 1) },
+    { ...baseOrder, status: 'NEW', createdAt: new Date(start - 120_000), privateOfferDriverId: drivers[1].id, privateOfferExpiresAt: new Date(now + 60_000) },
+    { ...baseOrder, status: 'ACCEPTED', createdAt: new Date(start - 180_000), acceptedAt: new Date(now) }
+  ] });
+  const result = await request('/admin/overview/today', adminToken);
+  assert.equal(result.data.waiting.publicOrders, 3);
+  assert.equal(result.data.waiting.privateReservations, 1);
+  const expectedOldest = (now - start + 60_000) / 1000;
+  assert.ok(result.data.waiting.oldestSeconds >= expectedOldest);
+  assert.ok(result.data.waiting.oldestSeconds < expectedOldest + 5);
+  assert.equal(result.data.cohort.created, 2);
+  assert.equal(result.data.cohort.unfinished, 2);
+  assert.equal(result.data.cohort.completionRate, null);
+  assert.equal(result.data.cohort.cancellationRate, null);
+});
+
+
+test('today acceptance includes a cohort order accepted after the reporting day ends', async () => {
+  const clock = await request('/admin/overview/today', adminToken);
+  const end = Date.parse(clock.data.dayEnd);
+  await prisma.order.create({ data: {
+    districtId: regionId, pickupLat: 37.96, pickupLng: 58.32,
+    status: 'CANCELLED', createdAt: new Date(end - 1), acceptedAt: new Date(end + 59_999)
+  } });
+  const result = await request('/admin/overview/today', adminToken);
+  assert.equal(result.data.cohort.created, 1);
+  assert.equal(result.data.cohort.cancelled, 1);
+  assert.equal(result.data.cohort.cancellationRate, 1);
+  assert.deepEqual(result.data.acceptance, { samples: 1, missing: 0, invalid: 0, medianSeconds: 60, p90Seconds: 60 });
+});
+
+test('stopped private orders remain unfinished in today cohort but leave the live waiting queue', async () => {
+  const clock = (await request('/admin/overview/today', adminToken)).data;
+  const start = Date.parse(clock.dayStart);
+  const driver = (await request('/driver/profile', driverToken)).data;
+  await prisma.order.createMany({ data: [
+    { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'NEW', createdAt: new Date(start + 1), privateOfferStoppedAt: new Date() },
+    { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'NEW', createdAt: new Date(start - 86_400_000), privateOfferStoppedAt: new Date() },
+    { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'NEW', createdAt: new Date(start + 2), publicRegionOnlyUntil: new Date(Date.now() + 20_000) },
+    { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32, status: 'NEW', createdAt: new Date(start + 3), privateOfferDriverId: driver.id, privateOfferExpiresAt: new Date(Date.now() + 20_000) }
+  ] });
+  const result = (await request('/admin/overview/today', adminToken)).data;
+  assert.equal(result.cohort.created, 3);
+  assert.equal(result.cohort.unfinished, 3);
+  assert.deepEqual({ publicOrders: result.waiting.publicOrders, privateReservations: result.waiting.privateReservations }, { publicOrders: 1, privateReservations: 1 });
+  const expectedOldest = (Date.parse(result.asOf) - (start + 2)) / 1000;
+  assert.ok(Math.abs(result.waiting.oldestSeconds - expectedOldest) < 0.01);
 });

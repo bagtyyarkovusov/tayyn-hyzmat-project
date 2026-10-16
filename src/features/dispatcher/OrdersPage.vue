@@ -21,7 +21,7 @@ import PageState from "./components/PageState.vue";
 import PrivateOfferForm from "./components/PrivateOfferForm.vue";
 import CreateOrderForm from "./components/CreateOrderForm.vue";
 const route = useRoute();
-const filter = ref("active"),
+const filter = ref("waiting"),
   page = ref(1),
   create = ref(route.query.create === "1"),
   offer = ref<Order | null>(null),
@@ -31,8 +31,8 @@ const filter = ref("active"),
   pending = ref(false),
   actionError = ref("");
 const filters = [
-  { value: "active", label: "Активные" },
-  { value: "accepted", label: "Принятые" },
+  { value: "waiting", label: "Ожидают" },
+  { value: "accepted", label: "В работе" },
   { value: "completed", label: "Завершённые" },
   { value: "cancelled", label: "Отменённые" },
   { value: "all", label: "Все" },
