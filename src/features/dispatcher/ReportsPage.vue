@@ -31,6 +31,8 @@ const { data, loading, error, load } = useResource(
       :loading="loading"
       :error="error"
       :empty="!data.length"
+      empty-title="Поездок пока нет"
+      empty-description="Завершённые поездки появятся здесь."
       @retry="load"
     />
     <ol

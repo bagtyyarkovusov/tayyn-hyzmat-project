@@ -44,7 +44,8 @@ onMounted(async () => {
     error.value = errorMessage(e);
   }
   if (!hasYandexMapsApiKey()) {
-    mapError.value = "Карта недоступна. Выберите район ниже.";
+    mapError.value =
+      "Карта недоступна. Заказ можно создать без точек на карте.";
     return;
   }
   try {
@@ -165,10 +166,6 @@ async function submit() {
 </script>
 <template>
   <form class="space-y-5" @submit.prevent="submit">
-    <p class="text-sm text-muted-foreground">
-      Обязательны район, телефон и стоимость в TMT. Остальные поля можно
-      оставить пустыми.
-    </p>
     <fieldset class="space-y-3">
       <legend class="mb-2 text-sm font-medium">Кому предложить заказ</legend>
       <div class="flex flex-wrap gap-2">
@@ -227,6 +224,24 @@ async function submit() {
         </p>
       </div>
     </div>
+    <div class="space-y-2">
+      <div class="flex items-center gap-1">
+        <Label for="order-price">Стоимость, TMT</Label
+        ><span aria-hidden="true" class="text-destructive">*</span>
+      </div>
+      <Input
+        id="order-price"
+        v-model="form.priceEstimated"
+        type="number"
+        min="0.01"
+        step="0.01"
+        required
+        placeholder="Введите сумму"
+      />
+      <p class="text-xs text-muted-foreground">
+        Сумма списывается с баланса при принятии заказа.
+      </p>
+    </div>
     <div class="space-y-4">
       <div class="grid gap-4 sm:grid-cols-2">
         <div class="space-y-2">
@@ -249,24 +264,6 @@ async function submit() {
             placeholder="Адрес назначения"
           />
         </div>
-      </div>
-      <div class="space-y-2">
-        <div class="flex items-center gap-1">
-          <Label for="order-price">Стоимость, TMT</Label
-          ><span aria-hidden="true" class="text-destructive">*</span>
-        </div>
-        <Input
-          id="order-price"
-          v-model="form.priceEstimated"
-          type="number"
-          min="0.01"
-          step="0.01"
-          required
-          placeholder="Введите сумму"
-        />
-        <p class="text-xs text-muted-foreground">
-          Сумма списывается с баланса при принятии заказа.
-        </p>
       </div>
       <div class="space-y-2">
         <Label for="order-note">Комментарий</Label

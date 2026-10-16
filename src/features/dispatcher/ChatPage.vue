@@ -157,6 +157,8 @@ async function send(all = false) {
           :loading="loading"
           :error="error"
           :empty="!drivers.length"
+          empty-title="Диалогов пока нет"
+          empty-description="Добавленные водители появятся здесь."
           @retry="load"
         />
         <div class="overflow-hidden rounded-xl border bg-card">
@@ -186,7 +188,10 @@ async function send(all = false) {
         class="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border bg-card"
       >
         <div class="flex shrink-0 items-center gap-3 border-b p-3">
-          <RouterLink to="/adminChat" aria-label="Все диалоги" class="lg:hidden"
+          <RouterLink
+            to="/adminChat"
+            aria-label="Все диалоги"
+            class="flex size-11 shrink-0 items-center justify-center rounded-md hover:bg-muted lg:hidden"
             ><ArrowLeft class="size-4"
           /></RouterLink>
           <div>
