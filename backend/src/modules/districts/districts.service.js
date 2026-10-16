@@ -29,7 +29,7 @@ async function listDistrictsWithStats() {
     // tallied here in JS rather than in a groupBy - simple and unambiguous
     // for the driver counts a single city instance actually has.
     prisma.driver.findMany({
-      where: { ...onlineWhere, districtId: { not: null }, isAvailable: true },
+      where: { ...onlineWhere, districtId: { not: null }, isAvailable: true, orders: { none: { status: { in: ['ACCEPTED', 'WAITING', 'STARTED'] } } } },
       select: { districtId: true, user: { select: { balance: { select: { amount: true } } } } }
     }),
     prisma.driver.groupBy({
