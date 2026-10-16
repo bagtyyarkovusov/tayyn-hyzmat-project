@@ -188,6 +188,7 @@ async function submit() {
         v-if="mode === 'private'"
         id="create-offer-driver"
         v-model="privateDriverId"
+        :price-estimated="form.priceEstimated"
         :disabled="pending"
       />
     </fieldset>

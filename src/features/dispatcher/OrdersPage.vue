@@ -152,6 +152,7 @@ async function confirmCancel() {
         ><PrivateOfferForm
           v-if="offer"
           :order-id="offer.id"
+          :price-estimated="offer.priceEstimated"
           @offered="
             offer = null;
             load();

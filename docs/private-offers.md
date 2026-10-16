@@ -2,7 +2,7 @@
 
 A dispatcher can announce an order publicly or offer it privately to one driver. Choose **Личное предложение** when creating an order, use **Предложить водителю** on an unclaimed order, or select a driver on the monitoring map/list and choose an existing or new order.
 
-Private offers require an approved, online, idle driver with a fresh GPS report and positive synthetic balance. The dispatcher may select a driver in another region; selection changes neither the driver's region nor the order's region. A driver may have one active trip or one pending private offer.
+Private offers require an approved, online, idle driver with a fresh GPS report and a positive synthetic balance sufficient for the full quoted TMT charge. Creation and reoffers reject an underfunded driver without reserving or publicly announcing the order. Acceptance rechecks the locked balance; reservation does not hold or debit funds. Inherited unpriced orders retain their no-debit behavior. The dispatcher may select a driver in another region; selection changes neither the driver's region nor the order's region. A driver may have one active trip or one pending private offer.
 
 The server reserves the order for 20 seconds and persists the deadline. Only the selected driver can explicitly accept it. Reserving the order does not charge the balance or reveal the customer phone. Successful acceptance charges the quoted TMT price once, reveals the phone and continues through the existing accepted → waiting → started → completed trip controls.
 

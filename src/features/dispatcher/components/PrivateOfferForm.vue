@@ -4,7 +4,11 @@ import { adminApi, errorMessage } from "@/shared/api";
 import { adminSession } from "@/features/auth/session";
 import { Button } from "@/shared/ui/button";
 import PrivateOfferDriverPicker from "./PrivateOfferDriverPicker.vue";
-const props = defineProps<{ orderId: string; initialDriverId?: string }>();
+const props = defineProps<{
+  orderId: string;
+  priceEstimated?: number | string | null;
+  initialDriverId?: string;
+}>();
 const emit = defineEmits<{ offered: [] }>();
 const driverId = ref(props.initialDriverId ?? "");
 const pending = ref(false),
@@ -36,6 +40,7 @@ async function submit() {
     <PrivateOfferDriverPicker
       id="offer-driver"
       v-model="driverId"
+      :price-estimated="priceEstimated"
       :disabled="pending"
     />
     <p v-if="error" role="alert" class="text-sm text-destructive">

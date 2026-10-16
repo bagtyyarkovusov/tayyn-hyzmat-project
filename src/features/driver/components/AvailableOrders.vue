@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
+import { canFundOrder } from "@/shared/order-funding";
 import { MapPin, ArrowDown, RefreshCw } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
 import { driverApi, errorMessage } from "@/shared/api";
@@ -146,7 +147,7 @@ onUnmounted(() => {
           :disabled="
             state.busy ||
             !!state.active ||
-            Number(state.balance?.amount ?? 0) <= 0 ||
+            !canFundOrder(state.balance?.amount, order.priceEstimated) ||
             !state.gpsReady ||
             !state.profile?.isOnline
           "
@@ -154,6 +155,17 @@ onUnmounted(() => {
           >Принять заказ</Button
         >
       </div>
+      <p
+        v-if="!canFundOrder(state.balance?.amount, order.priceEstimated)"
+        class="text-sm text-destructive"
+      >
+        Недостаточно средств.
+        <template v-if="Number(order.priceEstimated) > 0"
+          >Пополните баланс до {{ money(order.priceEstimated) }}, чтобы принять
+          заказ.</template
+        >
+        <template v-else>Пополните баланс, чтобы принять заказ.</template>
+      </p>
       <p v-if="state.active" class="muted text-xs">
         Сначала завершите текущую поездку.
       </p>
