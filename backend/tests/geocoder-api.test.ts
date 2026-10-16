@@ -132,6 +132,7 @@ before(async () => {
       await request('/auth/login', '', {
         phone,
         password: 'SyntheticAddress123!',
+        deviceId: 'synthetic-address-device',
       })
     ).data.accessToken as string;
   adminToken = await login('+99360000200');

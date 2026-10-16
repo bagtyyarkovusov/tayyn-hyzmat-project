@@ -27,8 +27,9 @@ export const tokens = {
     localStorage.getItem(`openride.${role}.accessToken`) || "",
   refresh: (role: Role) =>
     localStorage.getItem(`openride.${role}.refreshToken`) || "",
-  set(role: Role, session: SessionPayload) {
-    versions[role]++;
+  generation: (role: Role) => versions[role],
+  set(role: Role, session: SessionPayload, rotated = false) {
+    if (!rotated) versions[role]++;
     localStorage.setItem(`openride.${role}.accessToken`, session.accessToken);
     localStorage.setItem(`openride.${role}.refreshToken`, session.refreshToken);
     localStorage.setItem(`tayyn.${role}.user`, JSON.stringify(session.user));
@@ -84,7 +85,7 @@ export async function refreshRole(role: Role): Promise<SessionPayload> {
   })
     .then((data) => {
       if (version !== versions[role]) throw new Error("Сессия уже изменена.");
-      tokens.set(role, data);
+      tokens.set(role, data, true);
       return data;
     })
     .catch((error) => {
@@ -110,6 +111,11 @@ function createClient(role: Role) {
     params?: Record<string, unknown>,
     retry = true,
   ): Promise<{ data: T }> {
+    const generation = versions[role];
+    function assertCurrent() {
+      if (generation !== versions[role])
+        throw new Error("Сессия уже изменена.");
+    }
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(params || {}))
       if (value !== undefined && value !== null) query.set(key, String(value));
@@ -126,12 +132,16 @@ function createClient(role: Role) {
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
+    assertCurrent();
     if (response.status === 401 && retry && tokens.refresh(role)) {
       await refreshRole(role);
+      assertCurrent();
       return request(method, path, body, params, false);
     }
     if (response.status === 401) tokens.clear(role);
-    return { data: await readResponse<T>(response) };
+    const data = await readResponse<T>(response);
+    assertCurrent();
+    return { data };
   }
   return {
     get: <T = unknown>(

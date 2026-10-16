@@ -844,13 +844,16 @@ test("GPS reporting continues across driver routes and stops after logout", asyn
       longitude: 58.3301,
       accuracy: 10,
     });
+    let driverId = "";
     await expect
       .poll(async () => {
         const response = await context.request.get(
           `${process.env.TEST_API_URL}/driver/profile`,
           { headers: { Authorization: `Bearer ${token}` } },
         );
-        return Number((await response.json()).lastLat);
+        const profile = await response.json();
+        driverId = profile.id;
+        return Number(profile.lastLat);
       })
       .toBe(37.9701);
     await page.getByRole("button", { name: "Выйти", exact: true }).click();
@@ -867,7 +870,23 @@ test("GPS reporting continues across driver routes and stops after logout", asyn
       `${process.env.TEST_API_URL}/driver/profile`,
       { headers: { Authorization: `Bearer ${token}` } },
     );
-    expect(Number((await response.json()).lastLat)).toBe(37.9701);
+    expect(response.status()).toBe(401);
+    const dispatcher = await context.request.post(
+      `${process.env.TEST_API_URL}/auth/login`,
+      {
+        data: { phone: "+99360000000", password },
+      },
+    );
+    expect(dispatcher.ok()).toBe(true);
+    const persisted = await context.request.get(
+      `${process.env.TEST_API_URL}/admin/drivers/${driverId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${(await dispatcher.json()).accessToken}`,
+        },
+      },
+    );
+    expect(Number((await persisted.json()).lastLat)).toBe(37.9701);
   } finally {
     await context.close();
   }
@@ -3205,9 +3224,16 @@ test("driver cancellation is visible only while waiting for the passenger", asyn
       .getByRole("button", { name: "Завершить поездку", exact: true })
       .click();
     await expect(trip).toBeHidden();
-    await driver
-      .getByRole("button", { name: "Уйти с линии", exact: true })
-      .click();
+    // Finishing a trip can immediately show another live offer. End the fixture
+    // shift through the public API without clicking through that new modal.
+    expect(
+      (
+        await driver.request.post(`${process.env.TEST_API_URL}/driver/status`, {
+          headers: { Authorization: `Bearer ${driverToken}` },
+          data: { isOnline: false },
+        })
+      ).ok(),
+    ).toBe(true);
   } finally {
     await adminContext.close();
     await driverContext.close();

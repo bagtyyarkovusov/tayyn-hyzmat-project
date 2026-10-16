@@ -2,6 +2,7 @@ import { reactive } from "vue";
 import { stopNativeShift } from "@/features/driver/nativeShift";
 import { io, type Socket } from "socket.io-client";
 import {
+  ApiError,
   apiBase,
   adminApi,
   driverApi,
@@ -25,6 +26,7 @@ function createSession(role: Role) {
     accessToken: tokens.access(role),
     connected: false,
     restoring: false,
+    verificationError: "",
     message: "",
   });
   let socket: Socket | null = null;
@@ -60,14 +62,24 @@ function createSession(role: Role) {
       state.connected = false;
       emit("disconnect");
     });
+    const connectedSocket = socket;
+    const generation = tokens.generation(role);
     socket.on("connect_error", async (error: Error) => {
       state.connected = false;
       if (error.message !== "unauthorized") return;
       try {
         await refreshRole(role);
-        socket?.connect();
+        if (
+          socket === connectedSocket &&
+          generation === tokens.generation(role)
+        )
+          socket.connect();
       } catch {
-        disconnect();
+        if (
+          socket === connectedSocket &&
+          generation === tokens.generation(role)
+        )
+          disconnect();
       }
     });
     socket.onAny((event, ...args) => emit(event, ...args));
@@ -108,6 +120,7 @@ function createSession(role: Role) {
     }
     tokens.set(role, payload);
     state.message = "";
+    state.verificationError = "";
     connect();
   }
   async function logout() {
@@ -135,12 +148,21 @@ function createSession(role: Role) {
     if (restoring) return restoring;
     if (!tokens.access(role)) return Promise.resolve();
     state.restoring = true;
+    state.verificationError = "";
+    const generation = tokens.generation(role);
     restoring = client
       .get(role === "admin" ? "/admin/drivers?limit=1" : "/driver/profile")
       .then(() => {
-        connect();
+        if (generation === tokens.generation(role)) connect();
       })
-      .catch(() => tokens.clear(role))
+      .catch((error: unknown) => {
+        if (generation !== tokens.generation(role)) return;
+        if (error instanceof ApiError && [401, 403].includes(error.status))
+          tokens.clear(role);
+        else
+          state.verificationError =
+            "Не удалось проверить подключение. Данные входа сохранены.";
+      })
       .finally(() => {
         state.restoring = false;
         restoring = null;

@@ -12,9 +12,7 @@ const registerDriverSchema = z.object({
 const loginSchema = z.object({
   phone: phoneSchema,
   password: z.string().min(1, 'Укажите пароль'),
-  // Driver-only device binding (see auth.service.js#login) - optional so
-  // admin/client logins and any not-yet-updated driver client keep working
-  // unchanged; the single-device rule only ever activates when this is sent.
+  // Conditional driver requirement is enforced after account/password validation.
   deviceId: z.string().trim().min(4).max(200).optional(),
   // Human-readable "Samsung SM-A047F, Android 13" from @capacitor/device,
   // purely for the admin panel to show something meaningful instead of an
