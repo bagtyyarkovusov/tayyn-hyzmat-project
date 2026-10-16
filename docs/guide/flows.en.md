@@ -1,10 +1,10 @@
 # Tayyn Hyzmat flow diagrams in English
 
-Each diagram states whether it describes the current implementation or an approved change. Readiness-state separation and all-region expansion are pending.
+Each diagram states whether it describes the current implementation or an approved change. Readiness-state separation and all-region expansion are in the merged release contract.
 
 ## Driver readiness and shift
 
-Approved target contract; the readiness implementation is pending.
+Merged readiness contract (#85, `2095f56`). Hardware and background checks on the target Android phone remain release verification.
 
 ```mermaid
 stateDiagram-v2
@@ -57,14 +57,21 @@ sequenceDiagram
     S->>S: Lock order and driver, charge quoted TMT once
     S-->>V: Accepted, reveal customer phone
     S-->>O: order:taken, remove offer
-  else Decline or deadline expires
+  else Decline before deadline
     S->>S: Release reservation
     S-->>V: Offer ended
-    S-->>O: Public queue update
+    S-->>O: Open original region until original deadline
+  else Deadline expires
+    S->>S: Release reservation
+    alt Expansion enabled
+      S-->>O: Open in every region
+    else Expansion disabled
+      S-->>O: Keep order unassigned
+    end
   end
 ```
 
-The current public update returns the order to its original region. The approved pending branch adds this choice:
+After a private offer expires, the dispatcher choice controls the next state. This behavior is merged in #79 (`715b648`):
 
 ```mermaid
 flowchart LR
@@ -82,10 +89,13 @@ There is no second timer after expansion.
 ```mermaid
 stateDiagram-v2
   [*] --> Public
+  Public --> Cancelled: dispatcher cancellation before acceptance
   Public --> Reserved: private offer
   Public --> Accepted: first valid public claim
   Reserved --> Accepted: selected driver accepts before 20s
-  Reserved --> Public: decline or expiry
+  Reserved --> Public: early decline, original region only
+  Reserved --> Public: expiry with expansion
+  Reserved --> Stopped: expiry without expansion
   Accepted --> Waiting: driver arrives
   Waiting --> Started: customer boards
   Waiting --> Cancelled: driver or dispatcher cancellation
@@ -96,11 +106,11 @@ stateDiagram-v2
   Cancelled --> [*]
 ```
 
-The approved cancellation path is shown here. The current API additionally permits driver cancellation from Accepted, which is a known gap. Force-resolution records a completed order, not a separate status. The quoted amount is charged once at acceptance. Completion does not charge again. A driver cannot cancel after `Started`. A lost connection keeps an accepted trip assigned while new work is blocked.
+The server enforces the actor-specific cancellation path shown here. The driver can cancel only in Waiting. The dispatcher can cancel before Started, including New and Accepted. Started has no ordinary cancellation path. Force-resolution records a completed order, not a separate status. The quoted amount is charged once at acceptance. Completion does not charge again or refund it. A lost connection keeps an accepted trip assigned while new work is blocked.
 
 ## Location, address, and dispatcher map
 
-GPS and map paths are current. The shared server address-budget branch is pending.
+GPS, map paths, and the shared server address budget are merged. Provider activation is a separate deployment check.
 
 ```mermaid
 flowchart TD
@@ -109,7 +119,7 @@ flowchart TD
   R -- no --> RO[Show Outside region + live coordinates]
   RI --> M[Dispatcher map and roster]
   RO --> M
-  M --> V{Location visible to a dispatcher?}
+  M --> V{Driver location visible in app or dashboard?}
   V -- yes --> L[Optional address lookup under shared budget]
   V -- no --> C[Keep GPS only]
   L --> A[Show address if fresh]
