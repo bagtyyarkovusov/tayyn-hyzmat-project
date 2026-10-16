@@ -2163,7 +2163,22 @@ test("GPS outside every saved region keeps its actual coordinates and ignores a 
 test("a delayed address survives a nearby GPS fix during its request", async ({
   page,
 }) => {
-  await createAddressDriver(page, "+99360000325");
+  const created = await createAddressDriver(page, "+99360000325");
+  const token = await page.evaluate(() =>
+    localStorage.getItem("openride.driver.accessToken"),
+  );
+  const report = async (lat: number, lng: number) => {
+    const response = await page.request.post(
+      `${process.env.TEST_API_URL}/driver/location`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        data: { lat, lng, accuracy: 10 },
+      },
+    );
+    expect(response.ok()).toBe(true);
+  };
+  await report(37.961234, 58.321234);
+  await login(page, "admin");
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -2175,22 +2190,16 @@ test("a delayed address survives a nearby GPS fix during its request", async ({
     await gate;
     await route.fulfill({ response });
   });
-  await page.context().grantPermissions(["geolocation"]);
-  await page.context().setGeolocation({
-    latitude: 37.961234,
-    longitude: 58.321234,
-    accuracy: 10,
-  });
-  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await page.goto(`/adminDrivers/${created.id}`);
   await expect.poll(() => received).toBe(true);
-  await page.waitForTimeout(10_100);
-  await page
-    .context()
-    .setGeolocation({ latitude: 37.9613, longitude: 58.3213, accuracy: 10 });
-  const location = page.getByLabel("Местоположение GPS");
-  await expect(location).toContainText("37.9613, 58.3213");
+  await report(37.9613, 58.3213);
+  await expect(
+    page.getByText("37.96130, 58.32130", { exact: true }),
+  ).toBeVisible();
   release();
-  await expect(location).toContainText("Synthetic street, 12");
+  await expect(
+    page.getByText("Synthetic street, 12", { exact: true }),
+  ).toBeVisible();
 });
 
 test("an unavailable server Geocoder leaves GPS readiness and actual coordinates usable", async ({
