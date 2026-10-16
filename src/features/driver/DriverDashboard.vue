@@ -67,7 +67,9 @@ const alertsReady = computed(
 const alertDescription = computed(() => {
   if (alertState.pending) return "Включаем уведомления и звук…";
   if (alertState.permission === "denied")
-    return "Уведомления заблокированы. Разрешите их в настройках браузера.";
+    return nativeAndroid
+      ? "Разрешите уведомления о заказах и сообщениях в настройках приложения."
+      : "Уведомления заблокированы. Разрешите их в настройках браузера.";
   if (alertState.permission === "unsupported")
     return "Системные уведомления недоступны в этом браузере.";
   if (alertState.permission === "granted")

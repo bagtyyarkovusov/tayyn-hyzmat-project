@@ -41,6 +41,7 @@ export async function enableOrderAlerts() {
       state.permission =
         result.ordersEnabled && result.chatEnabled ? "granted" : "denied";
       state.soundReady = state.permission === "granted";
+      if (state.permission === "denied") await nativeShift.settings();
     } catch {
       state.permission = "denied";
       state.soundReady = false;

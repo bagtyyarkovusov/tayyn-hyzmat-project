@@ -1,6 +1,6 @@
 # Android driver testing
 
-This branch supplies a Firebase-free, user-started shift service. It is a test implementation, pending the device checks below and integration with dispatcher credential management and private offers.
+This branch supplies a Firebase-free, user-started shift service. It is a test implementation, integrated with dispatcher credentials and private offers; physical-phone checks below remain required.
 
 ## Shift behavior
 
@@ -20,7 +20,7 @@ Use Node/pnpm from CONTRIBUTING, JDK 17, Android SDK platform 35 and Gradle 8.2.
 pnpm install --frozen-lockfile
 export JAVA_HOME=/path/to/jdk17
 export ANDROID_HOME=/path/to/android/sdk
-export VITE_API_URL=https://your-isolated-api.example/api
+export VITE_API_URL=https://your-isolated-api.example
 export VITE_SOCKET_URL=https://your-isolated-api.example
 pnpm cap:sync
 cd android
@@ -33,7 +33,7 @@ The artifact is `android/app/build/outputs/apk/debug/TayynHyzmat-debug.apk`. A d
 
 ## Verification and remaining release gates
 
-On 2026-10-15, the isolated branch passed 27 public HTTP/Socket.IO tests, 5 backend unit tests, 18 Chromium actor workflows, TypeScript checks and app-only Android debug assembly/JUnit tests. Public regressions showed transient GPS retry, revoked native stop credentials, unread chat overflow, native shift status broadcasts and account-switch races fail before fixes and pass afterward. The two Java notification-boundary tests cover deduplication, canonical removal/expiry and channel-specific clearing. These checks do not establish native phone behavior.
+The combined isolated APK candidate passed 61 public HTTP/Socket.IO tests, 5 backend unit tests, 31 Chromium actor workflows (including focused recovery reruns), TypeScript checks and app-only Android debug assembly/JUnit tests. Public regressions showed transient GPS retry, revoked native stop credentials, unread chat overflow, native shift status broadcasts and account-switch races fail before fixes and pass afterward. The two Java notification-boundary tests cover deduplication, canonical removal/expiry and channel-specific clearing. These checks do not establish native phone behavior.
 
 Before release, run the APK against the matching isolated API on intended Android phones and record:
 
@@ -42,7 +42,13 @@ Before release, run the APK against the matching isolated API on intended Androi
 - Wi-Fi/mobile switching and lost network beyond 60 seconds; verify server offline/counts and explicit restart after lease expiry.
 - Offline/logout, task swipe, process kill, Active apps Stop, Settings Force Stop and reboot; no service resurrection or stale-account notifications.
 - Notification taps on cold/warm app, chat scrolling/read reconciliation, order acceptance/decline/expiry and audio/notification clearing.
-- Combined private-offer integration: reservation privacy, original 20-second deadline, fallback and event identity across reconnect. No client may extend a server deadline.
-- Combined credential-management integration: captured credential version on leases and immediate invalidation on phone/password reset. `revokeUserShift` is the existing explicit invalidation hook; this independent branch has no credential-version model and does not claim that integration is complete.
+- Private-offer integration is covered at HTTP seams: reservation privacy, persisted 20-second deadlines, replay identity and removal after acceptance. A timezone regression was caught and fixed. Confirm notification taps and expiry while locked on the physical phone. No client may extend a server deadline.
+- Credential-management integration is covered at HTTP seams: leases capture credential versions, reset revokes leases, and the shared user lock prevents an in-flight old renewal/start from restoring availability. Repeat reset and account switching on the physical phone.
 
 The listed local emulator could not boot because its AVD files were unavailable. No emulator or physical-device runtime test, locked-screen/Doze test or release-signature verification has been performed for this branch.
+
+## Isolated Infinix Android 14 test environment
+
+The APK candidate uses `https://apk-api-apk-test.up.railway.app` for both HTTP and Socket.IO; dispatcher testing uses `https://apk-web-apk-test.up.railway.app/adminOrders`. Its PostgreSQL service is fresh and separate from development. Accounts have synthetic 500 TMT opening balances; no payment integration is enabled. Canonical region polygons are seeded from code without reading the shared database. GPS outside these polygons retains the real position and clears the region.
+
+On the Infinix phone, grant precise location and notifications while visible, press GPS until it confirms the server update, then Online. Check foreground, Home, locked screen and network switching with dispatcher orders/chat. Record private-offer delivery time against its 20-second deadline. Check the phone's app battery settings if XOS stops the shift, without assuming an unverified menu path. Test Offline/logout immediately, and Force Stop followed by a 60-second maximum availability lease. Keep financial data synthetic until the independent financial release gates are closed.

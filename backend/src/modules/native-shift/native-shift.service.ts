@@ -78,12 +78,13 @@ export async function tick(token: string, fix: Fix) {
   const recordedAt = new Date(fix.recordedAt);
   const age = now.getTime() - recordedAt.getTime();
   if (!Number.isFinite(age) || age < -5000 || age > 30000) throw ApiError.badRequest('Требуется свежее местоположение');
-  const nearest = await districts.findNearestDistrictForPoint(fix.lat, fix.lng);
+  const nearest = await districts.findDistrictForGpsPoint(fix.lat, fix.lng);
   const renewed = await prisma.$transaction(async tx => {
     // The same user lock guards password/phone changes, availability and native renewal.
     await tx.$queryRaw`SELECT u.id FROM users u JOIN drivers d ON d.user_id = u.id JOIN native_shift_leases n ON n.driver_id = d.id WHERE n.token_hash = ${digest(token)} FOR UPDATE OF u`;
     const rows = await tx.$queryRaw<Lease[]>`SELECT * FROM native_shift_leases WHERE token_hash = ${digest(token)} FOR UPDATE`;
     const now = new Date();
+    if (now.getTime() - recordedAt.getTime() > 30000) throw ApiError.badRequest('Требуется свежее местоположение');
     const lease = rows[0];
     if (!lease || lease.revoked_at || lease.expires_at.getTime() <= now.getTime()) throw ApiError.unauthorized('Смена завершена');
     // Lock driver status against explicit offline/admin/device changes during renewal.
@@ -92,7 +93,7 @@ export async function tick(token: string, fix: Fix) {
     if (!driver || !driver.isOnline || driver.status !== 'APPROVED' || driver.user.status === 'BLOCKED' || driver.user.credentialVersion !== lease.credential_version || driver.currentDeviceId !== lease.device_id) throw ApiError.unauthorized('Смена завершена');
     const expires = new Date(now.getTime() + GPS_FRESHNESS_MS);
     await tx.$executeRaw`UPDATE native_shift_leases SET expires_at = ${expires} WHERE driver_id = ${driver.id}`;
-    const updated = await tx.driver.update({ where: { id: driver.id }, data: { lastLat: fix.lat, lastLng: fix.lng, lastLocationAt: now, ...(nearest ? { districtId: nearest.id } : {}) } });
+    const updated = await tx.driver.update({ where: { id: driver.id }, data: { lastLat: fix.lat, lastLng: fix.lng, lastLocationAt: now, districtId: nearest?.id ?? null } });
     await tx.driverLocation.create({ data: { driverId: driver.id, lat: fix.lat, lng: fix.lng, accuracy: fix.accuracy, recordedAt } });
     return { driver: updated, lease, expires, balance: Number(driver.user.balance?.amount ?? 0) };
   });

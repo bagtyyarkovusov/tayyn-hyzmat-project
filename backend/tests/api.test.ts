@@ -443,7 +443,7 @@ test('canonical bootstrap fills a missing boundary without changing an existing 
 });
 
 test('native inbox safely replays notifications and removes consumed orders and chats', async () => {
-  const island = await prisma.district.create({ data: { name: 'Native synthetic island', centerLat: 0, centerLng: 0 } });
+  const island = await prisma.district.create({ data: { name: 'Native synthetic island', centerLat: 0, centerLng: 0, boundary: [[[-0.01, -0.01], [0.01, -0.01], [0.01, 0.01], [-0.01, 0.01]]] } });
   const auth = await request('/auth/login', '', { phone: '+10000000101', password, deviceId: 'native-test-device' });
   await request('/driver/location', auth.data.accessToken, { lat: 0, lng: 0 });
   await request('/driver/status', auth.data.accessToken, { isOnline: true });
