@@ -1229,7 +1229,9 @@ test("regional queues and counts recover through updates, reconnect and reload",
       await dispatcher.request.get("/api/districts", { headers })
     ).json();
     const other = regions.find(
-      (r: { id: string }) => r.id !== process.env.TEST_REGION_ID,
+      // This recovery test uses the driver's initial regional window.
+      // Cross-region deadline/claim behavior has dedicated API/socket coverage.
+      (r: { id: string }) => r.id === process.env.TEST_REGION_ID,
     );
     const card = driver
       .getByRole("group", { name: "Регионы", exact: true })
