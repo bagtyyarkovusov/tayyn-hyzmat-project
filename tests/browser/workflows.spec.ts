@@ -683,7 +683,12 @@ test("driver history hides single-page navigation and resets the page when switc
       `${process.env.TEST_API_URL}/admin/drivers/${driverId}/balance`,
       {
         headers,
-        data: { amount: 1, type: "TOPUP", note: `Проверка страниц ${i}` },
+        data: {
+          operationId: crypto.randomUUID(),
+          amount: 1,
+          type: "TOPUP",
+          note: `Проверка страниц ${i}`,
+        },
       },
     );
     expect(response.ok()).toBe(true);
@@ -2320,7 +2325,12 @@ async function createAddressDriver(page: Page, phone: string) {
     `${process.env.TEST_API_URL}/admin/drivers/${driver.id}/balance`,
     {
       headers: { Authorization: `Bearer ${token}` },
-      data: { amount: 500, type: "TOPUP", note: "Synthetic address fixture" },
+      data: {
+        operationId: crypto.randomUUID(),
+        amount: 500,
+        type: "TOPUP",
+        note: "Synthetic address fixture",
+      },
     },
   );
   expect(topup.ok()).toBe(true);
@@ -2550,7 +2560,14 @@ test("underfunded public orders stay visible with disabled acceptance and a top-
       (
         await admin.request.post(
           `${process.env.TEST_API_URL}/admin/drivers/${driverId}/balance`,
-          { headers, data: { amount: 15, type: "TOPUP" } },
+          {
+            headers,
+            data: {
+              operationId: crypto.randomUUID(),
+              amount: 15,
+              type: "TOPUP",
+            },
+          },
         )
       ).ok(),
     ).toBe(true);
@@ -2636,7 +2653,14 @@ test("private offer picker disables an online driver whose balance cannot cover 
       (
         await admin.request.post(
           `${process.env.TEST_API_URL}/admin/drivers/${driverId}/balance`,
-          { headers, data: { amount: 15, type: "TOPUP" } },
+          {
+            headers,
+            data: {
+              operationId: crypto.randomUUID(),
+              amount: 15,
+              type: "TOPUP",
+            },
+          },
         )
       ).ok(),
     ).toBe(true);
@@ -2895,10 +2919,14 @@ test("monitoring keeps a claimed driver busy across delayed snapshots and reconn
     );
     expect(created.ok()).toBe(true);
     const driverId = (await created.json()).id;
-    await admin.request.post(
+    const funded = await admin.request.post(
       `${process.env.TEST_API_URL}/admin/drivers/${driverId}/balance`,
-      { headers, data: { amount: 100, type: "TOPUP" } },
+      {
+        headers,
+        data: { operationId: crypto.randomUUID(), amount: 100, type: "TOPUP" },
+      },
     );
+    expect(funded.ok()).toBe(true);
     await login(driver, "driver", phone);
     await startGps(driver);
     await driver
@@ -3060,6 +3088,55 @@ test("today overview stays compact on mobile and separates request failure from 
     ).toBeLessThanOrEqual(320);
     await expect(today).toBeVisible();
   }
+});
+
+test("dispatcher retries a lost wallet response without applying the adjustment twice", async ({
+  page,
+}) => {
+  await login(page, "admin");
+  const token = await page.evaluate(() =>
+    localStorage.getItem("openride.admin.accessToken"),
+  );
+  const created = await page.request.post(
+    `${process.env.TEST_API_URL}/admin/drivers`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+      data: {
+        fullName: "Retry wallet driver",
+        phone: "+99361999881",
+        password,
+      },
+    },
+  );
+  expect(created.ok()).toBe(true);
+  const driver = await created.json();
+  await page.goto(`/adminDrivers/${driver.id}`);
+  await page.getByRole("button", { name: "Баланс", exact: true }).click();
+  await page.getByLabel("Сумма, TMT", { exact: true }).fill("15");
+  const keys: string[] = [];
+  await page.route(`**/admin/drivers/${driver.id}/balance`, async (route) => {
+    const body = route.request().postDataJSON();
+    keys.push(body.operationId);
+    const response = await route.fetch();
+    if (keys.length === 1) await route.abort("failed");
+    else await route.fulfill({ response });
+  });
+  await page.getByRole("button", { name: "Пополнить", exact: true }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await page.getByRole("button", { name: "Пополнить", exact: true }).click();
+  await expect(
+    page.getByText("Изменения сохранены", { exact: true }),
+  ).toBeVisible();
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toBeTruthy();
+  expect(keys[1]).toBe(keys[0]);
+  const history = await page.request.get(
+    `${process.env.TEST_API_URL}/admin/drivers/${driver.id}/history`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  const ledger = await history.json();
+  expect(ledger.transactions.total).toBe(1);
+  expect(ledger.transactions.items[0].balanceAfter).toBe("15");
 });
 
 test("driver cancellation is visible only while waiting for the passenger", async ({
