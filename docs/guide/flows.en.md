@@ -106,7 +106,7 @@ stateDiagram-v2
   Cancelled --> [*]
 ```
 
-The approved cancellation path is shown here. The current API additionally permits driver cancellation from Accepted, which is a known gap. Force-resolution records a completed order, not a separate status. The quoted amount is charged once at acceptance. Completion does not charge again. A driver cannot cancel after `Started`. A lost connection keeps an accepted trip assigned while new work is blocked.
+The approved cancellation path is shown here. The current API additionally permits dispatcher cancellation from Started, which is a known gap until the approved fix merges. Force-resolution records a completed order, not a separate status. The quoted amount is charged once at acceptance. Completion does not charge again. A driver cannot cancel after `Started`. A lost connection keeps an accepted trip assigned while new work is blocked.
 
 ## Location, address, and dispatcher map
 
