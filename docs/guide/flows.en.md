@@ -1,8 +1,10 @@
 # Tayyn Hyzmat flow diagrams in English
 
-The diagrams use the approved state model. Solid paths describe `main` today. Dashed paths are the approved public-expansion change still under review in PR #79.
+Each diagram states whether it describes the current implementation or an approved change. Readiness-state separation and all-region expansion are pending.
 
 ## Driver readiness and shift
+
+Approved target contract; the readiness implementation is pending.
 
 ```mermaid
 stateDiagram-v2
@@ -88,16 +90,17 @@ stateDiagram-v2
   Waiting --> Started: customer boards
   Waiting --> Cancelled: driver or dispatcher cancellation
   Started --> Completed: driver completes
-  Started --> Resolved: dispatcher force-resolves with reason
+  Started --> Completed: dispatcher force-completes with reason
   Accepted --> Cancelled: dispatcher cancellation
   Completed --> [*]
   Cancelled --> [*]
-  Resolved --> [*]
 ```
 
-The quoted amount is charged once at acceptance. Completion does not charge again. A driver cannot cancel after `Started`. A lost connection keeps an accepted trip assigned while new work is blocked.
+The approved cancellation path is shown here. The current API additionally permits driver cancellation from Accepted, which is a known gap. Force-resolution records a completed order, not a separate status. The quoted amount is charged once at acceptance. Completion does not charge again. A driver cannot cancel after `Started`. A lost connection keeps an accepted trip assigned while new work is blocked.
 
 ## Location, address, and dispatcher map
+
+GPS and map paths are current. The shared server address-budget branch is pending.
 
 ```mermaid
 flowchart TD

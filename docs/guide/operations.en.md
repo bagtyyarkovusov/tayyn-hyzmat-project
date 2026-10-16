@@ -63,7 +63,7 @@ The normal sequence is:
 4. The driver starts the trip after the customer boards.
 5. The driver completes the trip.
 
-The driver can cancel only while waiting for the customer. Once the trip has started, the driver cannot cancel. The dispatcher can resolve a stuck started trip with a required reason. The resolution is recorded and does not silently auto-complete a trip. PR #80 (`e821397`) is merged and deployed with this behavior.
+The approved rule is driver cancellation only while waiting for the customer. The current API also permits cancellation in `ACCEPTED`; that is a known gap and should not be treated as the intended rule. Once the trip has started, the driver cannot cancel. After 15 minutes, a started trip shows a Needs completion warning. The dispatcher can force-complete a stuck started trip with a required reason. This keeps its assignment and original charge and records who resolved it. The resolution is recorded and does not silently auto-complete a trip. PR #80 (`e821397`) is merged and deployed with this behavior.
 
 If a driver loses network after acceptance, the trip remains assigned. New offers stop until the lease and GPS rules allow work again. A dispatcher sees the last location with its age; a stale point is not treated as live eligibility.
 
