@@ -100,6 +100,7 @@ model User {
   receivedMessages Message[]      @relation("ReceivedMessages")
   notifications    Notification[]
   refreshTokens    RefreshToken[]
+  orderResolutionAudits OrderResolutionAudit[] @relation("OrderResolutionActors")
 
   @@map("users")
 }
@@ -328,11 +329,30 @@ model Order {
 
   transactions Transaction[]
   messages     Message[]
+  resolutionAudits OrderResolutionAudit[]
 
   @@index([status])
   @@index([driverId])
   @@index([districtId])
   @@map("orders")
+}
+
+// Explicit dispatcher actions used to resolve a trip that the driver did not
+// complete. This is intentionally separate from cancelReason: a forced
+// completion is not a cancellation and must remain attributable to the admin
+// who performed it.
+model OrderResolutionAudit {
+  id        String   @id @default(uuid())
+  orderId   String   @map("order_id")
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  actorId   String   @map("actor_id")
+  actor     User     @relation("OrderResolutionActors", fields: [actorId], references: [id])
+  action    String
+  reason    String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([orderId, createdAt])
+  @@map("order_resolution_audits")
 }
 
 // ---------------------------------------------------------------------------

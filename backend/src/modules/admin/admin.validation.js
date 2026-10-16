@@ -20,6 +20,10 @@ const blockSchema = z.object({
   reason: z.string().trim().max(500).optional()
 });
 
+const resolveOrderSchema = z.object({
+  reason: z.string().trim().min(1, 'Укажите причину принудительного завершения').max(500)
+});
+
 const balanceAdjustSchema = z.object({
   amount: z.number().refine((v) => v !== 0, 'Сумма не может быть равна нулю'),
   type: z.enum(['TOPUP', 'WITHDRAWAL', 'ADJUSTMENT', 'BONUS']).default('ADJUSTMENT'),
@@ -84,6 +88,7 @@ module.exports = {
   orderIdParamSchema,
   listDriversQuerySchema,
   blockSchema,
+  resolveOrderSchema,
   balanceAdjustSchema,
   historyQuerySchema,
   messageSchema,

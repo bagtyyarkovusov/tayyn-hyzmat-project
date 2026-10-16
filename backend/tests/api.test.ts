@@ -355,6 +355,36 @@ test('dispatcher cancellation refunds the quoted charge with matching ledger ent
   });
 });
 
+test('dispatcher can explicitly resolve a stuck started trip with an audit reason', async () => {
+  const created = await order();
+  const body = { orderId: created.id };
+  assert.equal((await request('/orders/accept', driverToken, body)).status, 200);
+  assert.equal((await request('/orders/waiting', driverToken, body)).status, 200);
+  assert.equal((await request('/orders/start', driverToken, body)).status, 200);
+  await prisma.order.update({
+    where: { id: created.id },
+    data: { startedAt: new Date(Date.now() - 20 * 60 * 1000) }
+  });
+
+  const visible = await request('/admin/orders?status=active', adminToken);
+  const row = visible.data.items.find((item: { id: string }) => item.id === created.id);
+  assert.equal(row.needsCompletion, true);
+  assert.ok(row.startedAgeSeconds >= 20 * 60);
+  assert.equal((await request(`/admin/orders/${created.id}/force-resolve`, adminToken, {})).status, 400);
+
+  const resolved = await request(`/admin/orders/${created.id}/force-resolve`, adminToken, { reason: 'Клиент подтвердил завершение по телефону' });
+  assert.equal(resolved.status, 200);
+  assert.equal(resolved.data.status, 'COMPLETED');
+  assert.equal((await request('/orders/current', driverToken)).data, null);
+  const driver = await request('/driver/profile', driverToken);
+  assert.equal(driver.data.isAvailable, true);
+  const audit = await prisma.orderResolutionAudit.findFirst({ where: { orderId: created.id } });
+  assert.equal(audit?.action, 'FORCE_COMPLETED');
+  assert.equal(audit?.reason, 'Клиент подтвердил завершение по телефону');
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '490');
+  assert.equal((await request(`/admin/orders/${created.id}/force-resolve`, adminToken, { reason: 'Повтор' })).status, 409);
+});
+
 for (const price of [null, 0, -10]) {
   test(`accepting and cancelling an order priced ${price} leaves the balance and ledger unchanged`, async () => {
     const created = await order(null);

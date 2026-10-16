@@ -5,7 +5,13 @@ import { Button } from "@/shared/ui/button";
 import { MapPin, ArrowDown, Phone } from "lucide-vue-next";
 import { date, money, statusLabel, type Order } from "../domain";
 defineProps<{ order: Order; cancellable?: boolean; offerable?: boolean }>();
-defineEmits<{ cancel: [Order]; offer: [Order] }>();
+defineEmits<{ cancel: [Order]; offer: [Order]; resolve: [Order] }>();
+const ageLabel = (seconds?: number | null) => {
+  if (seconds == null) return "";
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  return hours ? `${hours}ч ${minutes % 60}м` : `${minutes}м`;
+};
 </script>
 <template>
   <article class="rounded-xl border bg-card p-4 sm:p-5">
@@ -52,6 +58,16 @@ defineEmits<{ cancel: [Order]; offer: [Order] }>();
           ><Phone class="size-3" />{{ formatPhone(order.clientPhone) }}</a
         >
         <p v-if="order.note">{{ order.note }}</p>
+        <p
+          v-if="order.status === 'STARTED'"
+          class="font-medium"
+          :class="
+            order.needsCompletion ? 'text-destructive' : 'text-muted-foreground'
+          "
+        >
+          {{ order.needsCompletion ? "Требует завершения" : "В пути" }} ·
+          {{ ageLabel(order.startedAgeSeconds) }}
+        </p>
       </div>
       <Button
         v-if="
@@ -68,6 +84,13 @@ defineEmits<{ cancel: [Order]; offer: [Order] }>();
         size="sm"
         @click="$emit('cancel', order)"
         >Отменить заказ</Button
+      >
+      <Button
+        v-if="order.status === 'STARTED' && order.needsCompletion"
+        variant="destructive"
+        size="sm"
+        @click="$emit('resolve', order)"
+        >Завершить вручную</Button
       >
     </div>
   </article>
