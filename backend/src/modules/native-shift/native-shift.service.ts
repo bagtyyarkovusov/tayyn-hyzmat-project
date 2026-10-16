@@ -103,10 +103,17 @@ export async function tick(token: string, fix: Fix) {
   const events: Event[] = [];
   const active = await prisma.order.findFirst({ where: { driverId: renewed.driver.id, status: { in: ['ACCEPTED', 'WAITING', 'STARTED'] } }, select: { id: true } });
   if (!active && renewed.driver.isAvailable && renewed.balance > 0) {
-    // to_jsonb tolerates installs before the additive private-offer migration.
-    // Never deliver a reserved order to anyone except its intended recipient.
-    const orders = await prisma.$queryRaw<Array<{ id: string; private_expiry: string | null }>>`SELECT o.id, to_jsonb(o)->>'private_offer_expires_at' AS private_expiry FROM orders o WHERE o.status = 'NEW' AND o.driver_id IS NULL AND ((to_jsonb(o)->>'private_offer_driver_id' IS NULL AND o.district_id = ${renewed.driver.districtId}) OR (to_jsonb(o)->>'private_offer_driver_id' = ${renewed.driver.id} AND (to_jsonb(o)->>'private_offer_expires_at')::timestamptz > ${now})) ORDER BY o.created_at ASC LIMIT 100`;
-    for (const order of orders) events.push({ id: order.private_expiry ? `private:${order.id}:${new Date(order.private_expiry).toISOString()}` : `order:${order.id}`, channel: 'orders', title: 'Новый заказ', body: order.private_expiry ? 'Личное предложение. Откройте приложение.' : 'Заказ в вашем районе. Откройте приложение.', orderId: order.id, expiresAt: order.private_expiry ? new Date(order.private_expiry).toISOString() : renewed.expires.toISOString() });
+    const orders = await prisma.order.findMany({
+      where: { status: 'NEW', driverId: null, OR: [
+        { privateOfferDriverId: null, districtId: renewed.driver.districtId },
+        { privateOfferDriverId: renewed.driver.id, privateOfferExpiresAt: { gt: now } }
+      ] },
+      select: { id: true, privateOfferExpiresAt: true }, orderBy: { createdAt: 'asc' }, take: 100
+    });
+    for (const order of orders) {
+      const expiry = order.privateOfferExpiresAt?.toISOString();
+      events.push({ id: expiry ? `private:${order.id}:${expiry}` : `order:${order.id}`, channel: 'orders', title: 'Новый заказ', body: expiry ? 'Личное предложение. Откройте приложение.' : 'Заказ в вашем районе. Откройте приложение.', orderId: order.id, expiresAt: expiry ?? renewed.expires.toISOString() });
+    }
   }
   const after = new Date(Math.max(renewed.lease.started_at.getTime(), renewed.driver.lastChatReadAt?.getTime() ?? 0));
   const messages = await prisma.message.findMany({ where: { OR: [{ receiverId: renewed.driver.userId }, { isBroadcast: true }], NOT: { senderId: renewed.driver.userId }, sentAt: { gt: after } }, select: { id: true }, orderBy: [{ sentAt: 'desc' }, { id: 'desc' }], take: 100 });
