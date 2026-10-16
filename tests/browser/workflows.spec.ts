@@ -2569,6 +2569,7 @@ test("fresh acknowledged GPS enters a shift without another preflight upload and
     .setGeolocation({ latitude: 37.97, longitude: 58.33, accuracy: 10 });
   await page.waitForTimeout(300);
   expect(uploads).toBe(0);
+});
 
 test("dispatcher driver details follow fresh location events without a manual refresh", async ({
   page,
