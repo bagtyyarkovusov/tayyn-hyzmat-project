@@ -77,6 +77,11 @@ const cancelOrder = asyncHandler(async (req, res) => {
   res.json(order);
 });
 
+const forceResolveOrder = asyncHandler(async (req, res) => {
+  const order = await ordersService.forceResolveStarted(req.params.id, req.user.id, req.body.reason);
+  res.json(order);
+});
+
 const activity = asyncHandler(async (req, res) => {
   const events = await service.getActivity({ limit: req.query.limit });
   res.json({ items: events });
@@ -134,6 +139,7 @@ module.exports = {
   createOrder,
   listOrders,
   cancelOrder,
+  forceResolveOrder,
   activity,
   driverMessages,
   updateVehicle,

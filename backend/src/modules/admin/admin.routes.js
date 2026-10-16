@@ -6,6 +6,7 @@ const {
   orderIdParamSchema,
   listDriversQuerySchema,
   blockSchema,
+  resolveOrderSchema,
   balanceAdjustSchema,
   historyQuerySchema,
   messageSchema,
@@ -90,6 +91,7 @@ router.get('/orders', validate({ query: listOrdersQuerySchema }), controller.lis
 // on their own order), this works on any not-yet-finished order, assigned
 // or not - see orders.service.js#adminCancel.
 router.post('/orders/:id/cancel', validate({ params: orderIdParamSchema, body: blockSchema }), controller.cancelOrder);
+router.post('/orders/:id/force-resolve', validate({ params: orderIdParamSchema, body: resolveOrderSchema }), controller.forceResolveOrder);
 
 // "Кто и что делал" - see admin.service.js#getActivity for exactly what
 // this aggregates and its one honest gap (order cancellations have no actor).

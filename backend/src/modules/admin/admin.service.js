@@ -442,13 +442,28 @@ async function listOrders({ status, page, limit }) {
       take: limit,
       include: {
         driver: { include: { user: { select: { fullName: true, phone: true } } } },
-        district: true
+        district: true,
+        resolutionAudits: { orderBy: { createdAt: 'desc' }, take: 1, include: { actor: { select: { fullName: true } } } }
       }
     }),
     prisma.order.count({ where })
   ]);
 
-  return { items, total, page, limit };
+  const now = Date.now();
+  return {
+    items: items.map((order) => ({
+      ...order,
+      startedAgeSeconds: order.status === 'STARTED' && order.startedAt
+        ? Math.max(0, Math.floor((now - order.startedAt.getTime()) / 1000))
+        : null,
+      needsCompletion: order.status === 'STARTED' && order.startedAt
+        ? now - order.startedAt.getTime() >= 15 * 60 * 1000
+        : false
+    })),
+    total,
+    page,
+    limit
+  };
 }
 
 // "Кто и что делал" - a real activity feed built from data the schema
