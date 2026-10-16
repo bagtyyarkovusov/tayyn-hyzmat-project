@@ -112,6 +112,7 @@ try {
     VITE_YANDEX_MAPS_API_KEY: serving ? "" : "synthetic-browser-test-key",
     VUE_APP_YANDEX_MAPS_API_KEY: "",
     DISPOSABLE_BROWSER_TEST: "true",
+    TAYYN_TEST_STATIC: serving ? "false" : "true",
     TEST_BASE_URL: `http://127.0.0.1:${webPort}`,
     TEST_API_URL: `http://127.0.0.1:${apiPort}`,
     TEST_ACCOUNT_PASSWORD: accountPassword,

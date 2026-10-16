@@ -15,6 +15,10 @@ export default defineConfig({
     },
   },
   server: {
+    // Bounded browser checks must keep the loaded app stable while traces and
+    // screenshots are written. Interactive previews retain normal HMR.
+    hmr: process.env.TAYYN_TEST_STATIC === "true" ? false : undefined,
+    watch: process.env.TAYYN_TEST_STATIC === "true" ? null : undefined,
     port: 5185,
     strictPort: true,
     proxy: {
