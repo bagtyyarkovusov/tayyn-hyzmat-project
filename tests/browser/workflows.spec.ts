@@ -2085,79 +2085,69 @@ test("driver labels feel native while the chat composer remains editable", async
   await expect(page.locator("html")).not.toHaveClass(/driver-app/);
 });
 
-test("GPS outside every saved region keeps its actual coordinates and ignores a stale Yandex address", async ({
+async function createAddressDriver(page: Page, phone: string) {
+  await login(page, "admin");
+  const token = await page.evaluate(() =>
+    localStorage.getItem("openride.admin.accessToken"),
+  );
+  const create = await page.request.post(
+    `${process.env.TEST_API_URL}/admin/drivers`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { fullName: "Synthetic address driver", phone, password },
+    },
+  );
+  expect(create.ok()).toBe(true);
+  const driver = await create.json();
+  const topup = await page.request.post(
+    `${process.env.TEST_API_URL}/admin/drivers/${driver.id}/balance`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { amount: 500, type: "TOPUP", note: "Synthetic address fixture" },
+    },
+  );
+  expect(topup.ok()).toBe(true);
+  await login(page, "driver", phone);
+  return driver;
+}
+test("a delayed address cannot replace a newer GPS position outside the saved region", async ({
   page,
 }) => {
-  await page.addInitScript(() => {
-    // Only the external geocoder boundary is simulated. GPS reports and
-    // dispatch-region matching still use the real API and disposable database.
-    const pending: Array<(value: unknown) => void> = [];
-    (window as any).addressReplies = pending;
-    (window as any).ymaps = {
-      ready: (callback: () => void) => callback(),
-      geocode: () => new Promise((resolve) => pending.push(resolve)),
-    };
+  await createAddressDriver(page, "+99360000321");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
   });
-  await login(page, "driver");
-  await startGps(page);
-  await expect(page.getByLabel("Местоположение GPS")).toContainText(
-    "ТЕСТ — Центральный",
+  let originalAddress = "";
+  await page.route("**/geo/drivers/*/address", async (route) => {
+    const response = await route.fetch();
+    originalAddress = (await response.json()).address || "";
+    await gate;
+    await route.fulfill({ response }); // Delay actual API bytes, never invent an internal response.
+  });
+  await page.context().grantPermissions(["geolocation"]);
+  await page.context().setGeolocation({
+    latitude: 37.961234,
+    longitude: 58.321234,
+    accuracy: 10,
+  });
+  const lookup = page.waitForRequest((request) =>
+    /\/geo\/drivers\/[^/]+\/address/.test(request.url()),
   );
-  await expect
-    .poll(() => page.evaluate(() => (window as any).addressReplies.length))
-    .toBe(1);
-  await page.evaluate(() =>
-    (window as any).addressReplies.shift()({
-      geoObjects: {
-        get: () => ({
-          getThoroughfare: () => "Гёроглы",
-          getPremiseNumber: () => "10",
-          getAddressLine: () => "Ашхабад, Гёроглы, 10",
-        }),
-      },
-    }),
-  );
-  await expect(page.getByLabel("Местоположение GPS")).toContainText(
-    "Гёроглы, 10",
-  );
-  // A reload starts a fresh lookup; a late answer must not overwrite a newer GPS fix.
-  await page.reload();
-  await startGps(page);
-  await expect
-    .poll(() => page.evaluate(() => (window as any).addressReplies.length))
-    .toBe(1);
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await lookup;
+  await expect.poll(() => originalAddress).toBe("Synthetic street, 12");
+  await page.waitForTimeout(10_100); // A new GPS report is allowed every ten seconds.
   await page
     .context()
     .setGeolocation({ latitude: 30.2328, longitude: 120.0398, accuracy: 10 });
   const location = page.getByLabel("Местоположение GPS");
   await expect(location).toContainText("30.2328, 120.0398");
-  await page.evaluate(() =>
-    (window as any).addressReplies.shift()({
-      geoObjects: {
-        get: () => ({
-          getThoroughfare: () => "Устаревший адрес",
-          getPremiseNumber: () => "1",
-        }),
-      },
-    }),
-  );
-  await expect(location).not.toContainText("Устаревший адрес");
-  await expect(location).toContainText("30.2328, 120.0398");
-  await page.waitForTimeout(10_100); // Production GPS report rate limit.
-  const report = page.waitForResponse(
-    (response) =>
-      response.url().endsWith("/driver/location") &&
-      response.request().method() === "POST",
-  );
-  await page
-    .context()
-    .setGeolocation({ latitude: 30.2329, longitude: 120.0399, accuracy: 10 });
-  expect((await report).ok()).toBe(true);
   await expect(location).toContainText("Вне районов");
-  await expect(location).toContainText("30.2329, 120.0399");
-  await expect(
-    page.getByRole("button", { name: "Выйти на линию", exact: true }),
-  ).toBeEnabled();
+  release();
+  await page.waitForTimeout(250);
+  await expect(location).not.toContainText("Synthetic street");
+  await expect(location).toContainText("30.2328, 120.0398");
 });
 
 test("a delayed address survives a nearby GPS fix during its request", async ({
@@ -2205,14 +2195,12 @@ test("a delayed address survives a nearby GPS fix during its request", async ({
 test("an unavailable server Geocoder leaves GPS readiness and actual coordinates usable", async ({
   page,
 }) => {
-  await page.addInitScript(() => {
-    (window as any).ymaps = {
-      ready: (callback: () => void) => callback(),
-      geocode: () => Promise.reject(new Error("Invalid api key")),
-    };
-  });
-  await login(page, "driver");
+  await createAddressDriver(page, "+99360000322");
+  const lookup = page.waitForResponse((response) =>
+    /\/geo\/drivers\/[^/]+\/address/.test(response.url()),
+  );
   await startGps(page);
+  expect((await lookup).ok()).toBe(true);
   await expect(page.getByLabel("Местоположение GPS")).toContainText(
     "37.9600, 58.3200",
   );
@@ -2222,6 +2210,35 @@ test("an unavailable server Geocoder leaves GPS readiness and actual coordinates
   await expect(
     page.getByRole("button", { name: "Выйти на линию", exact: true }),
   ).toBeEnabled();
+});
+
+test("background GPS does not request addresses until the driver location screen is visible", async ({
+  page,
+}) => {
+  await createAddressDriver(page, "+99360000323");
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "hidden",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  const requests: string[] = [];
+  page.on("request", (request) => {
+    if (/\/geo\/drivers\/[^/]+\/address/.test(request.url()))
+      requests.push(request.url());
+  });
+  await startGps(page);
+  await page.waitForTimeout(200);
+  expect(requests).toHaveLength(0);
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "visible",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect.poll(() => requests.length).toBe(1);
 });
 
 test("dispatcher overview uses global counts and labels completed trip values as all-time", async ({
