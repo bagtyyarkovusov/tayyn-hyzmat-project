@@ -1,5 +1,8 @@
 const { Prisma } = require('@prisma/client');
 const dataset = require('./data/default-regions.json');
+const previousCanonicalNames = {
+  '6fd3ea19-bcf1-41b3-8af1-df94f62b5f2f': 'Ачабил, Бекреве'
+};
 
 // These are operational dispatch regions approved by the project owner.
 // Existing edited geometry always wins over the repository bootstrap defaults.
@@ -7,10 +10,19 @@ async function seedDefaultRegions(tx) {
   const result = { created: 0, filled: 0, preserved: 0 };
   for (const region of dataset.regions) {
     const matches = await tx.district.findMany({ where: { OR: [{ id: region.id }, { name: region.name }] } });
-    if (matches.length > 1 || (matches.length === 1 && matches[0].name !== region.name)) {
+    const knownPreviousName = matches.length === 1 && matches[0].id === region.id
+      && matches[0].name === previousCanonicalNames[region.id];
+    if (matches.length > 1 || (matches.length === 1 && matches[0].name !== region.name && !knownPreviousName)) {
       throw new Error(`Ambiguous default region identity: ${region.name}. Resolve manually before seeding.`);
     }
     const existing = matches[0];
+    if (knownPreviousName) {
+      // Bootstrap may run before the data migration. Never rename by name alone.
+      await tx.district.updateMany({
+        where: { id: region.id, name: previousCanonicalNames[region.id] },
+        data: { name: region.name }
+      });
+    }
     if (!existing) {
       await tx.district.create({ data: {
         ...region, city: 'Ашхабад', baseFare: 5, perKmRate: 1.5, perMinRate: 0.3
