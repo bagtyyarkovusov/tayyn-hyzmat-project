@@ -5,6 +5,7 @@ const ApiError = require('../../utils/ApiError');
 
 interface QuotedOrder {
   id: string;
+  orderNumber: number;
   priceEstimated?: Prisma.Decimal.Value | null;
 }
 
@@ -43,8 +44,8 @@ export async function recordOrderCharge(
       amount: payment ? price.negated() : price,
       balanceAfter,
       note: payment
-        ? `Заказ #${order.id}: цена поездки списана при принятии`
-        : `Заказ #${order.id}: возврат за отменённую поездку`
+        ? `Заказ #${order.orderNumber}: цена поездки списана при принятии`
+        : `Заказ #${order.orderNumber}: возврат за отменённую поездку`
     }
   });
   return balanceAfter;

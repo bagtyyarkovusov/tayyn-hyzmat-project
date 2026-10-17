@@ -216,9 +216,11 @@ async function getHistory(driver, { page, limit }) {
     prisma.order.count({ where: { driverId: driver.id } })
   ]);
 
+  // History never exposes customer contact; the call action belongs to active trips.
+  const safeOrders = orders.map(({ clientPhone: _clientPhone, ...order }) => order);
   return {
     transactions: { items: transactions, total: transactionsTotal, page, limit },
-    orders: { items: orders, total: ordersTotal, page, limit }
+    orders: { items: safeOrders, total: ordersTotal, page, limit }
   };
 }
 

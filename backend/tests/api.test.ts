@@ -2,6 +2,8 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { randomUUID, generateKeyPairSync } from 'node:crypto';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { io as connect, Socket } from 'socket.io-client';
@@ -645,11 +647,11 @@ test('dispatcher cancellation refunds the quoted charge with matching ledger ent
   }) => ({ orderId: entry.orderId, type: entry.type, amount: entry.amount, balanceAfter: entry.balanceAfter, note: entry.note }));
   assert.deepEqual(entries.find((entry: { type: string }) => entry.type === 'PAYMENT'), {
     orderId: created.id, type: 'PAYMENT', amount: '-10', balanceAfter: '490',
-    note: `Заказ #${created.id}: цена поездки списана при принятии`
+    note: `Заказ #${created.orderNumber}: цена поездки списана при принятии`
   });
   assert.deepEqual(entries.find((entry: { type: string }) => entry.type === 'REFUND'), {
     orderId: created.id, type: 'REFUND', amount: '10', balanceAfter: '500',
-    note: `Заказ #${created.id}: возврат за отменённую поездку`
+    note: `Заказ #${created.orderNumber}: возврат за отменённую поездку`
   });
 });
 
@@ -2898,5 +2900,155 @@ test('reading chat while FCM delivery is in flight still promptly removes the de
     first = false;
     started();
     await gate;
+  });
+});
+
+test("global sequential order numbers are stable across concurrent creation, queues, active trips and wallet history", async () => {
+  await socket(adminToken);
+  const created = await Promise.all(Array.from({ length: 12 }, () => order()));
+  const numbers = created.map((item) => item.orderNumber);
+  assert.equal(new Set(numbers).size, 12);
+  assert.ok(numbers.every((number) => Number.isInteger(number) && number > 0));
+  const highest = Math.max(...numbers);
+  await prisma.order.delete({
+    where: { id: created.find((item) => item.orderNumber === highest).id },
+  });
+  const next = await order();
+  assert.equal(next.orderNumber, highest + 1);
+  const available = await request(
+    `/orders/available?districtId=${regionId}`,
+    driverToken,
+  );
+  assert.equal(
+    available.data.find((item: { id: string }) => item.id === next.id)
+      ?.orderNumber,
+    next.orderNumber,
+  );
+  const accepted = await request("/orders/accept", driverToken, {
+    orderId: next.id,
+  });
+  assert.equal(accepted.data.orderNumber, next.orderNumber);
+  const current = await request("/orders/current", driverToken);
+  assert.equal(current.data.orderNumber, next.orderNumber);
+  const found = await request(`/admin/orders?orderNumber=${next.orderNumber}`, adminToken);
+  assert.equal(found.data.total, 1);
+  assert.equal(found.data.items[0].id, next.id);
+  const history = await request("/driver/history", driverToken);
+  assert.equal(
+    history.data.orders.items.find(
+      (item: { id: string }) => item.id === next.id,
+    )?.orderNumber,
+    next.orderNumber,
+  );
+  assert.equal(
+    history.data.orders.items.some((item: object) => "clientPhone" in item),
+    false,
+  );
+  assert.ok(
+    history.data.transactions.items.some(
+      (item: { note: string }) =>
+        item.note ===
+        `Заказ #${next.orderNumber}: цена поездки списана при принятии`,
+    ),
+  );
+});
+
+test("dispatcher phone filters normalize formatted values, combine independently and match archived driver phones exactly", async () => {
+  const profile = (await request("/driver/profile", driverToken)).data;
+  const own = await prisma.order.create({
+    data: {
+      districtId: regionId,
+      driverId: profile.id,
+      status: "COMPLETED",
+      pickupLat: 37.96,
+      pickupLng: 58.32,
+      clientPhone: "+99365111111",
+      priceEstimated: 25,
+    },
+  });
+  await prisma.order.create({
+    data: {
+      districtId: regionId,
+      status: "COMPLETED",
+      pickupLat: 37.96,
+      pickupLng: 58.32,
+      clientPhone: "+99365222222",
+      priceEstimated: 25,
+    },
+  });
+  const customer = await request(
+    "/admin/orders?customerPhone=%2B993%2065-11-11-11",
+    adminToken,
+  );
+  assert.equal(customer.status, 200);
+  assert.deepEqual(
+    customer.data.items.map((item: { id: string }) => item.id),
+    [own.id],
+  );
+  const driver = await request(
+    "/admin/orders?driverPhone=%2B993%2060-00-01-01",
+    adminToken,
+  );
+  assert.equal(driver.status, 200);
+  assert.deepEqual(
+    driver.data.items.map((item: { id: string }) => item.id),
+    [own.id],
+  );
+  assert.equal(
+    (
+      await request(
+        "/admin/orders?customerPhone=%2B99365222222&driverPhone=%2B99360000101",
+        adminToken,
+      )
+    ).data.total,
+    0,
+  );
+  assert.equal(
+    (await request("/admin/orders?driverPhone=60000101", adminToken)).status,
+    400,
+  );
+  await prisma.user.update({
+    where: { id: profile.userId },
+    data: { archivedPhone: "+99360000101", phone: `deleted:${profile.userId}` },
+  });
+  try {
+    const archived = await request(
+      "/admin/orders?driverPhone=%2B99360000101",
+      adminToken,
+    );
+    assert.equal(archived.status, 200);
+    assert.deepEqual(
+      archived.data.items.map((item: { id: string }) => item.id),
+      [own.id],
+    );
+  } finally {
+    await prisma.user.update({ where: { id: profile.userId }, data: { phone: "+99360000101", archivedPhone: null } });
+  }
+});
+
+
+test('order-number migration backfills chronology, preserves UUID relations and continues without reuse', async () => {
+  const schema = `order_migration_${randomUUID().replaceAll('-', '')}`;
+  const sql = readFileSync(join(process.cwd(), 'prisma/migrations/20261017130000_order_numbers/migration.sql'), 'utf8');
+  await prisma.$transaction(async tx => {
+    await tx.$executeRawUnsafe(`CREATE SCHEMA "${schema}"`);
+    await tx.$executeRawUnsafe(`SET LOCAL search_path TO "${schema}"`);
+    await tx.$executeRawUnsafe('CREATE TABLE orders (id TEXT PRIMARY KEY, created_at TIMESTAMP NOT NULL)');
+    await tx.$executeRawUnsafe('CREATE TABLE transactions (order_id TEXT, note TEXT)');
+    await tx.$executeRawUnsafe(`INSERT INTO orders VALUES ('00000000-0000-0000-0000-000000000003', '2026-01-02'), ('00000000-0000-0000-0000-000000000002', '2026-01-01'), ('00000000-0000-0000-0000-000000000001', '2026-01-01')`);
+    await tx.$executeRawUnsafe(`INSERT INTO transactions VALUES ('00000000-0000-0000-0000-000000000001', 'Заказ #00000000-0000-0000-0000-000000000001: цена поездки списана при принятии')`);
+    const statements = sql.replace(/--[^\n]*/g, '').replace(/\bBEGIN;|\bCOMMIT;/g, '').split(';').map(value => value.trim()).filter(Boolean);
+    for (const statement of statements) await tx.$executeRawUnsafe(statement);
+    const rows = await tx.$queryRawUnsafe<Array<{ id: string; order_number: number }>>('SELECT id, order_number FROM orders ORDER BY order_number');
+    assert.deepEqual(rows, [
+      { id: '00000000-0000-0000-0000-000000000001', order_number: 1 },
+      { id: '00000000-0000-0000-0000-000000000002', order_number: 2 },
+      { id: '00000000-0000-0000-0000-000000000003', order_number: 3 },
+    ]);
+    assert.deepEqual(await tx.$queryRawUnsafe('SELECT order_id, note FROM transactions'), [{ order_id: '00000000-0000-0000-0000-000000000001', note: 'Заказ #1: цена поездки списана при принятии' }]);
+    await tx.$executeRawUnsafe("DELETE FROM orders WHERE order_number = 3");
+    await tx.$executeRawUnsafe("INSERT INTO orders (id, created_at) VALUES ('after-delete', NOW())");
+    assert.deepEqual(await tx.$queryRawUnsafe("SELECT order_number FROM orders WHERE id = 'after-delete'"), [{ order_number: 4 }]);
+    await tx.$executeRawUnsafe(`DROP SCHEMA "${schema}" CASCADE`);
   });
 });

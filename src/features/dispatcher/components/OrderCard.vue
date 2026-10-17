@@ -19,7 +19,7 @@ const ageLabel = (seconds?: number | null) => {
       <div class="flex items-center gap-2">
         <Badge variant="secondary">{{ statusLabel(order.status) }}</Badge
         ><span class="text-xs text-muted-foreground"
-          >#{{ order.id.slice(0, 8) }}</span
+          >#{{ order.orderNumber }}</span
         >
       </div>
       <strong class="tabular-nums">{{

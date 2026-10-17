@@ -113,6 +113,9 @@ onUnmounted(() => {
     >
       <div class="flex items-start justify-between gap-3">
         <div class="min-w-0 space-y-2">
+          <p class="flex items-start gap-2 text-sm font-semibold text-primary">
+            Заказ #{{ order.orderNumber }}
+          </p>
           <p class="flex items-start gap-2 font-medium">
             <MapPin class="mt-0.5 size-4 shrink-0 text-primary" /><span
               class="break-words"

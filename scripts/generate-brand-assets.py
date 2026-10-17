@@ -1,7 +1,7 @@
 """Package the original navy H/red swoosh, without redrawing its silhouette.
 
 Manual Python 3/Pillow tool; generated assets are committed, no build dependency.
-The canonical recovered root logo.png remains byte-identical.
+The supplied navy/red artwork remains byte-identical in public/brand/source/supplied-navy-red.png.
 """
 from pathlib import Path
 from math import hypot
@@ -10,40 +10,32 @@ from PIL import Image, ImageDraw, PngImagePlugin
 ROOT = Path(__file__).resolve().parents[1]
 RES = ROOT / "android/app/src/main/res"
 BRAND = ROOT / "public/brand"
-ORIGIN = "Original recovered Tayyn Hyzmat navy H/red swoosh; logo.png; scripts/generate-brand-assets.py"
+ORIGIN = "User-supplied navy H/red swoosh; public/brand/source/supplied-navy-red.png; scripts/generate-brand-assets.py"
 
 
 def save(image, path):
     path.parent.mkdir(parents=True, exist_ok=True)
     metadata = PngImagePlugin.PngInfo()
     metadata.add_text("Source", ORIGIN)
-    metadata.add_text("impeccable:prompt", "Source: " + ORIGIN + "; extract original colored artwork from white tile, preserve shapes and colors, center visible ink mass and downsample inside the Android safe circle.")
+    metadata.add_text("impeccable:prompt", "Source: " + ORIGIN + "; preserve supplied RGB/alpha artwork, crop transparent margins, center visible ink mass and downsample inside the Android safe circle.")
     image.save(path, pnginfo=metadata)
 
 
 def prepare(source):
+    # The supplied artwork is already transparent. Preserve its exact RGB/A
+    # pixels and only remove transparent margins before optical centering.
     image = Image.open(source).convert("RGBA")
-    extracted = []
-    # The source has a neutral white tile and gray drop shadow. Chroma separates
-    # its original navy/red artwork from that baked background. Unmatting edge
-    # pixels avoids a white fringe when the transparent result is downsampled.
-    for r, g, b, _ in image.getdata():
-        chroma = max(r, g, b) - min(r, g, b)
-        if chroma <= 8:
-            extracted.append((0, 0, 0, 0))
-            continue
-        coverage = min(1.0, chroma / (190 if r > b else 45))
-        rgb = tuple(round(max(0, min(255, 255 + (c - 255) / coverage))) for c in (r, g, b))
-        extracted.append((*rgb, round(255 * coverage)))
-    image.putdata(extracted)
-    cropped = image.crop(image.getchannel("A").getbbox())
+    bbox = image.getchannel("A").getbbox()
+    if bbox is None:
+        raise ValueError("supplied logo has no visible pixels")
+    cropped = image.crop(bbox)
     side = max(cropped.size)
-    canvas = Image.new("RGBA", (side, side))
+    canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
     canvas.alpha_composite(cropped, ((side-cropped.width)//2, (side-cropped.height)//2))
     return canvas
 
 
-artwork = prepare(ROOT / "logo.png")
+artwork = prepare(BRAND / "source/supplied-navy-red.png")
 
 
 def ink_geometry(image):
@@ -110,7 +102,7 @@ for path in RES.glob("drawable*/splash.png"):
     with Image.open(path) as old:
         width,height = old.size
     canvas = Image.new("RGBA", (width,height), "white")
-    inner = round(min(width,height)*0.28)
+    inner = round(min(width,height)*0.5)
     canvas.alpha_composite(mark(inner, backing=False), ((width-inner)//2,(height-inner)//2))
     save(canvas,path)
 (RES / "drawable-v24/ic_launcher_foreground.xml").write_text(

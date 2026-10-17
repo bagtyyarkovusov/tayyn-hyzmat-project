@@ -71,7 +71,7 @@ const { data, loading, error } = useResource(
             :key="order.id"
             :value="order.id"
           >
-            #{{ order.id.slice(0, 8) }} · {{ order.district?.name }} ·
+            #{{ order.orderNumber }} · {{ order.district?.name }} ·
             {{ order.pickupAddress || "Без адреса" }}
           </option>
         </select>

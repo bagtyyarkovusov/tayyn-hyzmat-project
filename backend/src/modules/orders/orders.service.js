@@ -81,6 +81,7 @@ const ACTIVE_DRIVER_ORDER_STATUSES = ['ACCEPTED', 'WAITING', 'STARTED'];
 // un-accepted order never even leaves the server with a phone number in it.
 const AVAILABLE_ORDER_SELECT = {
   id: true,
+  orderNumber: true,
   pickupLat: true,
   pickupLng: true,
   pickupAddress: true,
