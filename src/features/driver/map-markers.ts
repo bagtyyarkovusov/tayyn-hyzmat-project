@@ -6,6 +6,15 @@ export function validCoordinatePair(
   lat: unknown,
   lng: unknown,
 ): CoordinatePair | null {
+  if (
+    lat == null ||
+    lng == null ||
+    typeof lat === "boolean" ||
+    typeof lng === "boolean" ||
+    (typeof lat === "string" && !lat.trim()) ||
+    (typeof lng === "string" && !lng.trim())
+  )
+    return null;
   const latitude = Number(lat);
   const longitude = Number(lng);
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;

@@ -154,6 +154,7 @@ async function logout() {
         'driver-workspace': driver,
         'chat-workspace': chat,
         'driver-home-workspace': route.path === '/driverDashboard',
+        'driver-map-workspace': route.path === '/driverMap',
       },
     ]"
   >
@@ -531,6 +532,36 @@ async function logout() {
   padding: 0.5rem 0.75rem;
 }
 .driver-home-workspace .driver-nav {
+  position: static;
+  transform: none;
+  flex-shrink: 0;
+  margin: 0 auto;
+}
+/* The driver map occupies the remaining viewport without page scrolling. */
+.driver-map-workspace {
+  height: 100dvh;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+.driver-map-workspace > div {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.driver-map-workspace .workspace-header {
+  width: 100%;
+  flex-shrink: 0;
+}
+.driver-map-workspace .driver-content {
+  width: 100%;
+  max-width: none;
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+}
+.driver-map-workspace .driver-nav {
   position: static;
   transform: none;
   flex-shrink: 0;
