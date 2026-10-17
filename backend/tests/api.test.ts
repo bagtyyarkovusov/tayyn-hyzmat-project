@@ -2,6 +2,8 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { randomUUID, generateKeyPairSync } from 'node:crypto';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { io as connect, Socket } from 'socket.io-client';
@@ -734,6 +736,7 @@ test('canonical region bootstrap persists all finalized polygons and preserves l
   const first = await prisma.$transaction(async tx => seedDefaultRegions(tx));
   assert.equal(first.created, 9);
   const response = await request('/admin/districts', adminToken);
+  assert.equal(response.data.find((region: { id: string }) => region.id === '6fd3ea19-bcf1-41b3-8af1-df94f62b5f2f').name, 'Арчабил, Бекреве');
   const gurtly = response.data.find((region: { name: string }) => region.name === '30мкр, Гуртлы');
   assert.ok(gurtly);
   assert.equal(gurtly.boundary[0].length, 26);
@@ -769,6 +772,45 @@ test('canonical bootstrap fills a missing boundary without changing an existing 
   assert.equal(restored.length, 1);
   assert.equal(restored[0].id, oldId);
   assert.equal(restored[0].boundary[0].length, 26);
+});
+
+test('canonical bootstrap corrects the known old spelling without changing saved geometry', async () => {
+  const { seedDefaultRegions } = require('../prisma/default-regions.cjs');
+  await prisma.$transaction(async tx => seedDefaultRegions(tx));
+  const id = '6fd3ea19-bcf1-41b3-8af1-df94f62b5f2f';
+  await prisma.district.update({ where: { id }, data: { name: 'Ачабил, Бекреве' } });
+  const before = (await request('/admin/districts', adminToken)).data.find((region: { id: string }) => region.id === id);
+  await prisma.$transaction(async tx => seedDefaultRegions(tx));
+  const response = await request('/admin/districts', adminToken);
+  assert.deepEqual(response.data.find((region: { id: string }) => region.id === id), { ...before, name: 'Арчабил, Бекреве' });
+  assert.deepEqual(await prisma.$transaction(async tx => seedDefaultRegions(tx)), { created: 0, filled: 0, preserved: 9 });
+});
+
+test('region spelling migration changes only the known old canonical name and preserves edited geometry', async () => {
+  const { seedDefaultRegions } = require('../prisma/default-regions.cjs');
+  await prisma.$transaction(async tx => seedDefaultRegions(tx));
+  const id = '6fd3ea19-bcf1-41b3-8af1-df94f62b5f2f';
+  const edited = [[[37.91, 58.31], [37.95, 58.31], [37.95, 58.36], [37.91, 58.31]]];
+  await prisma.district.update({ where: { id }, data: { name: 'Ачабил, Бекреве', boundary: edited, baseFare: 19 } });
+  const unrelated = await prisma.district.create({ data: { name: 'Ачабил, Бекреве', centerLat: 37.97, centerLng: 58.39 } });
+  const before = (await request('/admin/districts', adminToken)).data.find((region: { id: string }) => region.id === id);
+  const migration = readFileSync(join(__dirname, '../prisma/migrations/20261017140000_archabil_region_spelling/migration.sql'), 'utf8');
+  try {
+    await prisma.$executeRawUnsafe(migration);
+    const response = await request('/admin/districts', adminToken);
+    assert.deepEqual(response.data.find((region: { id: string }) => region.id === id), { ...before, name: 'Арчабил, Бекреве' });
+    assert.equal(response.data.find((region: { id: string }) => region.id === unrelated.id).name, 'Ачабил, Бекреве');
+
+    // Reapplying is harmless, and a separately edited canonical name wins.
+    assert.equal(await prisma.$executeRawUnsafe(migration), 0);
+    await prisma.district.update({ where: { id }, data: { name: 'Custom dispatcher region name' } });
+    assert.equal(await prisma.$executeRawUnsafe(migration), 0);
+    const preserved = await request('/admin/districts', adminToken);
+    assert.deepEqual(preserved.data.find((region: { id: string }) => region.id === id), { ...before, name: 'Custom dispatcher region name' });
+  } finally {
+    await prisma.district.delete({ where: { id: unrelated.id } });
+    await prisma.district.update({ where: { id }, data: { name: 'Арчабил, Бекреве' } });
+  }
 });
 
 test('native inbox safely replays notifications and removes consumed orders and chats', async () => {
