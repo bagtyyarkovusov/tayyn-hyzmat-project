@@ -26,6 +26,8 @@ Public orders are immediately visible and claimable in every region by eligible 
 
 Private offers follow the [private-offer flow](private-offers.md): an eligible driver in any region explicitly confirms within a persisted 20-second deadline. The dispatcher chooses whether expiry stops delivery or simultaneously releases the order to every eligible region; the default is release. Public claims are global once released, and the first atomic claim wins. An early private decline dismisses delivery but does not expose the order before its original deadline. Expiry with fallback enabled opens all public queues without a second incoming-order popup. Reservations alone do not charge balances or expose customer phones.
 
+Dispatcher chat uses a dedicated quiet 0.48-second chime, never the driver's order-alert music. Every signed-in admin tab outside the visible matching conversation receives the preview banner, including a hidden chat tab. Tabs for the same account share a three-second sound cooldown through browser coordination; different browsers/devices can each alert. Opening, dismissing or reading a message cancels its sound, including pending playback and sound in another tab. Dismissal does not mark it read. Replacing a preview silences its previous chime, and old read cursors cannot silence a newer unread message. Reconnect and unread recovery do not replay sounds. Unsupported audio, storage or Web Locks degrade to visual banners. See issue #120.
+
 ## Unresolved questions
 
 - Should a pickup outside every polygon be refused, or assigned by nearest center?
