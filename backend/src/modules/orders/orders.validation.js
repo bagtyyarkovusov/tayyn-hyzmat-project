@@ -39,10 +39,12 @@ const createOrderSchema = z.object({
 // GET /orders/available?districtId=... - districtId is optional (defaults
 // to the driver's own district, see orders.service.js#listAvailable) so a
 // driver can look at any of the 9 district cards, not just the one they're
-// physically in. Viewing is open city-wide; accept() still enforces the
-// driver's own district regardless of what this returned.
+// physically in. scope=all is the explicit global claiming feed; the
+// default remains district-scoped for older clients. Viewing is open
+// city-wide; accept() remains the authority at claim time.
 const listAvailableQuerySchema = z.object({
-  districtId: z.string().uuid('Некорректный идентификатор района').optional()
+  districtId: z.string().uuid('Некорректный идентификатор района').optional(),
+  scope: z.enum(['district', 'all']).default('district')
 });
 
 const privateOfferSchema = z.object({ driverId: z.string().uuid() });

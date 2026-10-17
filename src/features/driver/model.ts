@@ -14,6 +14,8 @@ export interface District {
 }
 export interface Order {
   id: string;
+  /** Stable human-facing reference assigned by the database sequence. */
+  orderNumber?: number;
   status: OrderStatus;
   pickupAddress: string | null;
   dropoffAddress?: string | null;

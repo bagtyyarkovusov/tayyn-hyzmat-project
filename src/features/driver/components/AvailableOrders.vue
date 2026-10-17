@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { canFundOrder } from "@/shared/order-funding";
 import { MapPin, ArrowDown } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
@@ -22,7 +22,10 @@ async function load() {
   error.value = "";
   try {
     const { data } = await driverApi.get<Order[]>("/orders/available", {
-      params: { districtId: props.districtId },
+      // The driver may claim any public order city-wide. The selected region
+      // is only a presentation priority; the API still re-checks eligibility
+      // and performs the atomic claim at acceptance time.
+      params: { districtId: props.districtId, scope: "all" },
     });
     if (id === request) {
       orders.value = data;
@@ -34,6 +37,31 @@ async function load() {
   } finally {
     if (id === request) loading.value = false;
   }
+}
+const sortedOrders = computed(() =>
+  [...orders.value].sort((a, b) => {
+    const aLocal = a.districtId === props.districtId ? 0 : 1;
+    const bLocal = b.districtId === props.districtId ? 0 : 1;
+    if (aLocal !== bLocal) return aLocal - bLocal;
+    const aNumber = Number((a as Order & { orderNumber?: number }).orderNumber);
+    const bNumber = Number((b as Order & { orderNumber?: number }).orderNumber);
+    if (Number.isFinite(aNumber) && Number.isFinite(bNumber))
+      return aNumber - bNumber;
+    return a.createdAt.localeCompare(b.createdAt);
+  }),
+);
+const localOrders = computed(() =>
+  sortedOrders.value.filter((order) => order.districtId === props.districtId),
+);
+const otherOrders = computed(() =>
+  sortedOrders.value.filter((order) => order.districtId !== props.districtId),
+);
+function orderNumber(order: Order) {
+  const value = (order as Order & { orderNumber?: number }).orderNumber;
+  return Number.isFinite(Number(value)) ? `№ ${value}` : "Заказ";
+}
+function regionName(order: Order) {
+  return order.district?.name || "Другой район";
 }
 async function claim(id: string) {
   await accept(id, eta.value[id] || 10);
@@ -80,7 +108,7 @@ onUnmounted(() => {
     :aria-busy="loading"
     tabindex="0"
   >
-    <h2 class="text-base font-semibold">{{ districtName }}</h2>
+    <h2 class="text-base font-semibold">Доступные заказы</h2>
     <p class="text-xs text-muted-foreground">
       Телефон клиента откроется после принятия. При принятии списывается цена
       заказа.
@@ -105,14 +133,34 @@ onUnmounted(() => {
     <p v-else-if="!orders.length" class="muted py-8 text-center">
       Сейчас нет свободных заказов. Новые появятся автоматически.
     </p>
+    <template v-else>
+      <div v-if="localOrders.length" class="space-y-2">
+        <h3 class="text-sm font-semibold">{{ districtName }}</h3>
+        <p class="muted text-xs">
+          Сначала показываем заказы выбранного района.
+        </p>
+      </div>
+      <div v-if="otherOrders.length" class="space-y-2">
+        <h3 class="text-sm font-semibold">Другие районы</h3>
+      </div>
+    </template>
     <article
-      v-for="order in orders"
-      v-else
+      v-for="order in sortedOrders"
       :key="order.id"
       class="space-y-3 border-t py-3"
+      :data-region="regionName(order)"
     >
       <div class="flex items-start justify-between gap-3">
         <div class="min-w-0 space-y-2">
+          <p class="flex flex-wrap items-start gap-x-2 gap-y-1 font-medium">
+            <span class="shrink-0 text-sm font-semibold text-primary">{{
+              orderNumber(order)
+            }}</span>
+            <span
+              class="shrink-0 rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground"
+              >{{ regionName(order) }}</span
+            >
+          </p>
           <p class="flex items-start gap-2 font-medium">
             <MapPin class="mt-0.5 size-4 shrink-0 text-primary" /><span
               class="break-words"
@@ -184,5 +232,11 @@ onUnmounted(() => {
         Сначала завершите текущую поездку.
       </p>
     </article>
+    <p
+      v-if="!localOrders.length && otherOrders.length"
+      class="muted border-t py-2 text-xs"
+    >
+      В выбранном районе сейчас нет заказов.
+    </p>
   </section>
 </template>

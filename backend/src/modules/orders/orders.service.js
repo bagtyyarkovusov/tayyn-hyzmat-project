@@ -105,12 +105,15 @@ const AVAILABLE_ORDER_SELECT = {
 // omitted, same behavior as before this parameter existed. This is a
 // read-only view. Every public order is immediately claimable from any
 // region; its region only determines who receives the initial popup.
-async function listAvailable(driver, districtId) {
+async function listAvailable(driver, districtId, scope = 'district') {
   assertOrderEligibility(driver);
   await expirePrivateOffers();
   if (!(await hasPositiveBalance(driver.userId))) {
     return [];
   }
+  // Do not advertise a second order while this driver has an active trip.
+  // The accept transaction remains authoritative at claim time.
+  if (!driver.isAvailable) return [];
 
   const targetDistrictId = districtId || driver.districtId;
   return prisma.order.findMany({
@@ -119,7 +122,11 @@ async function listAvailable(driver, districtId) {
       status: 'NEW',
       privateOfferDriverId: null,
       privateOfferStoppedAt: null,
-      ...(targetDistrictId ? { districtId: targetDistrictId } : {})
+      ...(scope === 'all'
+        ? {}
+        : targetDistrictId
+          ? { districtId: targetDistrictId }
+          : {})
     },
     orderBy: { createdAt: 'asc' },
     select: AVAILABLE_ORDER_SELECT
