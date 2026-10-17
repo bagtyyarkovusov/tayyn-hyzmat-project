@@ -2,7 +2,9 @@
 
 For the planned production locations, Namecheap DNS, offline installation, update/rollback commands, backups and alert setup, read the [production handoff](production-handoff.md), [offline bundle guide](offline-production-bundle.md) and [operations guide](production-operations.md). These tools are implemented; the purchased-host and clean Ubuntu offline rehearsals remain pending.
 
-The VPS has not been purchased. Ubuntu 24.04 LTS with Docker Compose is the initial target. A four-core, 4 GB RAM, SSD VPS is a sizing candidate for the initial three to five drivers, not a measured capacity guarantee. Provider connectivity and a disposable workload test decide whether it is suitable.
+The Standard L VPS has been purchased at `216.250.8.238`. Read-only checks on 2026-10-17 verified Ubuntu 24.04.4 amd64, four logical CPUs, 3,915 MiB RAM and about 56 GiB free on the root filesystem. Docker and `age` are not installed. These resources are a sizing candidate for the initial three to five drivers, not a measured capacity guarantee. Provider connectivity and a disposable workload test decide whether it is suitable.
+
+External SSH on port 22 times out, while a temporary SSH listener on port 443 authenticated successfully after console verification of its host key. Yandex, Google OAuth/FCM, GHCR and Let's Encrypt passed DNS/TLS checks from the main host. Resend's IPv4 addresses refused connections, and the agreed `taxi.bagtyyar.dev` hostname did not resolve. Permanent management access, monitoring-host connectivity, DNS/TLS and actual provider delivery remain release gates. See the dated evidence in the [production handoff](production-handoff.md#purchased-host-checks-2026-10-17). No application was deployed during these checks.
 
 ## Read-only diagnostic
 
