@@ -22,4 +22,4 @@ The pilot coordinates dispatcher-created rides and driver claims within regions.
 
 **Private offer**: A dispatcher reservation for one eligible driver, requiring explicit confirmation within 20 seconds.
 
-**Reservation deadline**: The server-persisted time after which a private offer releases to its original region’s public queue; reloads never extend it.
+**Reservation deadline**: The fixed end of a private offer’s exclusive acceptance window. The dispatcher’s fallback choice determines whether it then becomes public or stays unassigned.

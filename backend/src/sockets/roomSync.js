@@ -28,7 +28,7 @@ async function syncDriverDistrictRoomNow(driverId) {
     }
     const sockets = await io.in(rooms.driver(driverId)).fetchSockets();
     const freshOnline = driver && driver.status === 'APPROVED' && driver.isOnline && hasFreshGps(driver);
-    const receivesOrders = freshOnline && driver.districtId && driver.user.balance && Number(driver.user.balance.amount) > 0;
+    const receivesOrders = freshOnline && driver.user.balance && Number(driver.user.balance.amount) > 0;
     for (const socket of sockets) {
       for (const room of socket.rooms) {
         if (room.startsWith('district:')) await socket.leave(room);
@@ -36,7 +36,10 @@ async function syncDriverDistrictRoomNow(driverId) {
       const ownsShift = freshOnline && socket.data.credentials?.deviceId === driver.shiftDeviceId;
       if (ownsShift) await socket.join(rooms.districtsOverview());
       else await socket.leave(rooms.districtsOverview());
-      if (receivesOrders && ownsShift) await socket.join(rooms.district(driver.districtId));
+      if (receivesOrders && ownsShift) {
+        await socket.join(rooms.publicOrders());
+        if (driver.districtId) await socket.join(rooms.district(driver.districtId));
+      } else await socket.leave(rooms.publicOrders());
     }
     if (freshOnline) {
       const delay = Math.max(1, driver.lastLocationAt.getTime() + GPS_FRESHNESS_MS - Date.now());
@@ -51,7 +54,7 @@ async function syncDriverDistrictRoomNow(driverId) {
     // Fail closed if eligibility cannot be checked.
     const sockets = await getIO().in(rooms.driver(driverId)).fetchSockets();
     for (const socket of sockets) {
-      for (const room of socket.rooms) if (room.startsWith('district:') || room === rooms.districtsOverview()) await socket.leave(room);
+      for (const room of socket.rooms) if (room.startsWith('district:') || room === rooms.districtsOverview() || room === rooms.publicOrders()) await socket.leave(room);
     }
   }
 }

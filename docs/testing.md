@@ -35,3 +35,7 @@ The schema change is additive: nullable operation IDs preserve existing ledger e
 ### Cancellation and manual completion
 
 Driver HTTP tests permit cancellation only in WAITING and reject ACCEPTED or STARTED without a refund. Dispatcher tests allow pre-start cancellation and reject STARTED with 409, preserving assignment, balance and ledger. Browser tests verify that a started order exposes manual completion with a required reason and no ordinary Cancel action. A concurrent dispatcher-cancellation/manual-completion test verifies that forbidden cancellation cannot refund the started trip while completion succeeds. Manual completion tests verify reason/actor attribution and no second debit; force-resolution uses the same driver-then-order lock order as completion and cancellation.
+
+### Global public queues and regional alerts
+
+Public order creation immediately opens HTTP queues and claims in every region. The original region alone receives the 20-second popup/native alert. Disposable HTTP/Socket.IO checks cover immediate remote claims, one winner across regions, global queue/count invalidation, legacy persisted deadlines, private expiry fallback and native alert targeting. Browser checks exercise already-open remote lists, orders:drivers scores, removal on claim/cancellation, private fallback without another popup, and public popup expiry while the order remains claimable. These rules do not enable FCM or verify physical-phone background delivery.

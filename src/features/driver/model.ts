@@ -27,6 +27,9 @@ export interface Order {
   createdAt: string;
   privateOfferExpiresAt?: string | null;
   privateOfferRemainingMs?: number;
+  districtId?: string | null;
+  publicRegionOnlyUntil?: string | null;
+  publicOfferRemainingMs?: number;
   district?: District;
 }
 export interface DriverProfile {

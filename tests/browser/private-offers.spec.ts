@@ -152,7 +152,7 @@ test("dispatcher creates a private offer and driver explicitly accepts into the 
   }
 });
 
-test("map-selected driver recovers a missed private offer on reconnect and declining releases it", async ({
+test("map-selected driver recovers a private offer on reconnect and declining preserves its exclusive deadline", async ({
   browser,
 }) => {
   const { dispatcher, driver, driverId, driverName, driverContext, close } =
@@ -213,6 +213,17 @@ test("map-selected driver recovers a missed private offer on reconnect and decli
     await expect(
       incoming.getByText("Подача с карты", { exact: true }),
     ).toBeVisible();
+    const driverToken = await driver.evaluate(() =>
+      localStorage.getItem("openride.driver.accessToken"),
+    );
+    const driverHeaders = { Authorization: `Bearer ${driverToken}` };
+    const recovered = await driver.request.get("/api/orders/private-offer", {
+      headers: driverHeaders,
+    });
+    expect(recovered.ok()).toBe(true);
+    const reservation = await recovered.json();
+    expect(reservation.id).toBe(order.id);
+    expect(typeof reservation.privateOfferExpiresAt).toBe("string");
     await driver.screenshot({
       path: test.info().outputPath("private-offer-recovered-mobile.png"),
     });
@@ -232,8 +243,23 @@ test("map-selected driver recovers a missed private offer on reconnect and decli
     ).toMatchObject({
       status: "NEW",
       privateOfferDriverId: null,
-      privateOfferExpiresAt: null,
+      privateOfferExpiresAt: reservation.privateOfferExpiresAt,
     });
+    const activeOffer = await driver.request.get("/api/orders/private-offer", {
+      headers: driverHeaders,
+    });
+    expect(activeOffer.ok()).toBe(true);
+    expect(await activeOffer.json()).toBeNull();
+    const available = await driver.request.get("/api/orders/available", {
+      headers: driverHeaders,
+      params: { districtId: process.env.TEST_REGION_ID! },
+    });
+    expect(available.ok()).toBe(true);
+    expect(
+      (await available.json()).some(
+        (item: { id: string }) => item.id === order.id,
+      ),
+    ).toBe(false);
     await expect(driver.getByLabel("Баланс")).toHaveText("500 TMT");
   } finally {
     if (createdOrderId && adminHeaders) {
@@ -497,7 +523,7 @@ for (const width of [320, 390]) {
           });
           await closeButton.press("Enter");
           if (privateOffer) {
-            // Closing declines the private reservation. Its released public offer can reopen.
+            // Closing declines the reservation; its original exclusive deadline stays fixed.
             await expect(
               offer.getByRole("heading", {
                 name: "Личное предложение",

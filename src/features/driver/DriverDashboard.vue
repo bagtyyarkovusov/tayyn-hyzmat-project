@@ -468,10 +468,10 @@ watch(
         >
         <strong
           class="region-score text-2xl font-semibold leading-none tabular-nums"
-          :aria-label="`Машин на линии: ${d.onlineDrivers ?? d.freeDrivers}. Заказов: ${d.activeOrders}`"
+          :aria-label="`Заказов: ${d.activeOrders}. Машин на линии: ${d.onlineDrivers ?? d.freeDrivers}`"
           >{{
             locationReady && state.profile?.isOnline
-              ? `${d.onlineDrivers ?? d.freeDrivers}:${d.activeOrders}`
+              ? `${d.activeOrders}:${d.onlineDrivers ?? d.freeDrivers}`
               : "—:—"
           }}</strong
         >

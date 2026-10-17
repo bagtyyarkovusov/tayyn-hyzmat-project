@@ -12,7 +12,7 @@ The pilot has one dispatcher and synthetic driver accounts. It uses TMT only and
 
 ## What the driver sees
 
-The home screen shows all saved dispatch regions as a compact grid. Each region card shows the number of online cars and active orders. Active orders include accepted trips until completion or cancellation. The count is not the number available to claim; a claimed offer disappears from the queue even while that region count stays unchanged. The driver cannot choose a region manually. The server assigns the current region from the driver's fresh GPS point and the saved polygon. A point outside every polygon shows **Outside region** and the real coordinates. A region centre is only a fallback coordinate, never proof of the driver's exact pickup.
+The home screen shows all saved dispatch regions as a compact grid. Each region card shows active orders first and online drivers second: orders:drivers. Active orders include accepted trips until completion or cancellation. The count is not the number available to claim; a claimed offer disappears from the queue even while that region count stays unchanged. The driver cannot choose a region manually. The server assigns the current region from the driver's fresh GPS point and the saved polygon. A point outside every polygon shows **Outside region** and the real coordinates. A region centre is only a fallback coordinate, never proof of the driver's exact pickup.
 
 The driver can open orders, map, chat, and profile from the bottom navigation. The current trip shows its price, call action and next step above the grid. Open its details dialog for route information and permitted cancellation. Region order lists use dialogs. Message history scrolls inside the chat; Enter sends a message and Shift+Enter adds a line.
 
@@ -49,9 +49,9 @@ The dispatcher can announce an order publicly or choose a private driver. A priv
 
 A private offer is a reservation for one eligible online, idle driver with fresh GPS and enough balance for the quoted price. The server persists a fixed 20-second deadline. The driver must explicitly accept; opening the offer, waiting, or declining does not charge money.
 
-Acceptance is a race. The server accepts only the first valid claim and broadcasts removal to other drivers. It charges the quoted TMT amount once, then reveals the customer phone. An early decline returns a private offer to its original region until the original deadline.
+Acceptance is a race. The server accepts only the first valid claim and broadcasts removal to other drivers. It charges the quoted TMT amount once, then reveals the customer phone. An early decline dismisses the private offer without exposing it publicly before the original deadline.
 
-A public order starts in its original region for 20 seconds, then opens to all eligible drivers at once. For a private offer, the dispatcher chooses whether its fixed 20-second expiry opens the order globally or stops it unassigned. There is no second acceptance timer. PR #79 (`715b648`) is merged.
+A public order is available to every eligible online driver immediately. Only drivers in the selected region receive the 20-second incoming popup; other drivers open the live region list and can claim immediately. For a private offer, the dispatcher chooses whether its fixed 20-second expiry opens the order globally or stops it unassigned. Fallback updates lists without another incoming popup. Acceptance removes the offer from every driver’s queue.
 
 ## Balance rules
 

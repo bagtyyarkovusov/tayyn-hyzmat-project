@@ -48,19 +48,21 @@ watch(
   },
   { immediate: true },
 );
-const off = ["order:new", "districts:stats", "connect"].map((event) =>
-  driverSession.on(event, () => void load()),
+const off = ["order:new", "order:available", "districts:stats", "connect"].map(
+  (event) => driverSession.on(event, () => void load()),
 );
-off.push(
-  driverSession.on("order:taken", (payload) => {
-    const { orderId } = payload as { orderId: string };
-    // Remove the claimed order before the reconciliation request finishes.
-    // Incrementing request also prevents an older in-flight list restoring it.
-    request++;
-    orders.value = orders.value.filter((order) => order.id !== orderId);
-    void load();
-  }),
-);
+for (const event of ["order:taken", "order:cancelled"])
+  off.push(
+    driverSession.on(event, (payload) => {
+      const ended = payload as { orderId?: string; id?: string };
+      const orderId = ended.orderId ?? ended.id;
+      // Remove the closed order before the reconciliation request finishes.
+      // Incrementing request also prevents an older in-flight list restoring it.
+      request++;
+      orders.value = orders.value.filter((order) => order.id !== orderId);
+      void load();
+    }),
+  );
 const resume = () => {
   if (!document.hidden) void load();
 };

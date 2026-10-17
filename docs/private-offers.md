@@ -6,7 +6,9 @@ Private offers require an approved, online, idle driver with a fresh GPS report 
 
 The server reserves the order for 20 seconds and persists the deadline. Only the selected driver can explicitly accept it. Reserving the order does not charge the balance or reveal the customer phone. Successful acceptance charges the quoted TMT price once, reveals the phone and continues through the existing accepted → waiting → started → completed trip controls.
 
-A normal public order is available in its original region for its persisted first 20 seconds, then expands to every active region. Declining a private offer releases it immediately to its original region's public queue, retaining the original private deadline rather than starting another timer. At that fixed 20-second deadline (including after an early decline), the dispatcher-selected **Предложить другим водителям после 20 секунд** policy decides what happens: ON (the default) emits the public order simultaneously to every active region; OFF stops private delivery without exposing it to driver queues, while leaving the order unassigned for dispatcher follow-up. A late private response cannot accept or decline a later reservation. Dispatcher cancellation dismisses the private offer immediately. Public claims, reservations and private acceptance compete through conditional order writes and a driver row lock; the first public claim wins globally regardless of region.
+A normal public order is immediately visible and claimable by eligible online drivers in every region. Only drivers in its selected region receive the 20-second incoming-order popup. Other drivers see live queue updates and choose an order themselves; there is no region acceptance delay.
+
+Declining a private offer dismisses its delivery without making it public before the original fixed deadline. At that deadline the dispatcher-selected **Предложить другим водителям после 20 секунд** policy decides what happens: ON, the default, opens the public queue simultaneously to eligible drivers everywhere; OFF leaves the order unassigned and unavailable for driver claims. Expiry fallback updates the live lists without another incoming-order popup. A late private response cannot accept or decline a later reservation. Dispatcher cancellation dismisses the private offer immediately. Public claims, reservations and private acceptance compete through conditional order writes and a driver row lock; the first public claim wins globally regardless of region.
 
 ```mermaid
 stateDiagram-v2
@@ -14,7 +16,7 @@ stateDiagram-v2
   [*] --> Reserved: private creation
   Public --> Reserved: dispatcher selects eligible driver
   Reserved --> Accepted: selected driver confirms before deadline
-  Reserved --> Public: decline
+  Reserved --> Reserved: decline dismisses delivery until deadline
   Reserved --> Public: expiry + expansion ON
   Reserved --> Unassigned: expiry + expansion OFF
   Public --> Accepted: eligible driver claims

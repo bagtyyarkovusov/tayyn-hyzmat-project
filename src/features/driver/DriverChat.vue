@@ -23,7 +23,7 @@ const offerOpen = computed({
     if (!value) dismissIncoming();
   },
 });
-const { history, track, updated } = useChatScroll();
+const { history, track, updated, followAfterSend } = useChatScroll();
 const messages = ref<Message[]>([]),
   draft = ref(""),
   error = ref(""),
@@ -113,6 +113,7 @@ async function load(older = false) {
 async function send() {
   const body = draft.value.trim();
   if (!body || sending.value) return;
+  const finishScroll = followAfterSend();
   if (retryMessage?.body !== body)
     retryMessage = { body, id: crypto.randomUUID() };
   sending.value = true;
@@ -127,7 +128,7 @@ async function send() {
       messages.value.push(data);
     draft.value = "";
     retryMessage = undefined;
-    await updated(true);
+    await finishScroll();
   } catch (e) {
     if (alive) error.value = errorMessage(e);
   } finally {

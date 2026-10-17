@@ -53,6 +53,18 @@ let gpsEpoch = 0;
 let handledNativeStop = -1;
 let offerTimer: ReturnType<typeof setInterval> | undefined;
 let offerVersion = 0;
+// A close event can overtake creation while its delivery awaits room sync.
+// Keep only a short session-local memory, longer than the public popup window.
+const closedPublicOffers = new Map<string, number>();
+function pruneClosedPublicOffers() {
+  const now = performance.now();
+  for (const [id, until] of closedPublicOffers)
+    if (until <= now) closedPublicOffers.delete(id);
+}
+function rememberClosedPublicOffer(orderId: string) {
+  pruneClosedPublicOffers();
+  closedPublicOffers.set(orderId, performance.now() + 60_000);
+}
 const GPS_MAX_AGE_MS = 60000;
 const LOCATION_SYNC_FAILURE_GRACE_MS = 60000;
 export function canControlShift() {
@@ -184,6 +196,37 @@ function receivePrivateOffer(order: Order, sound = true) {
   offerTimer = setInterval(tick, 250);
   if (sound) notifyOrder(order);
 }
+function receivePublicOffer(order: Order) {
+  pruneClosedPublicOffers();
+  if (
+    closedPublicOffers.has(order.id) ||
+    !hasCurrentGps() ||
+    !state.profile?.isOnline ||
+    state.active ||
+    state.incoming ||
+    (order.districtId ?? order.district?.id) !== state.profile.districtId ||
+    !order.publicRegionOnlyUntil
+  )
+    return;
+  const remainingMs =
+    order.publicOfferRemainingMs ??
+    Date.parse(order.publicRegionOnlyUntil) - Date.now();
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) return;
+  const until = performance.now() + Math.min(20_000, remainingMs);
+  // A private-offer recovery started before this event must not replace it.
+  offerVersion++;
+  state.incoming = order;
+  const tick = () => {
+    state.offerSeconds = Math.max(
+      0,
+      Math.ceil((until - performance.now()) / 1000),
+    );
+    if (!state.offerSeconds) dismissIncoming();
+  };
+  tick();
+  offerTimer = setInterval(tick, 250);
+  notifyOrder(order);
+}
 async function recoverPrivateOffer() {
   const version = ++offerVersion;
   const generation = sessionGeneration;
@@ -228,6 +271,7 @@ watch(
   () => driverSession.state.user?.id,
   () => {
     sessionGeneration++;
+    closedPublicOffers.clear();
     gpsEpoch++;
     refreshVersion++;
     dismissIncoming();
@@ -750,6 +794,7 @@ function enableGps() {
 function start() {
   const readinessClock = setInterval(() => {
     state.clock = Date.now();
+    pruneClosedPublicOffers();
   }, 1000);
   cleanups.push(() => clearInterval(readinessClock));
   if (nativeAndroid) {
@@ -811,21 +856,11 @@ function start() {
       dismissIncoming();
     void refresh();
   });
-  on("order:new", (payload) => {
-    const order = payload as Order;
-    if (
-      !hasCurrentGps() ||
-      !state.profile?.isOnline ||
-      state.active ||
-      state.incoming
-    )
-      return;
-    state.incoming = order;
-    notifyOrder(order);
-  });
+  on("order:new", (payload) => receivePublicOffer(payload as Order));
   on("order:taken", (payload) => {
-    if (state.incoming?.id === (payload as { orderId: string }).orderId)
-      dismissIncoming();
+    const { orderId } = payload as { orderId: string };
+    rememberClosedPublicOffer(orderId);
+    if (state.incoming?.id === orderId) dismissIncoming();
     void refresh();
   });
   for (const event of [
@@ -835,7 +870,13 @@ function start() {
     "order:completed",
     "order:cancelled",
   ])
-    on(event, () => void refresh());
+    on(event, (payload) => {
+      const order = payload as { id: string };
+      if (event === "order:cancelled") rememberClosedPublicOffer(order.id);
+      if (event === "order:cancelled" && state.incoming?.id === order.id)
+        dismissIncoming();
+      void refresh();
+    });
   const visibility = () => {
     if (!document.hidden) {
       // Native notifications may exist before the WebView recovers an offer.
