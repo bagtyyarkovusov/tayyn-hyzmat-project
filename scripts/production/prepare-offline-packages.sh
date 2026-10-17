@@ -20,7 +20,7 @@ curl --fail --silent --show-error --location https://download.docker.com/linux/u
 chmod a+r /etc/apt/keyrings/docker.asc
 printf '%s\n' 'deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable' > /etc/apt/sources.list.d/docker.list
 apt-get update
-docker_packages=(docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin)
+docker_packages=(docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin certbot)
 fi
 mkdir -p "$output/partial"
 # Empty dpkg status forces downloading dependencies already present on the

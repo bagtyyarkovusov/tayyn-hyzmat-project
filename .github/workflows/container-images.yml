@@ -1,6 +1,11 @@
 name: Publish container images
 on:
   workflow_dispatch:
+    inputs:
+      offline_bundle:
+        description: Build offline Ubuntu artifacts instead of publishing images
+        type: boolean
+        default: false
   push:
     tags: ["v*"]
 permissions:
@@ -8,6 +13,7 @@ permissions:
   packages: write
 jobs:
   publish:
+    if: ${{ !inputs.offline_bundle }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -47,3 +53,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+  offline-bundle:
+    if: ${{ inputs.offline_bundle }}
+    uses: ./.github/workflows/offline-production-bundle.yml

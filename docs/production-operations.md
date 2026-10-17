@@ -1,16 +1,20 @@
 # Production backups and independent monitoring
 
-The application belongs on the Ubuntu 24.04 amd64 Standard L VPS. The Standard S VPS pulls encrypted backups and probes the application from a different machine. Railway remains testing/staging. Neither production server has been purchased or verified yet. See [production handoff](production-handoff.md) for domain, deployment and owner records; fill the actual addresses before installation.
+The application belongs on the Ubuntu 24.04 amd64 Standard L VPS. The Standard S VPS pulls encrypted backups and probes the application from a different machine. Railway remains testing/staging. Both servers have been purchased and their OS, resources and reboot-persistent SSH access verified; application deployment and backup/alert acceptance remain pending. See [production handoff](production-handoff.md) for domain, deployment and owner records; fill the actual addresses before installation.
 
 The tooling is `scripts/production/operations.py`. It uses Python's standard library, Docker Compose on the app host, OpenSSH and the `age` executable. The offline bundle must include Ubuntu packages for Python 3, CA certificates, timezone data, OpenSSH client, age, Docker and Compose plus their dependency closure. The VPS provider must already supply a working OpenSSH server; the package does not replace or reconfigure the existing SSH service. Install package artifacts from the verified bundle, not an internet package repository on the restricted VPS.
 
 ## Configuration and credentials
 
-Copy the appropriate template from `deploy/monitoring/` to `/etc/tayyn/operations.json`. It must have mode 0600. App configuration is root-owned. Monitor configuration, Resend secrets and the outbound SSH private key are owned by the `tayyn-monitor` service user, all mode 0600. `/etc/tayyn/known_hosts` must contain the app server's fingerprint verified through the VPS console or another independent channel. Do not disable host-key checks or trust an unverified `ssh-keyscan` result.
+Copy the appropriate template from `deploy/monitoring/` to `/etc/tayyn/operations.json`. It must have mode 0600. App configuration is root-owned. Monitor configuration, email secrets and the outbound SSH private key are owned by the `tayyn-monitor` service user, all mode 0600. `/etc/tayyn/known_hosts` must contain the app server's fingerprint verified through the VPS console or another independent channel. Do not disable host-key checks or trust an unverified `ssh-keyscan` result.
 
 The app template uses `/opt/tayyn/current`, the `tayyn-production` Compose project, `/etc/tayyn/app.env` for secrets and `/opt/tayyn/current/release.env` for image references. Confirm these match the installed bundle. The templates are examples, not working credentials.
 
-The monitor secrets template has `resend_api_key`, `resend_from` and `alert_email`. The recipient is `bagtyyarkowusow.dev@gmail.com`. Enter the key through the hidden setup prompt. Use a sender from a domain verified in Resend. In Namecheap, add exactly the TXT/MX records Resend specifies for that sender domain. Production A records and Resend verification records have different purposes. Do not replace existing mail records blindly. Resend acceptance means the provider accepted the email; verify actual Gmail inbox delivery before launch.
+The selected transport is Gmail SMTP. Use `deploy/monitoring/monitor-secrets.smtp.example.json`, with `email_transport: smtp`, `smtp_host: smtp.gmail.com`, `smtp_port: 465`, sending account `tkmdevelopers@gmail.com`, its Google App Password, and `alert_email: bagtyyarkowusow.dev@gmail.com`. Enable Google two-step verification first. Keep the App Password separate from the normal Google password. Port 465 uses verified TLS; port 587 uses mandatory STARTTLS. Unencrypted SMTP is rejected. No sender-domain DNS verification is required for Gmail SMTP.
+
+Resend remains supported through the original template with `email_transport: resend` or no transport field for backward compatibility. Its fields are `resend_api_key`, `resend_from` and `alert_email`. Use a sender from a domain verified in Resend; its exact TXT/MX records are independent of the app's production A record. Preserve existing mail records.
+
+Notification state advances only after the transport accepts the message. SMTP does not provide Resend's idempotency API: an ambiguous disconnect after acceptance can cause a duplicate retry. A stable Message-ID identifies the event but cannot guarantee recipient deduplication. Verify actual inbox delivery and incident/recovery cadence before launch.
 
 ## Encryption ownership
 

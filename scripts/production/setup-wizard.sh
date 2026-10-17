@@ -267,29 +267,56 @@ PYJSON
 save_literal FIREBASE_SERVICE_ACCOUNT_JSON "$FIREBASE_SERVICE_ACCOUNT_JSON"
 note 'The public browser Maps key is a build setting. It is configured separately when building the web image.'
 
-stage "Resend delivery to Gmail"
-open_url 'https://resend.com/domains'
-step 'Add your sender domain in Resend; copy the exact DNS records it supplies into Namecheap Advanced DNS.'
-step 'Verify those records in Resend. Preserve any existing MX/SPF records; avoid duplicate SPF records.'
-ask RESEND_FROM 'Verified sender address (for example alerts@your-domain.tld):'
-open_url 'https://resend.com/api-keys'
-step 'Create an API key restricted to sending from the chosen domain.'
-ask_secret RESEND_API_KEY 'Resend API key (hidden):'
-valid_value RESEND_FROM "$RESEND_FROM"
-[[ "$RESEND_FROM" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || { warn 'Enter a sender email address only.'; exit 1; }
-valid_value RESEND_API_KEY "$RESEND_API_KEY"
-export RESEND_FROM RESEND_API_KEY
-MONITOR_SECRETS_PATH="$CONFIG_DIR/.monitor-secrets.json.incomplete" python3 - <<'PYJSON'
+stage "Monitoring email"
+ask EMAIL_TRANSPORT 'Email transport: smtp for Gmail, or resend:'
+case "$EMAIL_TRANSPORT" in
+  smtp)
+    open_url 'https://myaccount.google.com/apppasswords'
+    step 'Enable Google two-step verification, then create an App Password for the sending Gmail account.'
+    ask SMTP_USERNAME 'Sending Gmail address (can differ from the alert recipient):'
+    ask_secret SMTP_PASSWORD 'Google App Password (hidden):'
+    valid_value SMTP_USERNAME "$SMTP_USERNAME"
+    valid_value SMTP_PASSWORD "$SMTP_PASSWORD"
+    [[ "$SMTP_USERNAME" =~ ^[^[:space:]@]+@gmail\.com$ ]] || { warn 'Enter the sending Gmail address.'; exit 1; }
+    SMTP_PASSWORD=${SMTP_PASSWORD// /}
+    export SMTP_USERNAME SMTP_PASSWORD
+    MONITOR_SECRETS_PATH="$CONFIG_DIR/.monitor-secrets.json.incomplete" python3 - <<'PYJSON'
 import json, os
 from pathlib import Path
 path = Path(os.environ['MONITOR_SECRETS_PATH'])
 with path.open('x') as f:
-    json.dump({'resend_api_key': os.environ['RESEND_API_KEY'],
+    json.dump({'email_transport': 'smtp', 'smtp_host': 'smtp.gmail.com', 'smtp_port': 465,
+               'smtp_username': os.environ['SMTP_USERNAME'], 'smtp_password': os.environ['SMTP_PASSWORD'],
+               'smtp_from': 'Tayyn Hyzmat <' + os.environ['SMTP_USERNAME'] + '>',
+               'alert_email': 'bagtyyarkowusow.dev@gmail.com'}, f, indent=2)
+path.chmod(0o600)
+PYJSON
+    unset SMTP_PASSWORD
+    ;;
+  resend)
+    open_url 'https://resend.com/domains'
+    step 'Verify a sender domain in Resend and add its exact DNS records in Namecheap. Preserve existing mail records.'
+    ask RESEND_FROM 'Verified sender email address:'
+    open_url 'https://resend.com/api-keys'
+    ask_secret RESEND_API_KEY 'Resend API key (hidden):'
+    valid_value RESEND_FROM "$RESEND_FROM"
+    valid_value RESEND_API_KEY "$RESEND_API_KEY"
+    [[ "$RESEND_FROM" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || { warn 'Enter a sender email address only.'; exit 1; }
+    export RESEND_FROM RESEND_API_KEY
+    MONITOR_SECRETS_PATH="$CONFIG_DIR/.monitor-secrets.json.incomplete" python3 - <<'PYJSON'
+import json, os
+from pathlib import Path
+path = Path(os.environ['MONITOR_SECRETS_PATH'])
+with path.open('x') as f:
+    json.dump({'email_transport': 'resend', 'resend_api_key': os.environ['RESEND_API_KEY'],
                'resend_from': os.environ['RESEND_FROM'],
                'alert_email': 'bagtyyarkowusow.dev@gmail.com'}, f, indent=2)
 path.chmod(0o600)
 PYJSON
-unset RESEND_API_KEY
+    unset RESEND_API_KEY
+    ;;
+  *) warn 'Choose smtp or resend.'; exit 1 ;;
+esac
 say 'Monitoring secrets saved privately; no test email has been sent.'
 note 'Monitor policy: initial healthy email; daily 09:00 Asia/Ashgabat; incident 0/5/15 then every 30 minutes; recovery email.'
 

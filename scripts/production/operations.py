@@ -3,6 +3,8 @@
 import argparse
 import contextlib
 import datetime as dt
+from email.message import EmailMessage
+from email.utils import formatdate, parseaddr
 import fcntl
 import hashlib
 import json
@@ -11,6 +13,7 @@ from pathlib import Path
 import re
 import shutil
 import socket
+import smtplib
 import ssl
 import subprocess
 import sys
@@ -280,6 +283,40 @@ def socketio_probe(public):
 
 def send_email(config, subject, body, event):
     secrets = private_json(config["secrets_file"])
+    transport = secrets.get("email_transport", "resend")
+    if transport == "smtp":
+        port = int(secrets.get("smtp_port", 465))
+        if port not in (465, 587):
+            raise ValueError("SMTP requires verified TLS on port 465 or STARTTLS on port 587")
+        sender = secrets["smtp_from"]
+        recipient = secrets.get("alert_email", "bagtyyarkowusow.dev@gmail.com")
+        sender_address = parseaddr(sender)[1]
+        recipient_address = parseaddr(recipient)[1]
+        if "@" not in sender_address or "@" not in recipient_address:
+            raise ValueError("Invalid alert sender or recipient")
+        message = EmailMessage()
+        message["From"] = sender
+        message["To"] = recipient
+        message["Subject"] = "Tayyn Hyzmat: " + subject
+        message["Date"] = formatdate(localtime=False)
+        message["Message-ID"] = "<tayyn-" + hashlib.sha256(event.encode()).hexdigest() + "@" + sender_address.rsplit("@", 1)[1] + ">"
+        message.set_content(body)
+        context = ssl.create_default_context()
+        if port == 465:
+            client = smtplib.SMTP_SSL(secrets["smtp_host"], port, timeout=15, context=context)
+        else:
+            client = smtplib.SMTP(secrets["smtp_host"], port, timeout=15)
+        with client as smtp:
+            if port == 587:
+                smtp.ehlo()
+                smtp.starttls(context=context)
+                smtp.ehlo()
+            smtp.login(secrets["smtp_username"], secrets["smtp_password"])
+            if smtp.send_message(message, from_addr=sender_address, to_addrs=[recipient_address]):
+                raise RuntimeError("Email recipient rejected")
+        return
+    if transport != "resend":
+        raise ValueError("Unsupported email transport")
     payload = json.dumps({"from": secrets["resend_from"],
                           "to": [secrets.get("alert_email", "bagtyyarkowusow.dev@gmail.com")],
                           "subject": "Tayyn Hyzmat: " + subject, "text": body}).encode()

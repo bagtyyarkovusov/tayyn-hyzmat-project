@@ -85,7 +85,7 @@ def main():
     monitoring = ROOT / "deploy/monitoring"
     if monitoring.exists():
         for source in monitoring.iterdir():
-            if source.is_file() and (source.suffix in (".service", ".timer") or source.name in {"app-operations.example.json", "monitor-operations.example.json", "monitor-secrets.example.json", "authorized_keys.example", "tayyn-backup.sudoers.example"}):
+            if source.is_file() and (source.suffix in (".service", ".timer") or source.name in {"app-operations.example.json", "monitor-operations.example.json", "monitor-secrets.example.json", "monitor-secrets.smtp.example.json", "authorized_keys.example", "tayyn-backup.sudoers.example"}):
                 target = args.output_dir / "deploy/monitoring" / source.name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)

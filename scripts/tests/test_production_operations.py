@@ -41,6 +41,59 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(ops.notification(state, [], [], 3, "2026-10-18", True)[3], "daily")
 
 
+class EmailTransportTests(unittest.TestCase):
+    def smtp_secrets(self):
+        return {"email_transport": "smtp", "smtp_host": "smtp.synthetic.test", "smtp_port": 465,
+                "smtp_username": "alerts@synthetic.test", "smtp_password": "synthetic-app-password",
+                "smtp_from": "Tayyn Hyzmat <alerts@synthetic.test>", "alert_email": "operator@synthetic.test"}
+
+    def test_smtp_sends_report_with_stable_message_identity_over_verified_tls(self):
+        secrets = self.smtp_secrets()
+        client = MagicMock()
+        client.send_message.return_value = {}
+        transport = MagicMock()
+        transport.return_value.__enter__.return_value = client
+        with patch.object(ops, "private_json", return_value=secrets), patch.object(ops.smtplib, "SMTP_SSL", transport):
+            ops.send_email({"secrets_file": "unused"}, "Daily normal", "All checks pass", "same-event")
+            first = client.send_message.call_args.args[0]
+            ops.send_email({"secrets_file": "unused"}, "Daily normal", "All checks pass", "same-event")
+            second = client.send_message.call_args.args[0]
+        self.assertEqual(first["To"], "operator@synthetic.test")
+        self.assertEqual(first["Subject"], "Tayyn Hyzmat: Daily normal")
+        self.assertEqual(first.get_content().strip(), "All checks pass")
+        self.assertEqual(first["Message-ID"], second["Message-ID"])
+        context = transport.call_args.kwargs["context"]
+        self.assertTrue(context.check_hostname)
+        self.assertEqual(context.verify_mode, ops.ssl.CERT_REQUIRED)
+
+    def test_smtp_recipient_rejection_is_not_success(self):
+        transport = MagicMock()
+        transport.return_value.__enter__.return_value.send_message.return_value = {"operator@synthetic.test": (550, b"rejected")}
+        with patch.object(ops, "private_json", return_value=self.smtp_secrets()), patch.object(ops.smtplib, "SMTP_SSL", transport):
+            with self.assertRaises(RuntimeError):
+                ops.send_email({"secrets_file": "unused"}, "Critical", "Database down", "incident")
+
+    def test_smtp_refuses_unencrypted_port(self):
+        secrets = self.smtp_secrets()
+        secrets["smtp_port"] = 25
+        with patch.object(ops, "private_json", return_value=secrets):
+            with self.assertRaises(ValueError):
+                ops.send_email({"secrets_file": "unused"}, "Critical", "Database down", "incident")
+
+    def test_failed_starttls_never_sends_credentials_or_message(self):
+        secrets = self.smtp_secrets()
+        secrets["smtp_port"] = 587
+        client = MagicMock()
+        client.starttls.side_effect = ops.ssl.SSLError("Synthetic untrusted certificate")
+        transport = MagicMock()
+        transport.return_value.__enter__.return_value = client
+        with patch.object(ops, "private_json", return_value=secrets), patch.object(ops.smtplib, "SMTP", transport):
+            with self.assertRaises(ops.ssl.SSLError):
+                ops.send_email({"secrets_file": "unused"}, "Critical", "Database down", "incident")
+        client.login.assert_not_called()
+        client.send_message.assert_not_called()
+
+
 class OperationsTests(unittest.TestCase):
     def fixture(self, directory):
         root = Path(directory)

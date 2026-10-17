@@ -4,7 +4,7 @@ This is the operational handoff for the first VPS release. Exact installation/up
 
 ## Current status
 
-Production has not been installed. The Railway services and `apk-test` environments are test environments; their databases and credentials must not be copied into production. The repository has Docker images and a read-only readiness diagnostic. This feature branch adds offline release and operational tooling; its checks, a matching offline Ubuntu test, the production domain, and the physical VPS rollout remain release gates. No claim in this guide means that a provider firewall, Yandex key, Firebase delivery, Resend delivery, or TLS certificate has been verified from the purchased hosts.
+Production has not been installed. The Railway services and `apk-test` environments are test environments; their databases and credentials must not be copied into production. The repository has Docker images and a read-only readiness diagnostic. This feature branch adds offline release and operational tooling; its checks, a matching offline Ubuntu test, the production domain, and the physical VPS rollout remain release gates. No claim in this guide means that a provider firewall, Yandex key, Firebase delivery, email delivery, or TLS certificate has been verified from the purchased hosts.
 
 The planned first deployment is a clean database containing one approved dispatcher/admin account and the versioned saved regions. Do not seed synthetic drivers, orders, chats, balances, or Railway records into production.
 
@@ -13,7 +13,7 @@ The planned first deployment is a clean database containing one approved dispatc
 Use two Ubuntu 24.04 LTS amd64 VDS instances:
 
 - **Standard L (main VPS):** HTTPS edge, dashboard, API, PostgreSQL and persistent application data.
-- **Standard S (monitoring VDS):** external availability checks, backup pull/retention, disk and backup-age checks, and alert delivery through Resend. It must not run the application database or production API.
+- **Standard S (monitoring VDS):** external availability checks, backup pull/retention, disk and backup-age checks, and alert delivery through Gmail SMTP or Resend. It must not run the application database or production API.
 - **Dispatcher PC (optional third copy):** pulls an encrypted backup when it is online. The dashboard login is not a backup mechanism; the PC needs a restricted scheduled pull script.
 
 Both VDS instances are with the same provider, so this protects against an application or single-host failure, not a provider-wide outage. The dispatcher PC is an additional independent copy. PostgreSQL remains on a private Docker network; only the intended HTTPS and SSH ports are exposed.
@@ -26,31 +26,31 @@ Namecheap DNS -> main VPS :443 -> Caddy/TLS -> nginx web
                                       \\-> Socket.IO on API
 main VPS hourly encrypted backup --restricted SSH pull--> monitoring VDS
                                                      \\-> optional dispatcher PC pull
-monitoring VDS checks -> Resend HTTPS API -> personal Gmail recipient
+monitoring VDS checks -> Gmail SMTP with verified TLS -> personal Gmail recipient
 ```
 
 The purchased hosts and agreed domain are recorded below. Installation, DNS, TLS and permanent management access remain pending. Keep private keys, API keys and passwords out of this inventory.
 
-The agreed production origin is `https://taxi.bagtyyar.dev`. Preserve the existing root-domain site. Use a separate monitoring hostname only if the monitor has a web UI that must be exposed. Do not publish PostgreSQL or Docker's control socket.
+The agreed production origin is `https://tayynhyzmat.bagtyyar.dev`. Preserve the existing root-domain site. Use a separate monitoring hostname only if the monitor has a web UI that must be exposed. Do not publish PostgreSQL or Docker's control socket.
 
 ## Operational inventory
 
 Fill this in during provisioning. An empty field is a deployment gate, not permission to use Railway as production.
 
-| Item                                  | Agreed value / provisioned value                                                                                                                                                    |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Main host                             | Standard L, `216.250.8.238`, `tayynhyzmat`; Ubuntu 24.04.4 amd64 verified; permanent external SSH path pending                                                                      |
-| Monitoring host                       | Original Standard S, `216.250.9.242`; SSH reachable from main VPS, not yet authenticated or provisioned. DC2 test host `216.250.13.190` remains separate; final host choice pending |
-| DNS owner                             | Namecheap; `bagtyyar.dev`                                                                                                                                                           |
-| Production HTTPS origin               | `https://taxi.bagtyyar.dev`; DNS and certificate pending                                                                                                                            |
-| Monitoring HTTPS origin               | Pending, or private access only                                                                                                                                                     |
-| Alert recipient                       | `bagtyyarkowusow.dev@gmail.com`                                                                                                                                                     |
-| Resend verified sender                | Production sender domain pending; `onboarding@resend.dev` permitted for initial tests to the confirmed Resend account email only                                                    |
-| Current/previous production release   | Not deployed                                                                                                                                                                        |
-| Main runtime configuration            | `/etc/tayyn/app.env`                                                                                                                                                                |
-| Monitor runtime configuration         | `/etc/tayyn/operations.json` and `/etc/tayyn/monitor-secrets.json`                                                                                                                  |
-| Backup storage and private key holder | Pending provisioning                                                                                                                                                                |
-| Last restore test and alert test      | Pending purchased-host verification                                                                                                                                                 |
+| Item                                  | Agreed value / provisioned value                                                                                                         |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Main host                             | Standard L, `216.250.8.238`, `tayynhyzmat`; Ubuntu 24.04.4 amd64 verified; key-only SSH port 2222 verified after reboot                  |
+| Monitoring host                       | Standard S, `216.250.9.242`, selected and authenticated; Ubuntu 24.04.4 amd64 verified. DC2 test host `216.250.13.190` remains untouched |
+| DNS owner                             | Namecheap; `bagtyyar.dev`                                                                                                                |
+| Production HTTPS origin               | `https://tayynhyzmat.bagtyyar.dev`; DNS resolves; certificate pending                                                                    |
+| Monitoring HTTPS origin               | Pending, or private access only                                                                                                          |
+| Alert recipient                       | `bagtyyarkowusow.dev@gmail.com`                                                                                                          |
+| Resend verified sender                | Production sender domain pending; `onboarding@resend.dev` permitted for initial tests to the confirmed Resend account email only         |
+| Current/previous production release   | Not deployed                                                                                                                             |
+| Main runtime configuration            | `/etc/tayyn/app.env`                                                                                                                     |
+| Monitor runtime configuration         | `/etc/tayyn/operations.json` and `/etc/tayyn/monitor-secrets.json`                                                                       |
+| Backup storage and private key holder | Pending provisioning                                                                                                                     |
+| Last restore test and alert test      | Pending purchased-host verification                                                                                                      |
 
 ### Purchased-host checks, 2026-10-17
 
@@ -59,11 +59,28 @@ Read-only SSH checks succeeded on the main VPS at 12:31 UTC through a temporary 
 - Main host: four logical CPUs, 3,915 MiB RAM, no swap, 60 GiB virtual disk and about 56 GiB free on `/`. This is an inventory check, not a workload benchmark. Passwordless sudo works and NTP reports synchronized.
 - Docker and `age` are absent. Python, curl, OpenSSL, rsync, tar, gzip and zstd are present. No packages, containers, production accounts or application configuration were installed during these checks.
 - External TCP 22 timed out from the Mac through a mobile hotspot with Shadowrocket disconnected. A coordinated 60-second VPS capture recorded zero port-22 packets. SSH itself listens on IPv4/IPv6; UFW is inactive and nftables, iptables and ip6tables exports are empty. SSH on TCP 443 returned a valid banner and authenticated successfully. This isolates a port-specific network restriction but does not identify its operator. Resolve permanent SSH access before assigning 443 to HTTPS. The temporary listener is not a production management configuration and expires automatically.
-- From the main VPS, TCP 22 on itself and `216.250.9.242` returned SSH banners. The DC2 test host `216.250.13.190` returned `No route to host`. No monitoring host has been authenticated or deleted.
+- From the main VPS, TCP 22 on itself and `216.250.9.242` returned SSH banners. The DC2 test host `216.250.13.190` returned `No route to host`. At this point no monitoring host had been authenticated or deleted; subsequent provisioning is recorded below.
 - Verified DNS/TLS handshakes to Yandex geocoder and Maps, Google OAuth, FCM, GHCR and Let's Encrypt. This proves network/TLS access only, not keys, quota, image pulls, certificate issuance or notification delivery. No geocoder requests or emails were sent.
 - `api.resend.com` resolves, but both returned IPv4 addresses refused TCP 443; IPv6 is not routed on this host. Email is a deployment blocker until access is verified from the selected monitoring server. Do not claim delivery or work around certificate validation.
-- At 12:34 UTC, Gmail SMTP on ports 465 and 587 passed verified TLS 1.3 and returned EHLO 250 from the main VPS; Gmail API port 443 also passed TLS. No authentication or email send was attempted. Gmail SMTP is a viable candidate, pending the user's transport decision, monitoring-host tests, a Google App Password and an SMTP implementation. The current monitor supports Resend only; these probes do not establish email delivery.
-- `taxi.bagtyyar.dev` did not resolve from the VPS. Create the Namecheap `A` record for host `taxi` pointing to `216.250.8.238`, then verify DNS, trusted TLS and renewal.
+- At 12:34 UTC, Gmail SMTP on ports 465 and 587 passed verified TLS 1.3 and returned EHLO 250 from the main VPS; Gmail API port 443 also passed TLS. No authentication or email send was attempted. Gmail SMTP is a viable candidate, pending monitoring-host tests, a Google App Password and an SMTP implementation. Subsequent SMTP implementation and host tests are recorded below; these initial probes did not establish email delivery.
+- `tayynhyzmat.bagtyyar.dev` did not resolve from the VPS. Create the Namecheap `A` record for host `tayynhyzmat` pointing to `216.250.8.238`, then verify DNS, trusted TLS and renewal.
+
+### Management and SMTP provisioning, 2026-10-17
+
+The production domain was changed by the owner to `tayynhyzmat.bagtyyar.dev`, and it now resolves to `216.250.8.238`. Certificate issuance is still pending.
+
+Both main and original monitoring VPSs now run `tayyn-management-ssh.service` on TCP 2222 with public-key-only authentication, root login disabled and only the `ubuntu` operator allowed. The dedicated operator key is private on the owner's Mac. Existing port-22 SSH configuration was preserved. Both servers were rebooted individually; changed boot IDs and successful fresh key logins verified that management access survives reboot. Do not stop this service or replace keys before a second verified session and provider-console recovery are available. The service template is in `deploy/monitoring/tayyn-management-ssh.service`; install the operator public key before enabling it.
+
+With Shadowrocket enabled on the Mac, the default VPN route timed out to the hosts while `BindInterface en0` reached them. The ignored owner-only SSH configuration at `.local/vps-bootstrap/ssh-config` defines `tayyn-production` and `tayyn-monitor`, using pinned host keys and port 2222. Operator commands on this Mac are:
+
+```sh
+ssh -F /Users/bagtyyar/Projects/tayyn-hyzmat-project/.local/vps-bootstrap/ssh-config tayyn-production
+ssh -F /Users/bagtyyar/Projects/tayyn-hyzmat-project/.local/vps-bootstrap/ssh-config tayyn-monitor
+```
+
+The original Standard S is verified as Ubuntu 24.04.4 amd64, one logical CPU, 961 MiB RAM and about 7 GiB free. It is selected for provisioning; the DC2 test VPS is untouched. Gmail SMTP on port 465 passed TLS and authenticated successfully from Standard S. The sender is `tkmdevelopers@gmail.com`; the alert recipient is `bagtyyarkowusow.dev@gmail.com`. The App Password is only in protected local/runtime files. The selected transport is now SMTP, not Resend. The setup email was accepted by Gmail and the owner confirmed Inbox receipt, not Spam. Scheduled monitoring and incident/recovery acceptance remain pending.
+
+Local Docker Hub downloads failed on the operator Mac. `.github/workflows/offline-production-bundle.yml` provides a manual connected Ubuntu 24.04 amd64 builder. It downloads signed package dependency closures, builds images from its checked-out commit with the public Maps key, and exports checksummed app and monitor archives. Artifacts contain no runtime credentials and expire after seven days. Package installation with downloads disabled and application startup/reboot still need verification on the purchased hosts. The app package closure includes Certbot for domain-certificate issuance and renewal.
 
 ## Namecheap DNS and TLS
 
@@ -161,11 +178,11 @@ The monitoring VDS must run lightweight checks, not an unrestricted log warehous
 - disk space on both VDS instances;
 - newest backup age, size and checksum;
 - certificate expiry;
-- outbound Yandex, Google/FCM and Resend connectivity where applicable.
+- outbound Yandex, Google/FCM and the selected email transport connectivity where applicable.
 
 Restart policies recover an exited process or a reboot. They do not prove that a hung process is healthy. The current tooling alerts on unhealthy services and restart changes. It does not automatically restart a merely unhealthy container; an operator must investigate and use a bounded recovery action. Add automated hang recovery only with a retry limit and a test that prevents restart loops. Alerts must not include customer phones, driver data, tokens or database contents.
 
-Email cadence, sent via Resend to `bagtyyarkowusow.dev@gmail.com`:
+Email cadence, sent via the configured SMTP or Resend transport to `bagtyyarkowusow.dev@gmail.com`:
 
 - **Critical failure:** send immediately, then at 5 and 15 minutes, then every 30 minutes while the condition remains unresolved. Group duplicate failures into the same incident. Send one recovery email when the condition clears.
 - **Noncritical warning:** include it in the daily attention report; it must suppress a normal report. Critical conditions use the incident cadence above.
