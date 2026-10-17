@@ -39,8 +39,10 @@
   --destructive: #b42318;
   --destructive-foreground: #fff;
   --success: #137333;
-  --brand-swoosh: #e20d20;
-  --shadow-overlay: 0 12px 40px rgb(0 0 0 / 0.14), 0 2px 8px rgb(0 0 0 / 0.08);
+  --brand-swoosh: #c81022;
+  --dialog-scrim: rgb(14 23 36 / 0.58);
+  --shadow-overlay:
+    0 12px 40px rgb(18 45 75 / 0.14), 0 2px 8px rgb(18 45 75 / 0.08);
   --border: #d9e1e9;
   font-family: "Manrope Variable", sans-serif;
   font-synthesis: none;
@@ -59,6 +61,7 @@
   --destructive-foreground: #4a0903;
   --success: #8bd5a5;
   --brand-swoosh: #ff7983;
+  --dialog-scrim: rgb(3 9 17 / 0.76);
   --shadow-overlay: 0 12px 40px rgb(0 0 0 / 0.45), 0 2px 8px rgb(0 0 0 / 0.24);
   --border: #3a4a60;
   color-scheme: dark;
@@ -137,13 +140,13 @@
   select {
     appearance: none;
     padding-inline-end: 2.5rem;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%235c5c5c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23526174' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 0.75rem center;
     background-size: 1rem;
   }
   .dark select {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23b8b8b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23bac6d4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   }
   .native-select {
     @apply h-10 w-full min-w-0 rounded-md border bg-card ps-3 pe-10 text-sm;
@@ -200,7 +203,16 @@
   user-select: text;
 }
 
+/* The red swoosh is a small navigation cue, separate from green work status. */
+.nav-link.selected > svg,
+.driver-nav .selected > svg {
+  color: var(--brand-swoosh);
+}
+
 /* Elevation distinguishes temporary layers; working panels stay flat. */
+.app-dialog-overlay {
+  background: var(--dialog-scrim);
+}
 .app-dialog-content {
   box-shadow: var(--shadow-overlay);
 }

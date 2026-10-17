@@ -3,7 +3,7 @@ name: Tayyn Hyzmat
 description: Compact navy, red and white dispatch and driver interfaces
 colors:
   ink: "#122d4b"
-  brand-swoosh: "#e20d20"
+  brand-swoosh: "#c81022"
   paper: "#ffffff"
   story-muted: "#c1cddd"
   background: "#f5f7fa"
@@ -50,7 +50,7 @@ The user restored the original navy H and red swoosh from recovered `logo.png`. 
 
 ## Colors
 
-`src/shared/theme.css` is the runtime authority. Light uses background `#f5f7fa`, card `#ffffff`, foreground `#13283f`, navy primary `#122d4b`, secondary `#e9eef4`, muted text `#526174`, border `#d9e1e9`. Dark uses background `#0e1724`, card `#172334`, foreground/primary `#f5f5f5`, secondary `#253246`, muted text `#bac6d4`, border `#3a4a60`. The login story uses the same navy. Brand red is `#e20d20` (dark accent `#ff7983`); it is not a readiness indicator. Destructive actions remain white on `#b42318` in light mode and `#4a0903` on `#ffb4ab` in dark mode. GPS/shift success remains `#137333` / `#8bd5a5`.
+`src/shared/theme.css` is the runtime authority. Light uses background `#f5f7fa`, card `#ffffff`, foreground `#13283f`, navy primary `#122d4b`, secondary `#e9eef4`, muted text `#526174`, border `#d9e1e9`. Dark uses background `#0e1724`, card `#172334`, foreground/primary `#f5f5f5`, secondary `#253246`, muted text `#bac6d4`, border `#3a4a60`. The login story uses the same navy. Interface accents use red `#c81022` in light mode and `#ff7983` in dark mode; the artwork keeps its original red. Red navigation accents do not indicate readiness. Destructive actions remain white on `#b42318` in light mode and `#4a0903` on `#ffb4ab` in dark mode. GPS/shift success remains `#137333` / `#8bd5a5`.
 
 ## Typography
 
@@ -66,7 +66,7 @@ Shared shadcn-vue primitives keep their behavior. Panels remain flat and ruled; 
 
 ## Components
 
-`src/shared/BrandLogo.vue` displays `public/brand/mark-light.png` and `mark-dark.png` alongside the live Latin wordmark. Both use the original navy/red artwork: dark mode adds a white backing to preserve contrast. Root `logo.png` remains unchanged; the later black/green uploads remain archived under `public/brand/source/`. `scripts/generate-brand-assets.py` extracts the colored artwork from the source tile/shadow, trims and centers its visible bounds, then pads/downsamples without redrawing. No fixed optical offset is applied. Android adaptive foregrounds and splash icons have transparent backgrounds, preventing nested tiles; mask-safe margins protect the swoosh. The manifest, launcher and launch screen use this identity. These are build assets, not a database migration.
+`src/shared/BrandLogo.vue` displays `public/brand/mark-light.png` and `mark-dark.png` alongside the live Latin wordmark. Both use the original navy/red artwork: dark mode adds a white backing to preserve contrast. Root `logo.png` remains unchanged; the later black/green uploads remain archived under `public/brand/source/`. `scripts/generate-brand-assets.py` extracts the colored artwork from the source tile/shadow, trims and centers its visible bounds, then pads/downsamples without redrawing. No fixed optical offset is applied. Android adaptive foregrounds and splash icons have transparent backgrounds, preventing nested tiles; mask-safe margins protect the swoosh. The manifest, launcher and launch screen use this identity. Modern active-navigation icons use a restrained red accent; selection fills, chat bubbles, fields, menus, tables and primary controls inherit shared navy tokens. Dialog scrims use a navy-tinted transparent layer rather than a detached black palette. Browser theme chrome derives from the current runtime background token; native location/readiness and active-order green, amber warnings and destructive colors stay semantic. These are build assets, not a database migration.
 
 Verification covers both actors, light/dark, desktop/mobile and the driver viewport. A polished visual test does not certify financial integrity, background notification delivery or production readiness; those have separate release gates.
 
