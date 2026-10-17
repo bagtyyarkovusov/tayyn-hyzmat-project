@@ -1,5 +1,6 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import type { Order } from "./model";
+import { validCoordinatePair } from "./map-markers";
 
 interface NavigationTarget {
   lat: number;
@@ -17,17 +18,9 @@ export function tripNavigation(order: Order | null): NavigationTarget | null {
   const dropoff = order.status === "STARTED";
   const rawLat = dropoff ? order.dropoffLat : order.pickupLat;
   const rawLng = dropoff ? order.dropoffLng : order.pickupLng;
-  if (rawLat == null || rawLng == null || rawLat === "" || rawLng === "")
-    return null;
-  const lat = Number(rawLat),
-    lng = Number(rawLng);
-  if (
-    !Number.isFinite(lat) ||
-    !Number.isFinite(lng) ||
-    Math.abs(lat) > 90 ||
-    Math.abs(lng) > 180
-  )
-    return null;
+  const point = validCoordinatePair(rawLat, rawLng);
+  if (!point) return null;
+  const { lat, lng } = point;
   const query = `rtext=~${lat},${lng}&rtt=auto`;
   return {
     lat,

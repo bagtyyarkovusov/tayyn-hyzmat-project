@@ -463,7 +463,8 @@ async function listOrders({ status, page, limit, customerPhone, driverPhone, ord
   };
   if (driverPhone) {
     // Resolve current and archived driver phones first so historical orders
-    // remain searchable after a credential phone change or deletion.
+    // remain searchable after deletion. Earlier credential phone values are
+    // not retained when a driver's phone is edited.
     const users = await prisma.user.findMany({
       where: {
         role: "DRIVER",
