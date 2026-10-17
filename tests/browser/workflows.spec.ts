@@ -2036,7 +2036,7 @@ test("native connection recovery turns red at the actual lease deadline and requ
   page,
 }) => {
   await emulateNativeBridge(page, false);
-  await createAddressDriver(page, "+99360000342");
+  await createAddressDriver(page, "+99360000344");
   await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
   await page
     .getByRole("button", { name: "Выйти на линию", exact: true })

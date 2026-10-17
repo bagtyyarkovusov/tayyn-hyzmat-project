@@ -4,6 +4,7 @@ Manual Python 3/Pillow tool; generated assets are committed, no build dependency
 The canonical recovered root logo.png remains byte-identical.
 """
 from pathlib import Path
+from math import hypot
 from PIL import Image, ImageDraw, PngImagePlugin
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,7 +17,7 @@ def save(image, path):
     path.parent.mkdir(parents=True, exist_ok=True)
     metadata = PngImagePlugin.PngInfo()
     metadata.add_text("Source", ORIGIN)
-    metadata.add_text("impeccable:prompt", "Source: " + ORIGIN + "; extract original colored artwork from white tile, preserve shapes and colors, center visible bounds and downsample.")
+    metadata.add_text("impeccable:prompt", "Source: " + ORIGIN + "; extract original colored artwork from white tile, preserve shapes and colors, center visible ink mass and downsample inside the Android safe circle.")
     image.save(path, pnginfo=metadata)
 
 
@@ -45,6 +46,22 @@ def prepare(source):
 artwork = prepare(ROOT / "logo.png")
 
 
+def ink_geometry(image):
+    """The thin swoosh tip must not determine the apparent H's center."""
+    alpha = image.getchannel("A")
+    pixels = [(x, y, value) for y in range(image.height)
+              for x in range(image.width) if (value := alpha.getpixel((x, y)))]
+    weight = sum(value for _, _, value in pixels)
+    center = (sum(x * value for x, _, value in pixels) / weight,
+              sum(y * value for _, y, value in pixels) / weight)
+    radius = max(hypot(x - center[0], y - center[1])
+                 for x, y, value in pixels if value > 16)
+    return center, radius
+
+
+ARTWORK_CENTER, ARTWORK_RADIUS = ink_geometry(artwork)
+
+
 def mark(size, foreground=False, round_icon=False, backing=True):
     image = Image.new("RGBA", (size, size))
     if not foreground and backing:
@@ -53,12 +70,18 @@ def mark(size, foreground=False, round_icon=False, backing=True):
             draw.ellipse((0, 0, size-1, size-1), fill="white")
         else:
             draw.rounded_rectangle((0, 0, size-1, size-1), radius=round(size*0.2), fill="white")
-    # Center the EXTRACTED artwork, never the off-centre source tile. No fixed
-    # optical offsets. 48% adaptive foreground stays inside Android's mask-safe
-    # circle; ordinary icons use 72% of their tile. The tile is painted once.
-    inner = max(1, round(size * (0.48 if foreground else 0.72)))
+    # Center alpha-weighted ink, not the silhouette box: its long narrow swoosh
+    # makes box-centering visibly left-heavy. Derive the offset from the source,
+    # rather than guessing a fixed horizontal nudge. The full silhouette stays
+    # inside the 66/108 Android safe circle, including after optical centering.
+    scale = min(size * (0.48 if foreground else 0.72) / artwork.width,
+                size * (66 / 108 / 2 if foreground else 0.44) / ARTWORK_RADIUS)
+    inner = max(1, round(artwork.width * scale))
     scaled = artwork.resize((inner, inner), Image.Resampling.LANCZOS)
-    image.alpha_composite(scaled, ((size-inner)//2, (size-inner)//2))
+    center_x, center_y = ARTWORK_CENTER
+    offset = (round((size - 1) / 2 - ((center_x + 0.5) * inner / artwork.width - 0.5)),
+              round((size - 1) / 2 - ((center_y + 0.5) * inner / artwork.height - 0.5)))
+    image.alpha_composite(scaled, offset)
     return image
 
 

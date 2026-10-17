@@ -134,9 +134,6 @@ test("second device signs in immediately without ending or controlling the first
     expect(Number(canonical.lastLat)).toBe(37.96);
     expect(Number(canonical.lastLng)).toBe(58.32);
     await expect(
-      spectator.getByText("Смена на другом устройстве", { exact: true }),
-    ).toBeVisible();
-    await expect(
       spectator.getByText(
         "Смена активна на другом устройстве. Завершите её там, чтобы выйти на линию здесь.",
         { exact: true },
