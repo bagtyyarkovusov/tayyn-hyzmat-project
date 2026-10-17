@@ -19,10 +19,18 @@ async function listDistrictsWithStats() {
   });
 
   const onlineWhere = onlineDriverWhere();
-  const [orderCounts, candidateFreeDrivers, onlineCounts] = await Promise.all([
+  const [orderCounts, publicAvailableCounts, candidateFreeDrivers, onlineCounts] = await Promise.all([
     prisma.order.groupBy({
       by: ['districtId'],
       where: { districtId: { not: null }, status: { notIn: ACTIVE_ORDER_STATUSES_EXCLUDED } },
+      _count: { _all: true }
+    }),
+    // Public availability is distinct from dispatcher unfinished work. A
+    // common snapshot must never reveal private reservations or stopped offers.
+    prisma.order.groupBy({
+      by: ['districtId'],
+      where: { districtId: { not: null }, status: 'NEW', driverId: null,
+        privateOfferDriverId: null, privateOfferStoppedAt: null },
       _count: { _all: true }
     }),
     // Balance is a relation, not a scalar on Driver, so it's filtered and
@@ -41,6 +49,7 @@ async function listDistrictsWithStats() {
 
   const orderCountByDistrict = new Map(orderCounts.map((row) => [row.districtId, row._count._all]));
 
+  const publicAvailableByDistrict = new Map(publicAvailableCounts.map(row => [row.districtId, row._count._all]));
   const onlineCountByDistrict = new Map(onlineCounts.map(row => [row.districtId, row._count._all]));
   const freeDriverCountByDistrict = new Map();
   for (const driver of candidateFreeDrivers) {
@@ -60,7 +69,9 @@ async function listDistrictsWithStats() {
     // already see every district by name here.
     centerLat: Number(district.centerLat),
     centerLng: Number(district.centerLng),
+    boundary: district.boundary,
     activeOrders: orderCountByDistrict.get(district.id) || 0,
+    publicAvailableOrders: publicAvailableByDistrict.get(district.id) || 0,
     freeDrivers: freeDriverCountByDistrict.get(district.id) || 0,
     onlineDrivers: onlineCountByDistrict.get(district.id) || 0
   }));
@@ -91,14 +102,20 @@ async function findNearestDistrictForPoint(lat, lng) {
 // balance/location state changing. Broadcasts the full 9-row snapshot -
 // with this few rows there is no benefit to diffing, and it keeps every
 // listener trivially consistent.
-async function broadcastDistrictStats() {
-  try {
-    await refreshOrderRecipients();
-    const stats = await listDistrictsWithStats();
-    getIO().to(rooms.districtsOverview()).emit('districts:stats', stats);
-  } catch (err) {
-    logger.warn({ err }, 'Failed to broadcast districts:stats');
-  }
+let districtStatsBroadcast = Promise.resolve();
+function broadcastDistrictStats() {
+  // Read and emit in invocation order. A slow older snapshot must not arrive
+  // after the recount that removed a claimed order from every driver's grid.
+  districtStatsBroadcast = districtStatsBroadcast.then(async () => {
+    try {
+      await refreshOrderRecipients();
+      const stats = await listDistrictsWithStats();
+      getIO().to(rooms.districtsOverview()).emit('districts:stats', stats);
+    } catch (err) {
+      logger.warn({ err }, 'Failed to broadcast districts:stats');
+    }
+  });
+  return districtStatsBroadcast;
 }
 
 module.exports = { listDistrictsWithStats, findDistrictForGpsPoint, findNearestDistrictForPoint, broadcastDistrictStats };

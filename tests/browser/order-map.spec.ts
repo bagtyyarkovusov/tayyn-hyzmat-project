@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { isolateBrowserClient } from "./helpers/device-session";
 if (process.env.DISPOSABLE_BROWSER_TEST !== "true")
   throw new Error("Use disposable browser runner");
 for (const viewport of [
@@ -40,6 +41,7 @@ for (const viewport of [
         Placemark: Marker,
       };
     });
+    await isolateBrowserClient(page.context());
     await page.goto("/adminLogin");
     await page.getByLabel("Номер телефона").fill("60000000");
     await page

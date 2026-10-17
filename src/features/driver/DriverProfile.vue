@@ -1,8 +1,18 @@
 <script setup lang="ts">
-import { formatPhone } from "@/shared/phone";
+import { formatPhone, isTurkmenPhone } from "@/shared/phone";
 import IncomingOrder from "./components/IncomingOrder.vue";
 import { onMounted, ref, watch } from "vue";
-import { Car, Wallet, ChevronLeft, ChevronRight } from "lucide-vue-next";
+import {
+  Car,
+  Wallet,
+  Bell,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Phone,
+} from "lucide-vue-next";
+import { notificationSettings, toggleNotifications } from "./notifications";
+import { alertState, openNotificationSettings } from "./alerts";
 import { Button } from "@/shared/ui/button";
 import { Badge } from "@/shared/ui/badge";
 import { driverApi, errorMessage } from "@/shared/api";
@@ -115,6 +125,55 @@ onMounted(() => void load());
         </div>
       </div>
     </section>
+    <section aria-label="Настройки уведомлений" class="border-y py-3">
+      <div class="flex items-center gap-3">
+        <Bell class="size-4 shrink-0" aria-hidden="true" />
+        <div class="min-w-0 flex-1">
+          <h2 class="text-sm font-medium">Уведомления</h2>
+          <p class="text-xs text-muted-foreground">
+            Заказы и сообщения диспетчера
+          </p>
+        </div>
+        <Button
+          role="switch"
+          aria-label="Уведомления"
+          :aria-checked="notificationSettings.enabled"
+          :disabled="notificationSettings.loading"
+          :aria-busy="notificationSettings.loading"
+          class="min-h-11 min-w-16"
+          :variant="notificationSettings.enabled ? 'default' : 'outline'"
+          @click="toggleNotifications"
+          >{{ notificationSettings.enabled ? "Вкл" : "Выкл" }}</Button
+        >
+      </div>
+      <p
+        v-if="notificationSettings.error"
+        role="alert"
+        class="mt-2 text-sm text-destructive"
+      >
+        {{ notificationSettings.error }}
+      </p>
+      <p
+        v-if="
+          notificationSettings.enabled && alertState.permission === 'denied'
+        "
+        class="mt-2 text-xs text-muted-foreground"
+      >
+        Системные уведомления запрещены в настройках
+        {{ nativeAndroid ? "Android" : "браузера" }}.
+      </p>
+      <Button
+        v-if="
+          nativeAndroid &&
+          notificationSettings.enabled &&
+          alertState.permission === 'denied'
+        "
+        variant="link"
+        class="min-h-11 px-0"
+        @click="openNotificationSettings"
+        >Открыть настройки Android</Button
+      >
+    </section>
     <section class="space-y-3">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <h2 class="font-semibold">История</h2>
@@ -146,27 +205,152 @@ onMounted(() => void load());
           >
             Поездок пока нет.
           </p>
-          <article
+          <details
             v-for="order in history.orders.items"
             :key="order.id"
-            class="space-y-2 p-4"
+            class="group"
           >
-            <div class="flex justify-between gap-3">
-              <p class="min-w-0 break-words font-medium">
-                {{ order.pickupAddress || "Адрес не указан" }}
-              </p>
-              <span class="shrink-0 tabular-nums">{{
-                money(order.priceFinal ?? order.priceEstimated)
-              }}</span>
+            <summary
+              class="flex min-h-11 cursor-pointer list-none items-start gap-3 p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset [&::-webkit-details-marker]:hidden"
+            >
+              <div class="min-w-0 flex-1 space-y-1.5">
+                <div class="flex items-start justify-between gap-3">
+                  <span class="min-w-0 break-words font-medium">
+                    {{ order.pickupAddress || "Место подачи не указано" }}
+                  </span>
+                  <span class="shrink-0 font-semibold tabular-nums">
+                    {{
+                      order.priceFinal != null || order.priceEstimated != null
+                        ? money(order.priceFinal ?? order.priceEstimated)
+                        : "Цена не указана"
+                    }}
+                  </span>
+                </div>
+                <div
+                  class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
+                >
+                  <span
+                    :class="
+                      order.status === 'CANCELLED'
+                        ? 'text-destructive'
+                        : 'text-foreground'
+                    "
+                  >
+                    {{ statusLabels[order.status] }}
+                  </span>
+                  <span v-if="order.district?.name">{{
+                    order.district.name
+                  }}</span>
+                  <time :datetime="order.createdAt">{{
+                    date(order.createdAt)
+                  }}</time>
+                </div>
+              </div>
+              <ChevronDown
+                class="mt-1 size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180 motion-reduce:transition-none"
+                aria-hidden="true"
+              />
+              <span class="sr-only">Подробности поездки</span>
+            </summary>
+            <div class="space-y-4 px-4 pb-4 text-sm">
+              <dl class="space-y-3 border-t pt-3">
+                <div>
+                  <dt class="text-xs text-muted-foreground">Откуда</dt>
+                  <dd class="mt-0.5 break-words">
+                    {{ order.pickupAddress || "Точный адрес не указан" }}
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-muted-foreground">Куда</dt>
+                  <dd class="mt-0.5 break-words">
+                    {{ order.dropoffAddress || "Место назначения не указано" }}
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-muted-foreground">Телефон клиента</dt>
+                  <dd>
+                    <a
+                      v-if="
+                        order.clientPhone && isTurkmenPhone(order.clientPhone)
+                      "
+                      :href="`tel:${order.clientPhone}`"
+                      class="inline-flex min-h-11 items-center gap-2 font-medium underline underline-offset-4"
+                      ><Phone class="size-4" aria-hidden="true" />{{
+                        formatPhone(order.clientPhone)
+                      }}</a
+                    >
+                    <p v-else class="mt-0.5">Номер не указан</p>
+                  </dd>
+                </div>
+                <div v-if="order.note">
+                  <dt class="text-xs text-muted-foreground">Примечание</dt>
+                  <dd class="mt-0.5 whitespace-pre-wrap break-words">
+                    {{ order.note }}
+                  </dd>
+                </div>
+                <div v-if="order.cancelReason">
+                  <dt class="text-xs text-muted-foreground">Причина отмены</dt>
+                  <dd class="mt-0.5 whitespace-pre-wrap break-words">
+                    {{ order.cancelReason }}
+                  </dd>
+                </div>
+              </dl>
+              <dl
+                class="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-2 border-t pt-3 text-xs"
+              >
+                <dt class="text-muted-foreground">Создан</dt>
+                <dd>
+                  <time :datetime="order.createdAt">{{
+                    date(order.createdAt)
+                  }}</time>
+                </dd>
+                <template v-if="order.acceptedAt">
+                  <dt class="text-muted-foreground">Принят</dt>
+                  <dd>
+                    <time :datetime="order.acceptedAt">{{
+                      date(order.acceptedAt)
+                    }}</time>
+                  </dd>
+                </template>
+                <template v-if="order.arrivedAt">
+                  <dt class="text-muted-foreground">На месте</dt>
+                  <dd>
+                    <time :datetime="order.arrivedAt">{{
+                      date(order.arrivedAt)
+                    }}</time>
+                  </dd>
+                </template>
+                <template v-if="order.startedAt">
+                  <dt class="text-muted-foreground">Начало поездки</dt>
+                  <dd>
+                    <time :datetime="order.startedAt">{{
+                      date(order.startedAt)
+                    }}</time>
+                  </dd>
+                </template>
+                <template v-if="order.completedAt">
+                  <dt class="text-muted-foreground">Завершён</dt>
+                  <dd>
+                    <time :datetime="order.completedAt">{{
+                      date(order.completedAt)
+                    }}</time>
+                  </dd>
+                </template>
+                <template v-if="order.cancelledAt">
+                  <dt class="text-muted-foreground">Отменён</dt>
+                  <dd>
+                    <time :datetime="order.cancelledAt">{{
+                      date(order.cancelledAt)
+                    }}</time>
+                  </dd>
+                </template>
+              </dl>
+              <dl class="space-y-1 border-t pt-3 text-xs">
+                <dt class="text-muted-foreground">Номер заказа</dt>
+                <dd class="select-all break-all">{{ order.id }}</dd>
+              </dl>
             </div>
-            <p v-if="order.dropoffAddress" class="muted break-words text-sm">
-              {{ order.dropoffAddress }}
-            </p>
-            <div class="muted flex flex-wrap justify-between gap-2 text-xs">
-              <span>{{ statusLabels[order.status] }}</span
-              ><time>{{ date(order.createdAt) }}</time>
-            </div>
-          </article>
+          </details>
         </div>
         <div v-else class="divide-y rounded-xl border">
           <p
@@ -219,33 +403,13 @@ onMounted(() => void load());
           /></Button></div
       ></template>
     </section>
-    <details class="rounded-xl border p-4">
-      <summary class="cursor-pointer text-sm font-medium">
-        Устройство и сеанс
-      </summary>
-      <p
-        v-if="state.profile?.canControlShift === false"
-        role="status"
-        class="mt-3 text-sm"
-      >
-        Смена работает на другом устройстве<span
-          v-if="state.profile.activeShiftDeviceLabel"
-          >: {{ state.profile.activeShiftDeviceLabel }}</span
-        >. Здесь доступны просмотр и чат. Чтобы работать с этого устройства,
-        сначала завершите смену на другом.
-      </p>
-      <p v-if="nativeAndroid" class="muted mt-3 text-sm">
-        Вы используете приложение Android. Во время смены на этом устройстве
-        приложение передаёт местоположение и проверяет новые заказы и сообщения
-        в фоне. Для этого нужны разрешения на местоположение и уведомления;
-        энергосбережение телефона может задерживать обновления. Выход из
-        аккаунта на этом устройстве завершает его смену.
-      </p>
-      <p v-else class="muted mt-3 text-sm">
-        Этот сеанс работает в мобильном или настольном браузере. Выход из
-        аккаунта доступен в меню приложения. Фоновые уведомления зависят от
-        разрешений браузера.
-      </p>
-    </details>
+    <p
+      v-if="state.profile?.canControlShift === false"
+      role="status"
+      class="text-sm text-muted-foreground"
+    >
+      Смена работает на другом устройстве. Здесь доступны просмотр и чат. Чтобы
+      работать с этого устройства, сначала завершите смену на другом.
+    </p>
   </div>
 </template>

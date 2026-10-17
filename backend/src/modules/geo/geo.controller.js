@@ -19,6 +19,6 @@ const reverse = asyncHandler(async (req, res) => {
 
 const address = asyncHandler(async (req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.json(await driverAddress(req.user, req.params.driverId));
+  res.json(await driverAddress(req.user, req.params.driverId, req.body));
 });
 module.exports = { reverse, address };

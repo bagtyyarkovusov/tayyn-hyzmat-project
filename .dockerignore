@@ -8,6 +8,9 @@ dist-driver
 **/.env
 **/.env.*
 android
+.local
+.railway
+output
 *.log
 .DS_Store
 playwright-report

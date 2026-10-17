@@ -118,7 +118,22 @@ function initSockets(httpServer) {
 
   const offerSweep = setInterval(() => require('../modules/orders/orders.service').expirePrivateOffers().catch(err => logger.warn({ err }, 'Private offer expiry failed')), 1000);
   offerSweep.unref();
-  io.engine.on('close', () => clearInterval(offerSweep));
+  const notifications = require('../modules/notifications/notifications');
+  // Socket delivery gives foreground installations a three-second grace
+  // period. The same durable rows are then picked up by FCM when configured;
+  // both loops revalidate account/device state before emitting or sending.
+  const notificationSweep = setInterval(() => {
+    notifications.publishPending().catch(() => {});
+    notifications.processPending().catch(() => {});
+  }, 1000);
+  notificationSweep.unref();
+  const notificationCleanup = setInterval(() => notifications.pruneExpired().catch(() => {}), 60 * 60 * 1000);
+  notificationCleanup.unref();
+  io.engine.on('close', () => {
+    clearInterval(offerSweep);
+    clearInterval(notificationSweep);
+    clearInterval(notificationCleanup);
+  });
   setIO(io);
   return io;
 }

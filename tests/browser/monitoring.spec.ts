@@ -30,13 +30,29 @@ test("monitoring shows driver information on map hover, tap and keyboard selecti
   const accessToken = driverSession.accessToken;
   await installFixtureSession(page.context(), "admin", adminSession);
   const location = await request.post(
-    `${process.env.TEST_API_URL}/driver/location`,
+    `${process.env.TEST_API_URL}/driver/status`,
     {
       headers: { Authorization: `Bearer ${accessToken}` },
-      data: { lat: 37.9601, lng: 58.3261 },
+      data: {
+        isOnline: true,
+        position: {
+          lat: 37.9601,
+          lng: 58.3261,
+          capturedAt: Date.now(),
+          accuracy: 10,
+        },
+      },
     },
   );
   expect(location.ok()).toBe(true);
+  const offline = await request.post(
+    `${process.env.TEST_API_URL}/driver/status`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      data: { isOnline: false },
+    },
+  );
+  expect(offline.ok()).toBe(true);
   // Only the external map SDK is replaced. Driver data comes from the real API.
   await page.route("https://api-maps.yandex.ru/**", (route) =>
     route.fulfill({
@@ -70,7 +86,10 @@ test("monitoring shows driver information on map hover, tap and keyboard selecti
   const preview = page.getByRole("region", { name: "Водитель на карте" });
   await expect(preview).toContainText("Второй водитель");
   await expect(preview).toContainText("Не в сети");
-  await expect(preview).toContainText("Координаты обновлены");
+  await expect(preview).toContainText(
+    "Последнее местоположение · обновление остановлено",
+  );
+  await expect(preview.locator("time")).toHaveAttribute("datetime", /T/);
   await marker.click();
   await page.getByRole("heading", { name: "Мониторинг", exact: true }).hover();
   const details = page.getByRole("region", { name: "Выбранный водитель" });
@@ -90,7 +109,10 @@ test("monitoring shows driver information on map hover, tap and keyboard selecti
   await marker.tap();
   await expect(details).toContainText("Второй водитель");
   await page.clock.fastForward(75_000);
-  await expect(details).toContainText("Координаты устарели");
+  await expect(details).toContainText(
+    "Последнее местоположение · обновление остановлено",
+  );
+  await expect(details.locator("time")).toHaveAttribute("datetime", /T/);
   await page.screenshot({
     path: test.info().outputPath("monitoring-mobile.png"),
   });

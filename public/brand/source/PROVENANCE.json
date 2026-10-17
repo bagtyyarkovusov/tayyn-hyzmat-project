@@ -6,5 +6,9 @@
   "public/brand/source/supplied-dark.png": {
     "sha256": "bf23e4089b7cfe7a524f1e6c3e2c49551344277171b0e869a578f90fcd4c6754",
     "origin": "User-provided ChatGPT-generated final H-and-swoosh logo attachment; unmodified original, provenance recorded here to preserve exact source bytes."
+  },
+  "logo.png": {
+    "sha256": "0dcc61c64956172dab00bd03ab00b1d98ee11e33233029abd5a364df4bac1957",
+    "origin": "Original recovered Tayyn Hyzmat navy H/red swoosh. Canonical current artwork, restored at user request. Source retains baked white tile; generator extracts colored artwork without redrawing."
   }
 }

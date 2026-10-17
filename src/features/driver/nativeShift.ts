@@ -10,6 +10,8 @@ export interface NativeShiftStatus {
   phase: "off" | "connecting" | "online" | "reconnecting" | "gps-unavailable";
   detail: string;
   lastReportAt: number;
+  leaseRemainingMs?: number;
+  lastFixAt?: number;
   stopSequence: number;
   lat: number;
   lng: number;
@@ -17,6 +19,7 @@ export interface NativeShiftStatus {
   ordersEnabled: boolean;
   chatEnabled: boolean;
   locationGranted?: boolean;
+  locationPermission?: "prompt" | "granted" | "denied";
   locationEnabled?: boolean;
 }
 interface NativeShiftPlugin {
@@ -61,14 +64,9 @@ export async function startNativeShift() {
   const current = ++generation;
   const permission = await nativeShift.permissions();
   if (current !== generation) throw new Error("Смена отменена.");
-  if (
-    !permission.locationGranted ||
-    permission.locationEnabled !== true ||
-    !permission.ordersEnabled ||
-    !permission.chatEnabled
-  )
+  if (!permission.locationGranted || permission.locationEnabled !== true)
     throw new Error(
-      "Разрешите точный GPS и уведомления о заказах и сообщениях в настройках приложения.",
+      "Разрешите точный GPS и включите местоположение в настройках приложения.",
     );
   async function requestCredential(
     retry = true,

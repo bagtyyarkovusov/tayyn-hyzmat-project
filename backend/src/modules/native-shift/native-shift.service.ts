@@ -115,14 +115,14 @@ export async function tick(token: string, fix: Fix) {
   if (!active && renewed.driver.isAvailable && renewed.balance > 0) {
     const orders = await prisma.order.findMany({
       where: { status: 'NEW', driverId: null, OR: [
-        { privateOfferDriverId: null, privateOfferStoppedAt: null, OR: [{ districtId: renewed.driver.districtId }, { publicReleasedGloballyAt: { not: null } }] },
-        { privateOfferDriverId: renewed.driver.id, privateOfferExpiresAt: { gt: responseTime } }
+        ...(renewed.driver.districtId ? [{ privateOfferDriverId: null, privateOfferStoppedAt: null, districtId: renewed.driver.districtId, publicRegionOnlyUntil: { gt: responseTime } }] : []),
+        { privateOfferDriverId: renewed.driver.id, privateOfferStoppedAt: null, privateOfferExpiresAt: { gt: responseTime } }
       ] },
-      select: { id: true, privateOfferExpiresAt: true }, orderBy: { createdAt: 'asc' }, take: 100
+      select: { id: true, privateOfferExpiresAt: true, publicRegionOnlyUntil: true }, orderBy: { createdAt: 'asc' }, take: 100
     });
     for (const order of orders) {
       const expiry = order.privateOfferExpiresAt?.toISOString();
-      events.push({ id: expiry ? `private:${order.id}:${expiry}` : `order:${order.id}`, channel: 'orders', title: 'Новый заказ', body: expiry ? 'Личное предложение. Откройте приложение.' : 'Доступен заказ. Откройте приложение.', orderId: order.id, expiresAt: expiry ?? renewed.expires.toISOString() });
+      events.push({ id: expiry ? `private:${order.id}:${expiry}` : `order:${order.id}`, channel: 'orders', title: 'Новый заказ', body: expiry ? 'Личное предложение. Откройте приложение.' : 'Доступен заказ. Откройте приложение.', orderId: order.id, expiresAt: expiry ?? order.publicRegionOnlyUntil!.toISOString() });
     }
   }
   const after = new Date(Math.max(renewed.lease.started_at.getTime(), renewed.driver.lastChatReadAt?.getTime() ?? 0));

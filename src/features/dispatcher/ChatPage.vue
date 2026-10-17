@@ -23,7 +23,7 @@ import { date, type Driver, type Page, type Message } from "./domain";
 import { useResource } from "./useResource";
 import PageState from "./components/PageState.vue";
 const props = defineProps<{ driverId?: string }>();
-const { history, track, updated } = useChatScroll();
+const { history, track, updated, followAfterSend } = useChatScroll();
 let alive = true;
 onUnmounted(() => {
   alive = false;
@@ -184,6 +184,7 @@ watch(thread, () => void updated());
 async function send(all = false) {
   const text = (all ? broadcastBody.value : body.value).trim();
   if (!text || pending.value) return;
+  const finishScroll = followAfterSend();
   const targetDriver = props.driverId;
   const target = all ? "broadcast" : (targetDriver ?? "");
   if (retryMessage?.body !== text || retryMessage.target !== target)
@@ -211,7 +212,7 @@ async function send(all = false) {
     } else {
       body.value = "";
       await loadThread();
-      await updated(true);
+      await finishScroll();
     }
   } catch (e) {
     if (alive && (all || targetDriver === props.driverId))

@@ -14,22 +14,20 @@ export async function updateDriverProfile(
       const previous = await tx.user.findUniqueOrThrow({
         where: { id: driver.userId },
       });
+      if (previous.status === "BLOCKED") throw ApiError.conflict("Аккаунт удалён. Изменение данных недоступно", { code: "ACCOUNT_DELETED" });
       const changed = previous.phone !== input.phone;
       const user = await tx.user.update({
         where: { id: driver.userId },
         data: {
           ...input,
-          ...(changed ? { credentialVersion: { increment: 1 } } : {}),
         },
         select: { id: true, fullName: true, phone: true },
       });
       if (changed) {
-        await tx.refreshToken.updateMany({
-          where: { userId: driver.userId },
-          data: { revokedAt: new Date(0) },
-        });
-        await tx.$executeRaw`UPDATE native_shift_leases SET revoked_at = NOW() WHERE driver_id = ${id} AND revoked_at IS NULL`;
-        await tx.driver.update({ where: { id }, data: { isOnline: false } });
+        await require("../auth/auth.service").revokeSessionGeneration(
+          tx,
+          driver.userId,
+        );
       }
       return { id: driver.id, user, changed };
     });
@@ -75,16 +73,16 @@ export async function resetDriverPassword(id: string, password: string) {
     const driver = await tx.driver.findUnique({ where: { id } });
     if (!driver) throw ApiError.notFound("Водитель не найден");
     await tx.$queryRaw`SELECT id FROM users WHERE id = ${driver.userId} FOR UPDATE`;
+    const user = await tx.user.findUniqueOrThrow({ where: { id: driver.userId } });
+    if (user.status === "BLOCKED") throw ApiError.conflict("Аккаунт удалён. Изменение данных недоступно", { code: "ACCOUNT_DELETED" });
     await tx.user.update({
       where: { id: driver.userId },
-      data: { passwordHash, credentialVersion: { increment: 1 } },
+      data: { passwordHash },
     });
-    await tx.refreshToken.updateMany({
-      where: { userId: driver.userId },
-      data: { revokedAt: new Date(0) },
-    });
-    await tx.$executeRaw`UPDATE native_shift_leases SET revoked_at = NOW() WHERE driver_id = ${id} AND revoked_at IS NULL`;
-    await tx.driver.update({ where: { id }, data: { isOnline: false } });
+    await require("../auth/auth.service").revokeSessionGeneration(
+      tx,
+      driver.userId,
+    );
   });
   await disconnectRevokedSessions(id);
   return { message: "Пароль изменён. Водителю нужно войти снова" };

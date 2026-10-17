@@ -3,7 +3,6 @@ const validate = require('../../utils/validate');
 const {
   locationSchema,
   statusSchema,
-  districtSchema,
   sendMessageSchema,
   messagesQuerySchema,
   pushTokenSchema,
@@ -22,11 +21,9 @@ router.post('/location', validate({ body: locationSchema }), controller.postLoca
 // websocket feature to have anything to toggle - see driver.service.js.
 router.post('/status', validate({ body: statusSchema }), controller.postStatus);
 
-// Manual district fallback for when GPS genuinely can't be read (e.g. the
-// website isn't on https:// yet - see driver.service.js#setDistrict) - a
-// driver with no district never joins a district room and never receives
-// order:new at all, with no other way to fix it themselves.
-router.post('/district', validate({ body: districtSchema }), controller.postDistrict);
+// Old clients receive an explicit retirement response. No body is accepted
+// as authority for a region; shift GPS derives it from saved polygons.
+router.post('/district', controller.postDistrict);
 
 // The driver's own trips + balance movements, for the profile screen -
 // same data the admin sees for them, scoped to the caller (see

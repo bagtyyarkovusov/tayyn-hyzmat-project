@@ -17,10 +17,12 @@ router.get('/health', (req, res) => res.json({ status: 'ok', time: new Date().to
 
 router.use('/auth', authRoutes);
 router.use('/native-shift', require('../modules/native-shift/native-shift.routes').nativeRoutes);
+router.use('/native-notifications', require('../modules/notifications/notifications.routes').nativeRoutes);
 
 // Every /driver/* and /orders/* route requires a logged-in, currently-approved driver.
 router.use('/driver/shift', authenticate, requireRole('DRIVER'), requireApprovedDriver, require('../modules/native-shift/native-shift.routes').authenticatedRoutes);
 router.use('/driver', authenticate, requireRole('DRIVER'), requireApprovedDriver, driverRoutes);
+router.use('/driver/notifications', authenticate, requireRole('DRIVER'), requireApprovedDriver, require('../modules/notifications/notifications.routes').authenticatedRoutes);
 router.use('/orders', authenticate, requireRole('DRIVER'), requireApprovedDriver, ordersRoutes);
 
 // Every /admin/* route requires a logged-in admin.

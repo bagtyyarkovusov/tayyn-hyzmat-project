@@ -31,7 +31,14 @@ public class DriverShiftPlugin extends Plugin {
 
   private JSObject nativeStatus() {
     try {
-      return JSObject.fromJSONObject(ShiftService.status(getContext()));
+      JSObject result = JSObject.fromJSONObject(ShiftService.status(getContext()));
+      result.put("locationGranted", getPermissionState("location") == PermissionState.GRANTED);
+      PermissionState permission = getPermissionState("location");
+      result.put("locationPermission", permission == PermissionState.GRANTED ? "granted" :
+          permission == PermissionState.PROMPT ? "prompt" : "denied");
+      LocationManager locations = (LocationManager) getContext().getSystemService(Context.LOCATION_SERVICE);
+      result.put("locationEnabled", locations != null && locations.isProviderEnabled(LocationManager.GPS_PROVIDER));
+      return result;
     } catch (org.json.JSONException error) {
       return new JSObject();
     }
@@ -39,10 +46,7 @@ public class DriverShiftPlugin extends Plugin {
 
   @PluginMethod
   public void permissions(PluginCall call) {
-    if (Build.VERSION.SDK_INT >= 33)
-      requestPermissionForAliases(
-          new String[] {"location", "notifications"}, call, "permissionResult");
-    else requestPermissionForAlias("location", call, "permissionResult");
+    requestPermissionForAlias("location", call, "permissionResult");
   }
 
   @PermissionCallback
@@ -177,10 +181,8 @@ public class DriverShiftPlugin extends Plugin {
       call.reject("Для APK требуется защищённый HTTPS API.");
       return;
     }
-    if (getPermissionState("location") != PermissionState.GRANTED
-        || !ShiftService.channelEnabled(getContext(), ShiftService.ORDER_CHANNEL)
-        || !ShiftService.channelEnabled(getContext(), ShiftService.CHAT_CHANNEL)) {
-      call.reject("Разрешите GPS и уведомления о заказах и сообщениях.");
+    if (getPermissionState("location") != PermissionState.GRANTED) {
+      call.reject("Разрешите GPS телефона.");
       return;
     }
     if (ShiftService.status(getContext()).optBoolean("running")) {

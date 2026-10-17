@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { useLocationAddress } from "@/shared/useLocationAddress";
 import { formatPhone } from "@/shared/phone";
 import { ref, watch, onMounted, onUnmounted } from "vue";
 import { RouterLink, useRouter } from "vue-router";
@@ -151,18 +150,6 @@ onUnmounted(() => {
 watch(tab, () => {
   if (tab.value === "info") refreshVisibleLocation();
 });
-const gpsAddress = useLocationAddress(
-  () =>
-    driver.value?.lastLat != null &&
-    driver.value?.lastLng != null &&
-    driver.value.lastLocationAt &&
-    Date.now() - new Date(driver.value.lastLocationAt).getTime() < 60_000
-      ? { lat: Number(driver.value.lastLat), lng: Number(driver.value.lastLng) }
-      : null,
-  () => (adminSession.state.user ? props.driverId : undefined),
-  adminApi,
-  () => tab.value === "info",
-);
 watch(driver, (d, previous) => {
   // GPS/profile refreshes must not replace a dispatcher’s vehicle draft.
   if (
@@ -203,7 +190,10 @@ async function act(action: string, body?: unknown) {
     await adminApi.post(`/admin/drivers/${props.driverId}/${action}`, body);
     if (action === "balance") walletIntent = null;
     confirm.value = "";
-    notice.value = "Изменения сохранены";
+    notice.value =
+      action === "sign-out-everywhere"
+        ? "Все входы завершены. Водитель снят с линии."
+        : "Изменения сохранены";
     await Promise.all([load(), loadHistory()]);
   } catch (e) {
     actionError.value = errorMessage(e);
@@ -253,7 +243,11 @@ function adjust(withdraw: boolean) {
         </div>
         <Badge
           :variant="driver.status === 'BLOCKED' ? 'destructive' : 'secondary'"
-          >{{ statusLabel(driver.status) }}</Badge
+          >{{
+            driver.accountDeleted
+              ? "Аккаунт удалён"
+              : statusLabel(driver.status)
+          }}</Badge
         >
       </header>
       <div class="flex flex-wrap gap-2">
@@ -280,12 +274,21 @@ function adjust(withdraw: boolean) {
       <p v-if="notice" role="status" class="text-sm text-primary">
         {{ notice }}
       </p>
-      <div v-if="tab === 'info'" class="flex flex-wrap gap-2">
+      <div
+        v-if="tab === 'info' && !driver.accountDeleted"
+        class="flex flex-wrap gap-2"
+      >
         <Button variant="outline" @click="openCredentials('profile')"
           >Изменить данные входа</Button
         >
         <Button variant="outline" @click="openCredentials('password')"
           >Сбросить пароль</Button
+        >
+        <Button
+          variant="outline"
+          :disabled="pending"
+          @click="confirm = 'sign-out-everywhere'"
+          >Выйти на всех устройствах</Button
         >
       </div>
       <section
@@ -306,7 +309,13 @@ function adjust(withdraw: boolean) {
                 <dt class="text-muted-foreground">Статус</dt>
                 <dd class="mt-1">
                   {{ driver.isOnline ? "На линии" : "Не в сети" }} ·
-                  {{ driver.isAvailable ? "Свободен" : "Занят" }}
+                  {{
+                    !driver.isOnline && driver.hasActiveTrip
+                      ? "Поездка не завершена"
+                      : driver.isAvailable
+                        ? "Свободен"
+                        : "Занят"
+                  }}
                 </dd>
               </div>
               <div>
@@ -318,8 +327,7 @@ function adjust(withdraw: boolean) {
                 <dd class="mt-1">
                   {{
                     driver.lastLat != null && driver.lastLng != null
-                      ? gpsAddress ||
-                        `${Number(driver.lastLat).toFixed(5)}, ${Number(driver.lastLng).toFixed(5)}`
+                      ? `${Number(driver.lastLat).toFixed(5)}, ${Number(driver.lastLng).toFixed(5)}`
                       : "Нет координат"
                   }}
                 </dd>
@@ -335,7 +343,10 @@ function adjust(withdraw: boolean) {
             >
               {{ driver.blockedReason }}
             </p>
-            <div class="mt-5 flex flex-wrap gap-2">
+            <div
+              v-if="!driver.accountDeleted"
+              class="mt-5 flex flex-wrap gap-2"
+            >
               <Button
                 v-if="driver.status === 'PENDING'"
                 :disabled="pending"
@@ -358,72 +369,10 @@ function adjust(withdraw: boolean) {
               >
             </div>
           </div>
-          <details
-            :open="Boolean(driver.pendingDeviceId)"
-            class="group border-b pb-5"
-          >
-            <summary
-              class="flex min-h-11 cursor-pointer items-center justify-between gap-3 font-semibold"
-            >
-              Устройства и входы
-              <span class="text-sm font-normal text-muted-foreground">{{
-                driver.pendingDeviceId ? "Ожидает подтверждения" : "Подробнее"
-              }}</span>
-            </summary>
-            <p class="mt-2 text-sm text-muted-foreground">
-              {{
-                driver.isOnline && driver.shiftDeviceId
-                  ? `На смене: ${driver.devices?.find((device) => device.deviceId === driver?.shiftDeviceId)?.label || "Устройство водителя"}`
-                  : "Смена не запущена"
-              }}
-            </p>
-            <p class="mt-2 text-sm text-muted-foreground">
-              Одобренные устройства могут оставаться в аккаунте. Смена работает
-              только на одном; разрешение входа не переносит смену.
-            </p>
-            <div
-              v-if="driver.pendingDeviceId"
-              class="mt-4 rounded-lg border bg-muted p-4"
-            >
-              <p class="text-sm font-medium">
-                Запрос входа:
-                {{ driver.pendingDeviceLabel || "Новое устройство" }}
-              </p>
-              <div class="mt-3 flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  :disabled="pending"
-                  @click="act('approve-device')"
-                  >Разрешить вход</Button
-                ><Button
-                  size="sm"
-                  variant="outline"
-                  :disabled="pending"
-                  @click="act('reject-device')"
-                  >Отклонить</Button
-                >
-              </div>
-            </div>
-            <div
-              v-for="device in driver.devices"
-              :key="device.id"
-              class="mt-3 flex justify-between gap-3 border-t pt-3 text-xs"
-            >
-              <span
-                >{{ device.label || "Устройство" }}
-                {{
-                  driver.isOnline && device.deviceId === driver.shiftDeviceId
-                    ? "· на смене"
-                    : ""
-                }}</span
-              ><span class="text-muted-foreground">{{
-                date(device.lastLoginAt)
-              }}</span>
-            </div>
-          </details>
         </div>
         <div class="space-y-6">
           <form
+            v-if="!driver.accountDeleted"
             class="grid gap-4 sm:grid-cols-2"
             @submit.prevent="act('vehicle', vehicle)"
           >
@@ -460,18 +409,22 @@ function adjust(withdraw: boolean) {
               >Сохранить автомобиль</Button
             >
           </form>
-          <div class="border-t border-destructive/30 pt-5">
-            <h2 class="font-semibold text-destructive">Деактивация аккаунта</h2>
+          <div
+            v-if="!driver.accountDeleted"
+            class="border-t border-destructive/30 pt-5"
+          >
+            <h2 class="font-semibold text-destructive">Удаление аккаунта</h2>
             <p class="mt-2 text-sm text-muted-foreground">
-              Водитель потеряет доступ. Баланс, история операций, переписка и
-              привязка к заказам сохранятся.
+              Доступ будет удалён без восстановления. Баланс, история операций,
+              переписка и привязка к заказам сохранятся для учёта. Для
+              временного ограничения используйте блокировку.
             </p>
             <Button
               class="mt-4"
               variant="destructive"
               :disabled="pending"
               @click="confirm = 'delete'"
-              >Деактивировать водителя</Button
+              >Удалить аккаунт</Button
             >
           </div>
         </div>
@@ -486,6 +439,7 @@ function adjust(withdraw: boolean) {
             Пополнение и корректировка через диспетчера.
           </p>
           <form
+            v-if="!driver.accountDeleted"
             class="mt-5 grid gap-3 sm:grid-cols-2"
             @submit.prevent="adjust(false)"
           >
@@ -582,17 +536,21 @@ function adjust(withdraw: boolean) {
         ><DialogHeader
           ><DialogTitle>{{
             confirm === "delete"
-              ? "Деактивировать аккаунт?"
-              : "Заблокировать водителя?"
+              ? "Удалить аккаунт?"
+              : confirm === "sign-out-everywhere"
+                ? "Выйти на всех устройствах?"
+                : "Заблокировать водителя?"
           }}</DialogTitle
           ><DialogDescription>{{
             confirm === "delete"
-              ? "Вход и рабочие сессии будут отключены. История и баланс сохранятся."
-              : "Водитель потеряет доступ к рабочим операциям."
+              ? "Доступ водителя будет удалён без восстановления, все входы и смена завершатся. История, переписка и баланс сохранятся для учёта. Удалить аккаунт с незавершённой поездкой нельзя."
+              : confirm === "sign-out-everywhere"
+                ? "Водитель выйдет из аккаунта на всех устройствах и будет снят с линии. Для продолжения нужно войти снова. Текущая поездка, пароль и баланс сохранятся."
+                : "Доступ и смена будут отключены сразу на всех устройствах. Текущая поездка останется за водителем: отмены, переназначения и возврата не будет. Диспетчер должен отдельно решить вопрос с поездкой. Разблокировать аккаунт можно позже."
           }}</DialogDescription></DialogHeader
         ><template v-if="confirm === 'block'"
-          ><Label for="block-reason">Причина, необязательно</Label
-          ><Input id="block-reason" v-model="reason" maxlength="500"
+          ><Label for="block-reason">Причина блокировки</Label
+          ><Input id="block-reason" v-model="reason" required maxlength="500"
         /></template>
         <p v-if="actionError" role="alert" class="text-sm text-destructive">
           {{ actionError }}
@@ -602,9 +560,17 @@ function adjust(withdraw: boolean) {
             >Отмена</Button
           ><Button
             variant="destructive"
-            :disabled="pending"
-            @click="act(confirm, { reason })"
-            >{{ pending ? "Сохраняем…" : "Подтвердить" }}</Button
+            :disabled="pending || (confirm === 'block' && !reason.trim())"
+            @click="act(confirm, confirm === 'block' ? { reason } : {})"
+            >{{
+              pending
+                ? "Сохраняем…"
+                : confirm === "sign-out-everywhere"
+                  ? "Выйти на всех устройствах"
+                  : confirm === "delete"
+                    ? "Удалить аккаунт"
+                    : "Подтвердить"
+            }}</Button
           ></DialogFooter
         ></DialogContent
       ></Dialog
@@ -622,8 +588,8 @@ function adjust(withdraw: boolean) {
           }}</DialogTitle>
           <DialogDescription
             >Смена телефона или пароля завершит все входы водителя и снимет его
-            с линии. Баланс, одобренное устройство и текущая поездка сохранятся.
-            Изменение только имени не завершает вход.</DialogDescription
+            с линии. Баланс и текущая поездка сохранятся. Изменение только имени
+            не завершает вход.</DialogDescription
           >
         </DialogHeader>
         <form class="space-y-4" @submit.prevent="saveCredentials">

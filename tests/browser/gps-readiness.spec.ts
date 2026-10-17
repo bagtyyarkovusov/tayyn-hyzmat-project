@@ -70,13 +70,7 @@ test("GPS waits for shift ownership profile before requesting coordinates", asyn
     ).toHaveCount(0);
     release();
     await expect(gps).toBeEnabled();
-    const report = page.waitForResponse(
-      (response) =>
-        response.url().endsWith("/driver/location") &&
-        response.request().method() === "POST",
-    );
     await gps.click();
-    expect((await report).ok()).toBe(true);
     await expect(gps).toHaveAttribute("data-state", "ready");
   } finally {
     release();

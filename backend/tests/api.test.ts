@@ -2,7 +2,7 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, generateKeyPairSync } from 'node:crypto';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { io as connect, Socket } from 'socket.io-client';
 import bcrypt from 'bcryptjs';
@@ -40,6 +40,35 @@ async function login(phone: string) {
   assert.equal(result.status, 200);
   return result.data.accessToken as string;
 }
+async function startShift(token: string, lng = 58.32, extra: Record<string, unknown> = {}) {
+  return request('/driver/status', token, { isOnline: true, isAvailable: true,
+    position: { lat: 37.96, lng, capturedAt: Date.now() }, ...extra });
+}
+async function withFakeFcm(run: (sent: Array<{ token: string; data: { eventId: string } }>) => Promise<void>, beforeRespond?: () => Promise<void>) {
+  const previous = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  const realFetch = globalThis.fetch;
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  process.env.FIREBASE_SERVICE_ACCOUNT_JSON = JSON.stringify({ project_id: 'synthetic-notifications', client_email: `${randomUUID()}@synthetic.iam.gserviceaccount.com`, private_key: privateKey.export({ format: 'pem', type: 'pkcs8' }).toString() });
+  const sent: Array<{ token: string; data: { eventId: string } }> = [];
+  // Only the external provider HTTP seam is replaced. All authenticated
+  // app requests, Socket.IO events and transaction behavior remain real.
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    if (url === 'https://oauth2.googleapis.com/token') return new Response(JSON.stringify({ access_token: 'synthetic-access', expires_in: 3600 }), { status: 200 });
+    if (url.startsWith('https://fcm.googleapis.com/')) {
+      sent.push(JSON.parse(String(init?.body)).message);
+      if (beforeRespond) await beforeRespond();
+      return new Response(JSON.stringify({ name: 'synthetic-message' }), { status: 200 });
+    }
+    return realFetch(input, init);
+  }) as typeof fetch;
+  try { await run(sent); }
+  finally {
+    globalThis.fetch = realFetch;
+    if (previous === undefined) delete process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+    else process.env.FIREBASE_SERVICE_ACCOUNT_JSON = previous;
+  }
+}
 async function socket(token: string) {
   const client = connect(base, { auth: { token }, transports: ['websocket'], forceNew: true });
   clients.push(client);
@@ -66,9 +95,6 @@ async function socketEvent(client: Socket, event: string): Promise<any[]> {
 async function order(priceEstimated: number | null = 10) {
   const response = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: priceEstimated ?? 10, pickupAddress: 'Synthetic pickup', clientPhone: '+99360000999' });
   assert.equal(response.status, 201);
-  // Legacy lifecycle fixtures start after the regional offer window; timing
-  // behavior has dedicated HTTP/socket cases below.
-  await prisma.order.update({ where: { id: response.data.id }, data: { publicRegionOnlyUntil: null, publicReleasedGloballyAt: new Date() } });
   if (priceEstimated === null) {
     await prisma.order.update({ where: { id: response.data.id }, data: { priceEstimated: null } });
   }
@@ -99,6 +125,8 @@ beforeEach(async () => {
   await prisma.user.updateMany({ where: { phone: { in: ['+99360000101', '+99360000102'] } }, data: { passwordHash: await bcrypt.hash(password, 4) } });
   await prisma.transaction.deleteMany();
   await prisma.order.deleteMany();
+  await prisma.notificationDelivery.deleteMany();
+  await prisma.notificationInstallation.deleteMany();
   await prisma.balance.updateMany({ data: { amount: 500 } });
   await prisma.$executeRaw`UPDATE native_shift_leases SET revoked_at = NOW()`;
   await prisma.driver.updateMany({ data: { isAvailable: true, isOnline: false, shiftDeviceId: null, currentDeviceId: null } });
@@ -107,8 +135,7 @@ beforeEach(async () => {
   otherToken = await login('+99360000102');
   await prisma.driver.updateMany({ where: { user: { phone: { in: ['+99360000101', '+99360000102'] } } }, data: { currentDeviceId: null } });
   for (const [token, lng] of [[driverToken, 58.32], [otherToken, 58.42]] as const) {
-    assert.equal((await request('/driver/location', token, { lat: 37.96, lng })).status, 200);
-    assert.equal((await request('/driver/status', token, { isOnline: true })).status, 200);
+    assert.equal((await startShift(token, lng)).status, 200);
   }
 });
 after(async () => {
@@ -117,6 +144,201 @@ after(async () => {
   await prisma.$disconnect();
   // Application and fixture clients have separate connection pools.
   await require('../dist/lib/prisma').$disconnect();
+});
+
+test('manual region selection is retired without changing shift GPS or broadcasting region updates', async () => {
+  assert.equal((await request('/driver/district', '', { districtId: otherRegionId })).status, 401);
+  assert.equal((await request('/driver/district', adminToken, { districtId: otherRegionId })).status, 403);
+  const admin = await socket(adminToken);
+  try {
+    for (const online of [true, false]) {
+      if (!online) assert.equal((await request('/driver/status', driverToken, { isOnline: false })).status, 200);
+      const before = await request('/driver/profile', driverToken);
+      assert.equal(before.data.districtId, regionId);
+      assert.equal(before.data.isOnline, online);
+      const updates: unknown[] = [];
+      const receive = (event: unknown) => updates.push(event);
+      admin.on('districts:stats', receive);
+      admin.on('driver:status', receive);
+      admin.on('driver:location', receive);
+      const retired = await request('/driver/district', driverToken, { districtId: otherRegionId });
+      assert.equal(retired.status, 410);
+      assert.equal(retired.data.details.code, 'GPS_DERIVED_REGION');
+      const after = await request('/driver/profile', driverToken);
+      assert.equal(after.data.districtId, regionId);
+      assert.equal(after.data.isOnline, online);
+      assert.equal(after.data.lastLat, before.data.lastLat);
+      assert.equal(after.data.lastLng, before.data.lastLng);
+      assert.equal(after.data.lastLocationAt, before.data.lastLocationAt);
+      await new Promise(resolve => setTimeout(resolve, 80));
+      assert.deepEqual(updates, []);
+      admin.off('districts:stats', receive);
+      admin.off('driver:status', receive);
+      admin.off('driver:location', receive);
+    }
+    assert.equal((await startShift(driverToken, 58.42)).status, 200);
+    const actualRegion = await request('/driver/profile', driverToken);
+    assert.equal(actualRegion.data.districtId, otherRegionId);
+    assert.equal(actualRegion.data.isOnline, true);
+    assert.equal(Number(actualRegion.data.lastLat), 37.96);
+    assert.equal(Number(actualRegion.data.lastLng), 58.42);
+  } finally { admin.disconnect(); }
+});
+
+test('notification registration belongs to the approved signed-in installation and does not require a shift or GPS', async () => {
+  assert.equal((await request('/driver/status', driverToken, { isOnline: false })).status, 200);
+  await prisma.driver.updateMany({ where: { user: { phone: '+99360000101' } }, data: { lastLat: null, lastLng: null, lastLocationAt: null } });
+  assert.equal((await request('/driver/notifications/settings')).status, 401);
+  assert.equal((await request('/driver/notifications/settings', adminToken)).status, 403);
+  const settings = await request('/driver/notifications/settings', driverToken);
+  assert.equal(settings.status, 200);
+  assert.equal(settings.data.enabled, true);
+  assert.equal(settings.data.registered, false);
+  assert.equal(settings.data.transportConfigured, false);
+  const registered = await request('/driver/notifications/registration', driverToken, { token: 'synthetic-fcm-driver-one', enabled: true });
+  assert.equal(registered.status, 200);
+  assert.equal(registered.data.installationId, settings.data.installationId);
+  assert.equal(typeof registered.data.notificationToken, 'string');
+  const foreign = await request('/native-notifications/event', registered.data.notificationToken, { eventId: 'chat:nonexistent' });
+  assert.equal(foreign.status, 200);
+  assert.equal(foreign.data.event, null);
+  assert.equal((await request('/driver/notifications/settings', driverToken, { enabled: false })).status, 200);
+  assert.equal((await request('/driver/notifications/settings', driverToken)).data.enabled, false);
+});
+
+test('dispatcher chat creates one preview event per signed-in device without shift or GPS', async () => {
+  const driver = await prisma.driver.findFirstOrThrow({ where: { user: { phone: '+99360000101' } } });
+  await prisma.driver.update({ where: { id: driver.id }, data: { isOnline: false, shiftDeviceId: null, lastLat: null, lastLng: null, lastLocationAt: null } });
+  const secondLogin = await request('/auth/login', '', { phone: '+99360000101', password, deviceId: 'synthetic-second-device' });
+  assert.equal(secondLogin.status, 200);
+  const firstRegistration = await request('/driver/notifications/registration', driverToken, { token: null, enabled: true });
+  const secondRegistration = await request('/driver/notifications/registration', secondLogin.data.accessToken, { token: null, enabled: true });
+  assert.equal(firstRegistration.status, 200);
+  assert.equal(secondRegistration.status, 200);
+  const firstSocket = await socket(driverToken);
+  const secondSocket = await socket(secondLogin.data.accessToken);
+  // Socket.IO resolves `connect` before the async driver room join finishes.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const firstEvent = nextSocketEvent<any>(firstSocket, 'notification:event');
+  const secondEvent = nextSocketEvent<any>(secondSocket, 'notification:event');
+  const sent = await request('/admin/messages', adminToken, { driverId: driver.id, body: 'Synthetic preview' });
+  assert.equal(sent.status, 200);
+  const [one, two] = await Promise.all([firstEvent, secondEvent]);
+  assert.equal(one.event.channel, 'chat');
+  assert.equal(one.event.body, 'Synthetic preview');
+  assert.equal(two.event.id, one.event.id);
+  assert.equal((await prisma.notificationDelivery.count({ where: { eventId: one.event.id } })), 2);
+  assert.equal((await request('/driver/notifications/ack', driverToken, { eventId: one.event.id })).status, 204);
+  assert.equal((await request('/native-notifications/event', firstRegistration.data.notificationToken, { eventId: one.event.id })).status, 200);
+});
+
+test('notification fallback sends data-only FCM after grace while a foreground acknowledgement suppresses its duplicate', async () => {
+  await withFakeFcm(async sent => {
+    const driver = await prisma.driver.findFirstOrThrow({ where: { user: { phone: '+99360000101' } } });
+    await prisma.driver.update({ where: { id: driver.id }, data: { isOnline: false, shiftDeviceId: null, lastLocationAt: null } });
+    const registration = await request('/driver/notifications/registration', driverToken, { token: 'synthetic-notification-token', enabled: true });
+    assert.equal(registration.status, 200);
+    assert.equal(registration.data.coordinatorEnabled, true);
+    const clientMessageId = randomUUID();
+    const background = await request('/admin/messages', adminToken, { driverId: driver.id, body: 'Private preview stays on our server', clientMessageId });
+    const replay = await request('/admin/messages', adminToken, { driverId: driver.id, body: 'Private preview stays on our server', clientMessageId });
+    assert.equal(background.data.id, replay.data.id);
+    assert.equal(await prisma.notificationDelivery.count({ where: { eventId: `chat:${background.data.id}` } }), 1);
+    const foreground = await request('/admin/messages', adminToken, { driverId: driver.id, body: 'Visible foreground preview' });
+    assert.equal((await request('/driver/notifications/ack', driverToken, { eventId: `chat:${foreground.data.id}` })).status, 204);
+    await new Promise(resolve => setTimeout(resolve, 4200));
+    assert.deepEqual(sent.map(row => row.data), [{ eventId: `chat:${background.data.id}` }]);
+    assert.equal(sent[0].token, 'synthetic-notification-token');
+    assert.equal((sent[0] as any).notification, undefined);
+    const canonical = await request('/native-notifications/event', registration.data.notificationToken, { eventId: `chat:${background.data.id}` });
+    assert.equal(canonical.data.event.body, 'Private preview stays on our server');
+  });
+});
+
+test('an accepted FCM transport retries the same unread event until native acknowledgement', async () => {
+  await withFakeFcm(async sent => {
+    const driver = await prisma.driver.findFirstOrThrow({ where: { user: { phone: '+99360000101' } } });
+    await prisma.driver.update({ where: { id: driver.id }, data: { isOnline: false, shiftDeviceId: null, lastLocationAt: null } });
+    const registration = await request('/driver/notifications/registration', driverToken, { token: 'synthetic-unacknowledged-token', enabled: true });
+    const message = await request('/admin/messages', adminToken, { driverId: driver.id, body: 'Recover this closed-app alert after a temporary fetch failure' });
+    const eventId = `chat:${message.data.id}`;
+    await new Promise(resolve => setTimeout(resolve, 4200));
+    assert.deepEqual(sent.map(row => row.data.eventId), [eventId]);
+    // Simulate the persisted retry deadline elapsing after FCM accepted the
+    // wake-up but the closed app failed to fetch/acknowledge the message.
+    await prisma.notificationDelivery.updateMany({ where: { eventId }, data: { notBefore: new Date(Date.now() - 1000) } });
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    assert.deepEqual(sent.map(row => row.data.eventId), [eventId, eventId]);
+    const canonical = await request('/native-notifications/event', registration.data.notificationToken, { eventId });
+    assert.equal(canonical.data.event.body, 'Recover this closed-app alert after a temporary fetch failure');
+    assert.equal((await request('/native-notifications/ack', registration.data.notificationToken, { eventId })).status, 204);
+    await prisma.notificationDelivery.updateMany({ where: { eventId }, data: { notBefore: new Date(Date.now() - 1000) } });
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    assert.deepEqual(sent.map(row => row.data.eventId), [eventId, eventId]);
+  });
+});
+
+test('chat read synchronises exact events across devices and a muted installation can still start a shift', async () => {
+  const driver = await prisma.driver.findFirstOrThrow({ where: { user: { phone: '+99360000101' } } });
+  const registration = await request('/driver/notifications/registration', driverToken, { token: null, enabled: true });
+  const chat = await request('/admin/messages', adminToken, { driverId: driver.id, body: 'Read on another screen' });
+  const client = await socket(driverToken);
+  const readSync = nextSocketEvent<any>(client, 'chat:read');
+  assert.equal((await request('/driver/messages/read', driverToken, { throughMessageId: chat.data.id })).status, 204);
+  const sync = await readSync;
+  assert.ok(sync.eventIds.includes(`chat:${chat.data.id}`));
+  assert.equal((await request('/native-notifications/event', registration.data.notificationToken, { eventId: `chat:${chat.data.id}` })).data.event, null);
+  assert.equal((await request('/driver/notifications/settings', driverToken, { enabled: false })).status, 200);
+  const muted = await request('/admin/messages', adminToken, { driverId: driver.id, body: 'No muted notification' });
+  assert.equal(await prisma.notificationDelivery.count({ where: { eventId: `chat:${muted.data.id}` } }), 0);
+  assert.equal((await request('/driver/status', driverToken, { isOnline: false })).status, 200);
+  assert.equal((await request('/driver/location', driverToken, { lat: 37.96, lng: 58.32 })).status, 403);
+  assert.equal((await startShift(driverToken)).status, 200);
+});
+
+test('read invalidation wakes a previously delivered push while preserving a newer unread message', async () => {
+  await withFakeFcm(async sent => {
+    const driver = await prisma.driver.findFirstOrThrow({ where: { user: { phone: '+99360000101' } } });
+    const registration = await request('/driver/notifications/registration', driverToken, { token: 'synthetic-read-invalidation-token', enabled: true });
+    const oldMessage = await request('/admin/messages', adminToken, { driverId: driver.id, body: 'Older message' });
+    await new Promise(resolve => setTimeout(resolve, 4200));
+    const newerMessage = await request('/admin/messages', adminToken, { driverId: driver.id, body: 'Newer message remains unread' });
+    assert.equal((await request('/driver/messages/read', driverToken, { throughMessageId: oldMessage.data.id })).status, 204);
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    const oldEvent = `chat:${oldMessage.data.id}`;
+    assert.deepEqual(sent.map(row => row.data.eventId), [oldEvent, oldEvent]);
+    assert.equal((await request('/native-notifications/event', registration.data.notificationToken, { eventId: oldEvent })).data.event, null);
+    const newer = await request('/native-notifications/event', registration.data.notificationToken, { eventId: `chat:${newerMessage.data.id}` });
+    assert.equal(newer.data.event.body, 'Newer message remains unread');
+  });
+});
+
+test('a competing claim invalidates a delivered order push with the same opaque event id', async () => {
+  await withFakeFcm(async sent => {
+    const registration = await request('/driver/notifications/registration', driverToken, { token: 'synthetic-order-invalidation-token', enabled: true });
+    const created = await order();
+    const eventId = `order:${created.id}`;
+    assert.equal((await request('/native-notifications/event', registration.data.notificationToken, { eventId })).data.event.orderId, created.id);
+    await new Promise(resolve => setTimeout(resolve, 4200));
+    assert.equal((await request('/orders/accept', otherToken, { orderId: created.id })).status, 200);
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    assert.deepEqual(sent.map(row => row.data.eventId), [eventId, eventId]);
+    assert.equal((await request('/native-notifications/event', registration.data.notificationToken, { eventId })).data.event, null);
+  });
+});
+
+test('native notification capability never revives after logout and replacement login', async () => {
+  const loginPair = await request('/auth/login', '', { phone: '+99360000101', password, deviceId: 'synthetic-approved-browser' });
+  const registration = await request('/driver/notifications/registration', loginPair.data.accessToken, { token: null, enabled: true });
+  assert.equal(registration.status, 200);
+  assert.equal((await request('/auth/logout', '', { refreshToken: loginPair.data.refreshToken })).status, 204);
+  assert.equal((await request('/native-notifications/token', registration.data.notificationToken, { token: 'stale-token-after-logout' })).status, 401);
+  const replacement = await login('+99360000101');
+  assert.equal((await request('/native-notifications/event', registration.data.notificationToken, { eventId: 'chat:old-event' })).status, 401);
+  const renewed = await request('/driver/notifications/registration', replacement, { token: null, enabled: true });
+  assert.equal(renewed.status, 200);
+  assert.notEqual(renewed.data.notificationToken, registration.data.notificationToken);
+  assert.equal((await request('/native-notifications/event', registration.data.notificationToken, { eventId: 'chat:old-event' })).status, 401);
 });
 
 test('GPS outside saved regions clears the previous region without hiding the real position or going offline', async () => {
@@ -153,17 +375,17 @@ test('missing or stale GPS blocks online status, order browsing and claims witho
     assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 403);
     assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
     const regions = await request('/districts', driverToken);
-    assert.ok(regions.data.every((region: { activeOrders: number }) => region.activeOrders === 0));
+    assert.ok(regions.data.every((region: { activeOrders: number; publicAvailableOrders: number }) => region.activeOrders === 0 && region.publicAvailableOrders === 0));
   }
 });
 
-test('fresh GPS still requires an explicit online choice before browsing or claiming', async () => {
+test('offline GPS reports cannot publish location and explicit Online uses a fresh position', async () => {
   assert.equal((await request('/driver/status', driverToken, { isOnline: false })).status, 200);
-  assert.equal((await request('/driver/location', driverToken, { lat: 37.96, lng: 58.32 })).status, 200);
+  assert.equal((await request('/driver/location', driverToken, { lat: 37.96, lng: 58.32 })).status, 403);
   const created = await order();
   assert.equal((await request('/orders/available', driverToken)).status, 403);
   assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 403);
-  assert.equal((await request('/driver/status', driverToken, { isOnline: true })).status, 200);
+  assert.equal((await startShift(driverToken)).status, 200);
   assert.equal((await request('/orders/available', driverToken)).data[0].id, created.id);
 });
 
@@ -186,12 +408,12 @@ test('GPS expiry forces offline without interrupting a claimed trip and fresh GP
     for (const action of ['waiting', 'start', 'complete']) {
       assert.equal((await request(`/orders/${action}`, driverToken, { orderId: created.id })).status, 200);
     }
-    assert.equal((await request('/driver/location', driverToken, { lat: 37.96, lng: 58.32 })).status, 200);
+    assert.equal((await request('/driver/location', driverToken, { lat: 37.96, lng: 58.32 })).status, 403);
     assert.equal((await request('/driver/profile', driverToken)).data.isOnline, false);
   } finally { client.disconnect(); }
 });
 
-test('stale sockets receive no offers or live queues after balance, region changes or reconnect', async () => {
+test('stale sockets receive no offers or live queues after expiry, balance changes or reconnect', async () => {
   let client = await socket(driverToken);
   assert.equal((await request('/driver/status', driverToken, { isOnline: true })).status, 200);
   const received: unknown[] = [];
@@ -207,7 +429,6 @@ test('stale sockets receive no offers or live queues after balance, region chang
     const profile = await request('/driver/profile', driverToken);
     assert.equal(profile.data.isOnline, false);
     assert.equal((await request(`/admin/drivers/${profile.data.id}/balance`, adminToken, { amount: 1, type: 'TOPUP' })).status, 200);
-    assert.equal((await request('/driver/district', driverToken, { districtId: regionId })).status, 200);
     await order();
     await new Promise(resolve => setTimeout(resolve, 100));
     assert.deepEqual(received, []);
@@ -289,12 +510,79 @@ test('regional operating car count includes an online driver during a trip', asy
   assert.equal(region.activeOrders, 1);
 });
 
+test('region public availability excludes assigned, reserved and stopped orders while unfinished totals remain intact', async () => {
+  const outside = await socket(otherToken);
+  type Stats = Array<{ id: string; activeOrders: number; publicAvailableOrders: number }>;
+  const region = (stats: Stats) => stats.find(row => row.id === regionId)!;
+  try {
+    const createdStats = nextSocketEvent<Stats>(outside, 'districts:stats');
+    const publicOrder = await order();
+    assert.equal(region(await createdStats).publicAvailableOrders, 1);
+    assert.equal(region((await request('/districts', driverToken)).data).publicAvailableOrders, 1);
+    const claimedStats = nextSocketEvent<Stats>(outside, 'districts:stats');
+    assert.equal((await request('/orders/accept', driverToken, { orderId: publicOrder.id })).status, 200);
+    const afterClaim = region(await claimedStats);
+    assert.equal(afterClaim.publicAvailableOrders, 0);
+    assert.equal(afterClaim.activeOrders, 1, 'dispatcher unfinished work still includes the assigned trip');
+    const otherDriver = (await request('/driver/profile', otherToken)).data;
+    const reservedStats = nextSocketEvent<Stats>(outside, 'districts:stats');
+    const privateOffer = await request('/admin/orders', adminToken, {
+      districtId: regionId, priceEstimated: 10, clientPhone: '+99360000999',
+      privateOfferDriverId: otherDriver.id, broadcastAfterPrivateExpiry: false
+    });
+    assert.equal(privateOffer.status, 201);
+    assert.equal(region(await reservedStats).publicAvailableOrders, 0, 'private reservations never appear in the common count');
+    // Fixture of an expired stopped private offer. Its hidden status must not
+    // be counted as public work, even though the dispatcher still resolves it.
+    await prisma.order.update({ where: { id: privateOffer.data.id }, data: { privateOfferExpiresAt: new Date(Date.now() - 1) } });
+    assert.deepEqual((await request(`/orders/available?districtId=${regionId}`, otherToken)).data, []);
+    const stopped = region((await request('/districts', adminToken)).data);
+    assert.equal(stopped.publicAvailableOrders, 0);
+    assert.equal(stopped.activeOrders, 2);
+    const cancelledStats = nextSocketEvent<Stats>(outside, 'districts:stats');
+    assert.equal((await request(`/admin/orders/${publicOrder.id}/cancel`, adminToken, { reason: 'Synthetic resolution' })).status, 200);
+    assert.equal(region(await cancelledStats).publicAvailableOrders, 0);
+    assert.equal(region((await request('/districts', adminToken)).data).activeOrders, 1);
+  } finally { outside.disconnect(); }
+});
+
+test('overlapping public creation and resolution leaves every region viewer with the final available count', async () => {
+  const outside = await socket(otherToken);
+  type Stats = Array<{ id: string; activeOrders: number; publicAvailableOrders: number }>;
+  const snapshots: Stats = [];
+  const receive = (rows: Stats) => { snapshots.push(rows.find(row => row.id === regionId)!); };
+  outside.on('districts:stats', receive);
+  try {
+    const created = await Promise.all(Array.from({ length: 8 }, () => order()));
+    assert.equal((await request('/districts', otherToken)).data.find((row: { id: string }) => row.id === regionId).publicAvailableOrders, 8);
+    const finalSnapshot = new Promise<Stats[number]>((resolve, reject) => {
+      const timer = setTimeout(() => { outside.off('districts:stats', final); reject(new Error('Missing final public count')); }, 5000);
+      function final(rows: Stats) {
+        const row = rows.find(row => row.id === regionId)!;
+        if (row.publicAvailableOrders === 0 && row.activeOrders === 1) {
+          clearTimeout(timer); outside.off('districts:stats', final); resolve(row);
+        }
+      }
+      outside.on('districts:stats', final);
+    });
+    const results = await Promise.all(created.map((item, index) => index === 0
+      ? request('/orders/accept', driverToken, { orderId: item.id })
+      : request(`/admin/orders/${item.id}/cancel`, adminToken, { reason: 'Concurrent synthetic resolution' })));
+    assert.ok(results.every(result => result.status === 200));
+    assert.equal((await finalSnapshot).publicAvailableOrders, 0);
+    const finalHttp = (await request('/districts', otherToken)).data.find((row: { id: string }) => row.id === regionId);
+    assert.equal(finalHttp.publicAvailableOrders, 0);
+    assert.equal(finalHttp.activeOrders, 1);
+    assert.equal(snapshots.at(-1)?.publicAvailableOrders, 0);
+  } finally { outside.off('districts:stats', receive); outside.disconnect(); }
+});
+
 test('only online drivers in the selected region receive an order offer without the customer phone', async () => {
   const own = await socket(driverToken);
   const other = await socket(otherToken);
   try {
-    assert.equal((await request('/driver/status', driverToken, { isOnline: true })).status, 200);
-    assert.equal((await request('/driver/status', otherToken, { isOnline: true })).status, 200);
+    assert.equal((await startShift(driverToken)).status, 200);
+    assert.equal((await startShift(otherToken, 58.42)).status, 200);
     const wrongRegion: unknown[] = [];
     other.on('order:new', event => wrongRegion.push(event));
     const offer = new Promise<Record<string, unknown>>((resolve, reject) => {
@@ -321,7 +609,7 @@ test('only online drivers in the selected region receive an order offer without 
 });
 
 test('competing drivers cannot both claim the same order', async () => {
-  await request('/driver/district', otherToken, { districtId: regionId });
+  assert.equal((await startShift(otherToken)).status, 200);
   const created = await order();
   const responses = await Promise.all([driverToken, otherToken].map(token => request('/orders/accept', token, { orderId: created.id })));
   assert.deepEqual(responses.map(response => response.status).sort(), [200, 409]);
@@ -511,6 +799,28 @@ test('native inbox safely replays notifications and removes consumed orders and 
   assert.deepEqual(consumed.data.events, []);
 });
 
+test('native public alerts stay in the original region for 20 seconds while queues remain global', async () => {
+  const auth = await request('/auth/login', '', { phone: '+99360000102', password, deviceId: 'synthetic-approved-browser' });
+  const started = await request('/driver/shift', auth.data.accessToken, { deviceId: 'synthetic-approved-browser', refreshToken: auth.data.refreshToken });
+  assert.equal(started.status, 201);
+  const outside = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99360000999' });
+  const own = await request('/admin/orders', adminToken, { districtId: otherRegionId, priceEstimated: 10, clientPhone: '+99360000999' });
+  const tick = () => request('/native-shift/tick', started.data.shiftToken, { lat: 37.96, lng: 58.42, recordedAt: new Date().toISOString() });
+  const first = await tick();
+  assert.deepEqual(first.data.events.filter((event: { channel: string }) => event.channel === 'orders').map((event: { orderId: string }) => event.orderId), [own.data.id]);
+  const ownEvent = first.data.events.find((event: { orderId: string }) => event.orderId === own.data.id);
+  assert.equal(ownEvent.expiresAt, own.data.publicRegionOnlyUntil);
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, auth.data.accessToken)).data[0].id, outside.data.id);
+  await prisma.order.update({ where: { id: own.data.id }, data: { publicRegionOnlyUntil: new Date(Date.now() - 1) } });
+  assert.deepEqual((await tick()).data.events, []);
+  assert.equal((await request(`/orders/available?districtId=${otherRegionId}`, auth.data.accessToken)).data[0].id, own.data.id);
+  const selected = (await request('/driver/profile', auth.data.accessToken)).data;
+  const privateOrder = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99360000999', privateOfferDriverId: selected.id });
+  assert.equal((await tick()).data.events[0].orderId, privateOrder.data.id);
+  await prisma.order.update({ where: { id: privateOrder.data.id }, data: { privateOfferExpiresAt: new Date(Date.now() - 1) } });
+  assert.deepEqual((await tick()).data.events, [], 'private fallback is public availability without a second alert');
+});
+
 test('native chat inbox includes the newest unread message when more than one hundred are pending', async () => {
   const auth = await request('/auth/login', '', { phone: '+99360000101', password, deviceId: 'synthetic-approved-browser' });
   await request('/driver/location', auth.data.accessToken, { lat: 37.96, lng: 58.32 });
@@ -534,7 +844,7 @@ test('native shift cannot start without matching device and GPS or renew with a 
   assert.equal((await request('/driver/shift', auth.data.accessToken, { ...body, deviceId: 'wrong-device' })).status, 403);
   await request('/driver/status', auth.data.accessToken, { isOnline: false });
   assert.equal((await request('/driver/shift', auth.data.accessToken, body)).status, 403);
-  await request('/driver/status', auth.data.accessToken, { isOnline: true });
+  await startShift(auth.data.accessToken);
   const first = await request('/driver/shift', auth.data.accessToken, body);
   assert.equal(first.status, 201);
   const fix = { lat: 0, lng: 0, recordedAt: new Date().toISOString() };
@@ -543,7 +853,7 @@ test('native shift cannot start without matching device and GPS or renew with a 
   await prisma.$executeRaw`UPDATE native_shift_leases SET expires_at = NOW() - INTERVAL '1 second'`;
   assert.equal((await request('/native-shift/tick', first.data.shiftToken, fix)).status, 401);
   assert.equal((await request('/driver/profile', auth.data.accessToken)).data.isOnline, false);
-  assert.equal((await request('/driver/status', auth.data.accessToken, { isOnline: true })).status, 200);
+  assert.equal((await startShift(auth.data.accessToken)).status, 200);
   const second = await request('/driver/shift', auth.data.accessToken, body);
   assert.equal(second.status, 201);
   await request('/native-shift/stop', first.data.shiftToken, {});
@@ -586,7 +896,7 @@ test('explicit shift stop revokes its credential and a later replay cannot offli
   const fix = { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() };
   assert.equal((await request('/native-shift/tick', started.data.shiftToken, fix)).status, 401);
   assert.equal((await request('/driver/profile', auth.data.accessToken)).data.isOnline, false);
-  assert.equal((await request('/driver/status', auth.data.accessToken, { isOnline: true })).status, 200);
+  assert.equal((await startShift(auth.data.accessToken)).status, 200);
   assert.equal((await request('/native-shift/stop', started.data.shiftToken, {})).status, 204);
   assert.equal((await request('/driver/profile', auth.data.accessToken)).data.isOnline, true);
 });
@@ -885,7 +1195,7 @@ test('private offers reserve cross-region orders without disclosing phone or cha
   assert.equal((await request('/driver/balance', otherToken)).data.amount, '490');
 });
 
-test('declining a private offer releases it publicly and an old response cannot decline a newer reservation', async () => {
+test('a declined private offer stays exclusive until expiry and an old response cannot decline a newer reservation', async () => {
   const driver = (await request('/driver/profile', otherToken)).data;
   const created = await order();
   const offered = await request(`/admin/orders/${created.id}/private-offer`, adminToken, { driverId: driver.id });
@@ -893,8 +1203,10 @@ test('declining a private offer releases it publicly and an old response cannot 
   const deadline = offered.data.privateOfferExpiresAt;
   assert.equal((await request('/orders/private-offer/decline', driverToken, { orderId: created.id, privateOfferExpiresAt: deadline })).status, 409);
   assert.equal((await request('/orders/private-offer/decline', otherToken, { orderId: created.id, privateOfferExpiresAt: deadline })).status, 200);
-  assert.equal((await request(`/orders/available?districtId=${regionId}`, driverToken)).data[0].id, created.id);
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, driverToken)).data.length, 0);
   assert.equal((await request('/driver/balance', otherToken)).data.amount, '500');
+  await prisma.order.update({ where: { id: created.id }, data: { privateOfferExpiresAt: new Date(Date.now() - 1) } });
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, driverToken)).data[0].id, created.id);
   const renewed = await request(`/admin/orders/${created.id}/private-offer`, adminToken, { driverId: driver.id });
   assert.equal(renewed.status, 200);
   assert.notEqual(renewed.data.privateOfferExpiresAt, deadline);
@@ -902,28 +1214,40 @@ test('declining a private offer releases it publicly and an old response cannot 
   assert.equal((await request('/orders/private-offer', otherToken)).data.privateOfferExpiresAt, renewed.data.privateOfferExpiresAt);
 });
 
-test('declining a private offer releases only to its original region', async () => {
+for (const fallback of [true, false]) {
+  test(`declining a private offer keeps its fixed exclusive deadline before applying fallback=${fallback}`, async () => {
+    const selected = (await request('/driver/profile', otherToken)).data;
+    const originalRegion = await socket(driverToken);
+    const publicPopups: unknown[] = [];
+    originalRegion.on('order:new', event => publicPopups.push(event));
+    const created = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: selected.id, broadcastAfterPrivateExpiry: fallback });
+    assert.equal(created.status, 201);
+    assert.equal((await request('/orders/private-offer/decline', otherToken, { orderId: created.data.id, privateOfferExpiresAt: created.data.privateOfferExpiresAt })).status, 200);
+    assert.equal((await request('/orders/private-offer', otherToken)).data, null);
+    assert.equal((await request(`/orders/available?districtId=${regionId}`, driverToken)).data.length, 0);
+    assert.equal((await request('/orders/accept', driverToken, { orderId: created.data.id })).status, 409);
+    assert.equal((await request('/orders/private-offer/accept', otherToken, { orderId: created.data.id, privateOfferExpiresAt: created.data.privateOfferExpiresAt })).status, 409);
+    await prisma.order.update({ where: { id: created.data.id }, data: { privateOfferExpiresAt: new Date(Date.now() - 1) } });
+    const released = (await request(`/orders/available?districtId=${regionId}`, otherToken)).data;
+    assert.equal(released.some((item: { id: string }) => item.id === created.data.id), fallback);
+    const result = await request('/orders/accept', driverToken, { orderId: created.data.id });
+    assert.equal(result.status, fallback ? 200 : 409);
+    assert.deepEqual(publicPopups, []);
+    originalRegion.disconnect();
+  });
+}
+
+test('declining frees the driver to claim other work while the declined order stays exclusive until its deadline', async () => {
   const selected = (await request('/driver/profile', otherToken)).data;
-  const created = await order();
-  const offered = await request(`/admin/orders/${created.id}/private-offer`, adminToken, { driverId: selected.id });
-  assert.equal(offered.status, 200);
-  const originalRegion = await socket(driverToken);
-  const selectedSocket = await socket(otherToken);
-  const originalEvent = nextSocketEvent<{ id: string }>(originalRegion, 'order:new');
-  let expanded = false;
-  selectedSocket.on('order:new', () => { expanded = true; });
-  assert.equal((await request('/orders/private-offer/decline', otherToken, {
-    orderId: created.id,
-    privateOfferExpiresAt: offered.data.privateOfferExpiresAt,
-  })).status, 200);
-  assert.equal((await originalEvent).id, created.id);
-  await new Promise(resolve => setTimeout(resolve, 350));
-  assert.equal(expanded, false);
-  originalRegion.disconnect();
-  selectedSocket.disconnect();
+  const reserved = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: selected.id });
+  assert.equal((await request('/orders/private-offer/decline', otherToken, { orderId: reserved.data.id, privateOfferExpiresAt: reserved.data.privateOfferExpiresAt })).status, 200);
+  const another = await order();
+  assert.equal((await request('/orders/accept', otherToken, { orderId: another.id })).status, 200);
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, driverToken)).data.some((item: { id: string }) => item.id === reserved.data.id), false);
+  assert.equal((await request('/orders/accept', driverToken, { orderId: reserved.data.id })).status, 409);
 });
 
-test('private offer deadline survives recovery and expires to its regional queue without a debit', async () => {
+test('private offer deadline survives recovery and expires to the global queue without a debit', async () => {
   const driver = (await request('/driver/profile', otherToken)).data;
   const target = await socket(otherToken);
   const received = nextSocketEvent<{ id: string; privateOfferExpiresAt: string; privateOfferRemainingMs: number; clientPhone?: string }>(target, 'order:private-offer');
@@ -954,7 +1278,10 @@ test('private expiry expansion is simultaneous across regions and any driver can
   const selected = (await request('/driver/profile', driverToken)).data;
   const regionalDriver = await socket(driverToken);
   const outsideDriver = await socket(otherToken);
-  const publicEvent = nextSocketEvent<{ id: string }>(outsideDriver, 'order:new');
+  const publicEvent = nextSocketEvent<{ orderId: string; districtId: string }>(outsideDriver, 'order:available');
+  const unexpectedPopups: unknown[] = [];
+  outsideDriver.on('order:new', event => unexpectedPopups.push(event));
+  regionalDriver.on('order:new', event => unexpectedPopups.push(event));
   const created = await request('/admin/orders', adminToken, {
     districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: selected.id
   });
@@ -962,7 +1289,8 @@ test('private expiry expansion is simultaneous across regions and any driver can
   await prisma.order.update({ where: { id: created.data.id }, data: { privateOfferExpiresAt: new Date(Date.now() - 1) } });
   const sweep = request(`/orders/available?districtId=${regionId}`, otherToken);
   const event = await publicEvent;
-  assert.equal(event.id, created.data.id);
+  assert.equal(event.orderId, created.data.id);
+  assert.deepEqual(unexpectedPopups, []);
   const available = await sweep;
   assert.equal(available.data[0].id, created.data.id);
   const accepted = await request('/orders/accept', otherToken, { orderId: created.data.id });
@@ -1132,7 +1460,7 @@ test('changing driver login phone revokes old sessions and keeps approved device
   const profile = await request('/driver/profile', session.data.accessToken);
   const id = profile.data.id;
   const oldSocket = await socket(session.data.accessToken);
-  await request('/driver/location', session.data.accessToken, { lat: 37.96, lng: 58.32 });
+  await startShift(session.data.accessToken, 58.32);
   await request('/driver/status', session.data.accessToken, { isOnline: true, isAvailable: true });
   const created = await order();
   assert.equal((await request('/orders/accept', session.data.accessToken, { orderId: created.id, arrivalMinutes: 5 })).status, 200);
@@ -1146,7 +1474,7 @@ test('changing driver login phone revokes old sessions and keeps approved device
   const recovered = await request('/auth/login', '', { phone: '+99361001002', password, deviceId: 'credential-device' });
   assert.equal(recovered.status, 200);
   const restored = await request('/driver/profile', recovered.data.accessToken);
-  assert.equal(restored.data.currentDeviceId, 'credential-device');
+  assert.equal(restored.data.currentDeviceId, undefined);
   assert.equal(restored.data.isOnline, false);
   assert.equal((await request('/driver/balance', recovered.data.accessToken)).data.amount, '490');
   assert.equal((await request('/orders/current', recovered.data.accessToken)).data.id, created.id);
@@ -1181,7 +1509,7 @@ test('a credential change keeps the driver offline when an old online request is
   const fixture = await request('/admin/drivers', adminToken, { fullName: 'Concurrent credential fixture', phone: '+99361001005', password });
   const session = await request('/auth/login', '', { phone: '+99361001005', password, deviceId: 'synthetic-approved-browser' });
   const token = session.data.accessToken;
-  await request('/driver/location', token, { lat: 37.96, lng: 58.32 });
+  await startShift(token, 58.32);
   // Fixture database locks arrange an in-flight request; assertions stay at HTTP seams.
   let release!: () => void;
   let ready!: () => void;
@@ -1232,7 +1560,7 @@ test('credential reset revokes a private offer session while the new login can r
   assert.equal(session.status, 200);
   const token = session.data.accessToken;
   assert.equal((await request('/orders/private-offer', token)).status, 403);
-  assert.equal((await request('/driver/location', token, { lat: 37.96, lng: 58.42 })).status, 200);
+  assert.equal((await startShift(token, 58.42)).status, 200);
   assert.equal((await request('/driver/status', token, { isOnline: true })).status, 200);
   const recovered = await request('/orders/private-offer', token);
   assert.equal(recovered.data.id, created.data.id);
@@ -1252,7 +1580,7 @@ test('credential reset cannot revive an old native shift after the new session g
   assert.equal((await request(`/admin/drivers/${id}/balance`, adminToken, { amount: 500, type: 'TOPUP' })).status, 200);
   const auth = await request('/auth/login', '', { phone, password, deviceId: 'native-credential-device' });
   const token = auth.data.accessToken;
-  await request('/driver/location', token, { lat: 37.96, lng: 58.32 });
+  await startShift(token, 58.32);
   await request('/driver/status', token, { isOnline: true });
   const started = await request('/driver/shift', token, { deviceId: 'native-credential-device', refreshToken: auth.data.refreshToken });
   assert.equal(started.status, 201);
@@ -1260,7 +1588,7 @@ test('credential reset cannot revive an old native shift after the new session g
   assert.equal((await request(`/admin/drivers/${id}/password`, adminToken, { password: changedPassword, passwordConfirmation: changedPassword })).status, 200);
   const fresh = await request('/auth/login', '', { phone, password: changedPassword, deviceId: 'native-credential-device' });
   assert.equal(fresh.status, 200);
-  await request('/driver/location', fresh.data.accessToken, { lat: 37.96, lng: 58.32 });
+  await startShift(fresh.data.accessToken, 58.32);
   await request('/driver/status', fresh.data.accessToken, { isOnline: true });
   assert.equal((await request('/native-shift/tick', started.data.shiftToken, { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() })).status, 401);
 });
@@ -1355,7 +1683,7 @@ test('numeric six-character driver passwords work consistently for creation and 
   const auth = await request('/auth/login', '', { phone, password: '123456', deviceId: 'numeric-password-device' });
   assert.equal(auth.status, 200);
   const token = auth.data.accessToken;
-  await request('/driver/location', token, { lat: 37.96, lng: 58.32 });
+  await startShift(token, 58.32);
   await request('/driver/status', token, { isOnline: true, isAvailable: true });
   const shift = await request('/driver/shift', token, { deviceId: 'numeric-password-device', refreshToken: auth.data.refreshToken });
   assert.equal(shift.status, 201);
@@ -1494,7 +1822,7 @@ test('dispatcher overview invalidates live counts after approval, unblock and ac
     assert.equal((await request(`/admin/drivers/${user.driver!.id}/approve`, adminToken, {})).status, 200);
     await approved;
     assert.equal((await request('/admin/overview', adminToken)).data.pendingDrivers, 0);
-    assert.equal((await request(`/admin/drivers/${user.driver!.id}/block`, adminToken, {})).status, 200);
+    assert.equal((await request(`/admin/drivers/${user.driver!.id}/block`, adminToken, { reason: 'Synthetic account safety block' })).status, 200);
     const unblocked = nextSocketEvent(client, 'districts:stats', 500);
     assert.equal((await request(`/admin/drivers/${user.driver!.id}/unblock`, adminToken, {})).status, 200);
     await unblocked;
@@ -1584,7 +1912,7 @@ test('zero and negative balances cannot go online while offline writes remain av
   for (const amount of [0, -1]) {
     assert.equal((await request('/driver/status', driverToken, { isOnline: false })).status, 200);
     await prisma.balance.update({ where: { userId: driver.userId }, data: { amount } });
-    const online = await request('/driver/status', driverToken, { isOnline: true });
+    const online = await startShift(driverToken);
     assert.equal(online.status, 403);
     assert.match(online.data.message, /баланс/i);
     assert.equal((await request('/driver/profile', driverToken)).data.isOnline, false);
@@ -1771,25 +2099,62 @@ test('GPS capture time stays identical in profile, location event and history', 
   assert.equal(history.recordedAt.toISOString(), expected);
 });
 
-test('public orders stay regional until their persisted deadline then disappear for all drivers after a claim', async () => {
+test('public orders reach all regions immediately while only the original region gets a popup and the first claim closes every queue', async () => {
   const regional = await socket(driverToken);
   const outside = await socket(otherToken);
+  const outsidePopups: unknown[] = [];
+  outside.on('order:new', event => outsidePopups.push(event));
+  const regionalPopup = nextSocketEvent<{ id: string; clientPhone?: string }>(regional, 'order:new');
+  const globalUpdate = nextSocketEvent<{ orderId: string; districtId: string }>(outside, 'order:available');
   const created = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000' });
   assert.equal(created.status, 201);
-  assert.ok(Date.parse(created.data.publicRegionOnlyUntil) - Date.now() > 18_000);
-  assert.equal((await request(`/orders/available?districtId=${regionId}`, otherToken)).data.some((item: { id: string }) => item.id === created.data.id), false);
-  assert.equal((await request('/orders/accept', otherToken, { orderId: created.data.id })).status, 409);
-  const expanded = nextSocketEvent<{ id: string; clientPhone?: string }>(outside, 'order:new');
-  await prisma.order.update({ where: { id: created.data.id }, data: { publicRegionOnlyUntil: new Date(Date.now() - 1) } });
   const available = await request(`/orders/available?districtId=${regionId}`, otherToken);
-  assert.equal((await expanded).id, created.data.id);
-  assert.equal(available.data[0].id, created.data.id);
+  assert.equal(available.data[0]?.id, created.data.id, 'another region sees a newly created public order before 20 seconds');
   assert.equal(available.data[0].clientPhone, undefined);
-  const removed = nextSocketEvent<{ orderId: string }>(outside, 'order:taken');
-  assert.equal((await request('/orders/accept', driverToken, { orderId: created.data.id })).status, 200);
-  assert.equal((await removed).orderId, created.data.id);
+  const popup = await regionalPopup;
+  assert.equal(popup.id, created.data.id);
+  assert.equal(popup.clientPhone, undefined);
+  assert.deepEqual(await globalUpdate, { orderId: created.data.id, districtId: regionId });
+  const removedRegional = nextSocketEvent<{ orderId: string }>(regional, 'order:taken');
+  const removedOutside = nextSocketEvent<{ orderId: string }>(outside, 'order:taken');
+  const claims = await Promise.all([driverToken, otherToken].map(token => request('/orders/accept', token, { orderId: created.data.id })));
+  assert.deepEqual(claims.map(result => result.status).sort(), [200, 409]);
+  assert.equal((await removedRegional).orderId, created.data.id);
+  assert.equal((await removedOutside).orderId, created.data.id);
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, driverToken)).data.length, 0);
   assert.equal((await request(`/orders/available?districtId=${regionId}`, otherToken)).data.length, 0);
+  assert.deepEqual(outsidePopups, []);
   regional.disconnect(); outside.disconnect();
+});
+
+for (const deadlineOffset of [-1, 20_000]) {
+test(`existing public rows remain globally claimable with a regional deadline offset=${deadlineOffset} and stale private fallback disabled`, async () => {
+  const created = await order();
+  // Fixture: a public order persisted by the previous regional-first release.
+  await prisma.order.update({ where: { id: created.id }, data: { publicReleasedGloballyAt: null, publicRegionOnlyUntil: new Date(Date.now() + deadlineOffset), broadcastAfterPrivateExpiry: false } });
+  const available = await request(`/orders/available?districtId=${regionId}`, otherToken);
+  assert.equal(available.data[0].id, created.id);
+  assert.equal((await request('/orders/accept', otherToken, { orderId: created.id })).status, 200);
+});
+}
+
+test('dispatcher cancellation closes a fresh public order in every region without a manual refresh', async () => {
+  const original = await socket(driverToken);
+  const outside = await socket(otherToken);
+  const originalStats = nextSocketEvent<Array<{ id: string; activeOrders: number }>>(original, 'districts:stats');
+  const outsideStats = nextSocketEvent<Array<{ id: string; activeOrders: number }>>(outside, 'districts:stats');
+  const created = await order();
+  for (const stats of await Promise.all([originalStats, outsideStats])) assert.equal(stats.find(row => row.id === regionId)?.activeOrders, 1);
+  const removedOriginal = nextSocketEvent<{ orderId: string }>(original, 'order:taken');
+  const removedOutside = nextSocketEvent<{ orderId: string }>(outside, 'order:taken');
+  const updatedStats = nextSocketEvent<Array<{ id: string; activeOrders: number }>>(outside, 'districts:stats');
+  assert.equal((await request(`/admin/orders/${created.id}/cancel`, adminToken, { reason: 'Customer cancelled' })).status, 200);
+  assert.equal((await removedOriginal).orderId, created.id);
+  assert.equal((await removedOutside).orderId, created.id);
+  assert.equal((await updatedStats).find(row => row.id === regionId)?.activeOrders, 0);
+  assert.equal((await request(`/orders/available?districtId=${regionId}`, otherToken)).data.length, 0);
+  assert.equal((await request('/orders/accept', otherToken, { orderId: created.id })).status, 409);
+  original.disconnect(); outside.disconnect();
 });
 
 test('dispatcher lifecycle filters separate unclaimed waiting from in-progress orders and preserve legacy active queries', async () => {
@@ -1834,7 +2199,10 @@ for (const status of ['ACCEPTED', 'WAITING', 'STARTED'] as const) {
     await prisma.driver.update({ where: { id: driver.id }, data: { isAvailable: true } });
     const list = await request('/admin/drivers?status=APPROVED&limit=100', adminToken);
     assert.equal(list.data.items.find((item: { id: string }) => item.id === driver.id).isAvailable, false);
-    assert.equal((await request(`/admin/drivers/${driver.id}`, adminToken)).data.isAvailable, false);
+    const detail = (await request(`/admin/drivers/${driver.id}`, adminToken)).data;
+    assert.equal(detail.isAvailable, false);
+    assert.equal(detail.hasActiveTrip, true);
+    assert.equal(list.data.items.find((item: { id: string }) => item.id === driver.id).hasActiveTrip, true);
     const regions = await request('/districts', driverToken);
     assert.equal(regions.data.find((item: { id: string }) => item.id === regionId).freeDrivers, 0);
     const offer = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: driver.id });
@@ -1886,7 +2254,7 @@ test('live waiting includes overnight public orders and expired reservations but
   const baseOrder = { districtId: regionId, pickupLat: 37.96, pickupLng: 58.32 };
   await prisma.order.createMany({ data: [
     { ...baseOrder, status: 'NEW', createdAt: new Date(start - 60_000) },
-    // A fresh regional-only order is public; public is not globally claimable.
+    // A fresh unreserved order is public and globally claimable.
     { ...baseOrder, status: 'NEW', createdAt: new Date(now) },
     { ...baseOrder, status: 'NEW', createdAt: new Date(now), privateOfferDriverId: drivers[0].id, privateOfferExpiresAt: new Date(now - 1) },
     { ...baseOrder, status: 'NEW', createdAt: new Date(start - 120_000), privateOfferDriverId: drivers[1].id, privateOfferExpiresAt: new Date(now + 60_000) },
@@ -2041,7 +2409,7 @@ test('deactivating a driver preserves ledger and completed attribution while rev
   const token = auth.data.accessToken;
   const session = await socket(token);
   assert.equal((await request(`/admin/drivers/${id}/balance`, adminToken, { amount: 30, type: 'TOPUP', note: 'Retained funding' })).status, 200);
-  await request('/driver/location', token, { lat: 37.96, lng: 58.32 });
+  await startShift(token, 58.32);
   await request('/driver/status', token, { isOnline: true });
   const shift = await request('/driver/shift', token, { deviceId: 'retained-device', refreshToken: auth.data.refreshToken });
   assert.equal(shift.status, 201);
@@ -2066,9 +2434,12 @@ test('deactivating a driver preserves ledger and completed attribution while rev
   assert.equal((await request('/driver/me', token)).status, 401);
   assert.equal((await request('/auth/refresh', '', { refreshToken: auth.data.refreshToken })).status, 401);
   assert.equal((await request('/native-shift/tick', shift.data.shiftToken, { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() })).status, 401);
-  assert.equal((await request('/auth/login', '', { phone: '+99361999981', password, deviceId: 'synthetic-approved-browser' })).status, 403);
-  await request(`/admin/drivers/${id}/unblock`, adminToken, {});
-  assert.equal((await request('/auth/login', '', { phone: '+99361999981', password, deviceId: 'synthetic-approved-browser' })).status, 403);
+  assert.equal((await request('/auth/login', '', { phone: '+99361999981', password, deviceId: 'synthetic-approved-browser' })).status, 401);
+  const deletedProfile = await request(`/admin/drivers/${id}`, adminToken);
+  assert.equal(deletedProfile.data.accountDeleted, true);
+  assert.equal((await request(`/admin/drivers/${id}/unblock`, adminToken, {})).status, 409);
+  assert.equal((await request(`/admin/drivers/${id}/approve`, adminToken, {})).status, 409);
+  assert.equal((await request('/auth/login', '', { phone: '+99361999981', password, deviceId: 'synthetic-approved-browser' })).status, 401);
 });
 
 test('deactivation refuses an active trip and preserves its balance and driver linkage', async () => {
@@ -2159,25 +2530,23 @@ test('explicit logout rejects rotated refresh replay and immediately revokes onl
   assert.equal(freshSocket.connected, true);
 });
 
-test('driver login cannot bypass an approved device by omitting its identity', async () => {
+test('an approved account can log in on a new installation but still requires signed installation identity', async () => {
   const phone = '+99361999122';
   assert.equal((await request('/admin/drivers', adminToken, { phone, fullName: 'Binding fixture', password })).status, 201);
   const auth = await request('/auth/login', '', { phone, password, deviceId: 'approved-fixture-device' });
   assert.equal(auth.status, 200);
   assert.equal((await request('/auth/login', '', { phone, password })).status, 400);
-  assert.equal((await request('/auth/login', '', { phone, password, deviceId: 'unapproved-fixture-device' })).status, 403);
+  assert.equal((await request('/auth/login', '', { phone, password, deviceId: 'unapproved-fixture-device' })).status, 200);
   assert.equal((await request('/driver/profile', auth.data.accessToken)).status, 200);
 });
 
 
-test('approved devices keep independent sessions and only one owns the shift', async () => {
+test('signed-in installations keep independent sessions and only one owns the shift', async () => {
   const phone = '+99361999123';
   const created = await request('/admin/drivers', adminToken, { phone, fullName: 'Device switch fixture', password });
   const first = await request('/auth/login', '', { phone, password, deviceId: 'first-approved-device' });
   assert.equal(first.status, 200);
   const connected = await socket(first.data.accessToken);
-  assert.equal((await request('/auth/login', '', { phone, password, deviceId: 'second-approved-device' })).status, 403);
-  assert.equal((await request(`/admin/drivers/${created.data.id}/approve-device`, adminToken, {})).status, 200);
   assert.equal((await request('/driver/profile', first.data.accessToken)).status, 200);
   const second = await request('/auth/login', '', { phone, password, deviceId: 'second-approved-device' });
   assert.equal(second.status, 200);
@@ -2189,8 +2558,7 @@ test('approved devices keep independent sessions and only one owns the shift', a
   const firstToken = refreshed.data.accessToken;
   const secondToken = second.data.accessToken;
   await prisma.balance.update({ where: { userId: created.data.userId }, data: { amount: 500 } });
-  assert.equal((await request('/driver/location', firstToken, { lat: 37.96, lng: 58.32 })).status, 200);
-  const starts = await Promise.all([firstToken, secondToken].map(token => request('/driver/status', token, { isOnline: true, isAvailable: true })));
+  const starts = await Promise.all([firstToken, secondToken].map(token => startShift(token)));
   assert.deepEqual(starts.map(result => result.status).sort(), [200, 409]);
   const ownerIndex = starts[0].status === 200 ? 0 : 1;
   const ownerToken = [firstToken, secondToken][ownerIndex];
@@ -2209,7 +2577,7 @@ test('approved devices keep independent sessions and only one owns the shift', a
   assert.equal((await request('/driver/shift', ownerToken, { deviceId: ownerDevice, refreshToken: ownerSession.refreshToken })).status, 409, 'a duplicate start cannot replace a running native credential');
   assert.equal((await request('/orders/accept', ownerToken, { orderId: job.id, etaMinutes: 5 })).status, 200);
   for (const path of ['waiting', 'start', 'complete', 'cancel']) assert.equal((await request(`/orders/${path}`, spectatorToken, { orderId: job.id, reason: 'Not owner' })).status, 409);
-  assert.equal((await request('/driver/district', spectatorToken, { districtId: otherRegionId })).status, 409);
+  assert.equal((await request('/driver/district', spectatorToken, { districtId: otherRegionId })).status, 410);
   assert.equal((await request('/driver/shift', spectatorToken, { deviceId: ownerDevice, refreshToken: ownerSession.refreshToken })).status, 403);
   assert.equal((await request('/driver/shift/stop', spectatorToken, {})).status, 409);
   assert.equal((await request('/auth/logout', '', { refreshToken: spectatorSession.refreshToken })).status, 204);
@@ -2219,7 +2587,7 @@ test('approved devices keep independent sessions and only one owns the shift', a
   const spectator = await request('/auth/login', '', { phone, password, deviceId: ['first-approved-device', 'second-approved-device'][1 - ownerIndex] });
   assert.equal((await request('/orders/current', spectator.data.accessToken)).data.id, job.id, 'transfer retains the assigned trip');
   assert.equal((await request('/orders/waiting', spectator.data.accessToken, { orderId: job.id })).status, 200, 'offline recovery does not require GPS or shift');
-  assert.equal((await request('/driver/status', spectator.data.accessToken, { isOnline: true })).status, 200);
+  assert.equal((await startShift(spectator.data.accessToken)).status, 200);
   assert.equal((await request('/orders/start', ownerToken, { orderId: job.id })).status, 409);
   assert.equal((await request('/orders/start', spectator.data.accessToken, { orderId: job.id })).status, 200);
   assert.equal((await request('/native-shift/tick', native.data.shiftToken, { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() })).status, 401);
@@ -2285,18 +2653,16 @@ test('dispatcher logout revokes its own HTTP and socket authority without signin
 });
 
 
-test('approving and logging in a second device preserves the first device live native shift', async () => {
+test('logging in a new installation preserves the first installation live native shift', async () => {
   const phone = '+99361999127';
   const created = await request('/admin/drivers', adminToken, { phone, fullName: 'Live device approval fixture', password });
   await prisma.balance.update({ where: { userId: created.data.userId }, data: { amount: 500 } });
   const first = await request('/auth/login', '', { phone, password, deviceId: 'live-device-first' });
   const firstSocket = await socket(first.data.accessToken);
-  assert.equal((await request('/driver/location', first.data.accessToken, { lat: 37.96, lng: 58.32 })).status, 200);
+  assert.equal((await startShift(first.data.accessToken, 58.32)).status, 200);
   assert.equal((await request('/driver/status', first.data.accessToken, { isOnline: true })).status, 200);
   const native = await request('/driver/shift', first.data.accessToken, { deviceId: 'live-device-first', refreshToken: first.data.refreshToken });
   assert.equal(native.status, 201);
-  assert.equal((await request('/auth/login', '', { phone, password, deviceId: 'live-device-second' })).status, 403);
-  assert.equal((await request(`/admin/drivers/${created.data.id}/approve-device`, adminToken, {})).status, 200);
   const second = await request('/auth/login', '', { phone, password, deviceId: 'live-device-second' });
   assert.equal(second.status, 200);
   const secondSocket = await socket(second.data.accessToken);
@@ -2314,14 +2680,12 @@ test('approving and logging in a second device preserves the first device live n
 });
 
 
-test('blocking then unblocking a driver never revives any approved-device session', async () => {
+test('blocking then unblocking a driver never revives any installation session', async () => {
   const phone = '+99361999128';
   const created = await request('/admin/drivers', adminToken, { phone, fullName: 'Block session fixture', password });
   const first = await request('/auth/login', '', { phone, password, deviceId: 'block-device-first' });
-  assert.equal((await request('/auth/login', '', { phone, password, deviceId: 'block-device-second' })).status, 403);
-  assert.equal((await request(`/admin/drivers/${created.data.id}/approve-device`, adminToken, {})).status, 200);
   const second = await request('/auth/login', '', { phone, password, deviceId: 'block-device-second' });
-  assert.equal((await request(`/admin/drivers/${created.data.id}/block`, adminToken, {})).status, 200);
+  assert.equal((await request(`/admin/drivers/${created.data.id}/block`, adminToken, { reason: 'Synthetic account safety block' })).status, 200);
   assert.equal((await request(`/admin/drivers/${created.data.id}/unblock`, adminToken, {})).status, 200);
   for (const session of [first.data, second.data]) {
     assert.equal((await request('/driver/profile', session.accessToken)).status, 401);
@@ -2336,10 +2700,8 @@ for (const expired of ['lease', 'gps'] as const) {
     const created = await request('/admin/drivers', adminToken, { phone, fullName: 'Expired owner fixture', password });
     await prisma.balance.update({ where: { userId: created.data.userId }, data: { amount: 500 } });
     const first = await request('/auth/login', '', { phone, password, deviceId: 'expiry-first-device' });
-    assert.equal((await request('/auth/login', '', { phone, password, deviceId: 'expiry-second-device' })).status, 403);
-    assert.equal((await request(`/admin/drivers/${created.data.id}/approve-device`, adminToken, {})).status, 200);
     const second = await request('/auth/login', '', { phone, password, deviceId: 'expiry-second-device' });
-    assert.equal((await request('/driver/location', first.data.accessToken, { lat: 37.96, lng: 58.32 })).status, 200);
+    assert.equal((await startShift(first.data.accessToken, 58.32)).status, 200);
     assert.equal((await request('/driver/status', first.data.accessToken, { isOnline: true })).status, 200);
     const native = await request('/driver/shift', first.data.accessToken, { deviceId: 'expiry-first-device', refreshToken: first.data.refreshToken });
     assert.equal(native.status, 201);
@@ -2351,7 +2713,7 @@ for (const expired of ['lease', 'gps'] as const) {
     } else {
       await prisma.driver.update({ where: { id: created.data.id }, data: { lastLocationAt: new Date(Date.now() - 61000) } });
     }
-    assert.equal((await request('/driver/location', second.data.accessToken, { lat: 37.96, lng: 58.42 })).status, 200);
+    assert.equal((await startShift(second.data.accessToken, 58.42)).status, 200);
     assert.equal((await request('/driver/status', second.data.accessToken, { isOnline: true })).status, 200);
     assert.equal((await request('/native-shift/tick', native.data.shiftToken, { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() })).status, 401);
     const secondProfile = await request('/driver/profile', second.data.accessToken);
@@ -2360,3 +2722,181 @@ for (const expired of ['lease', 'gps'] as const) {
     assert.equal((await request('/driver/status', first.data.accessToken, { isOnline: true })).status, 409);
   });
 }
+
+test('dispatcher sign out everywhere revokes both installations and preserves the assigned trip and account', async () => {
+  const phone = '+99361999131';
+  const created = await request('/admin/drivers', adminToken, { phone, fullName: 'Global logout fixture', password });
+  assert.equal(created.status, 201);
+  await prisma.balance.update({ where: { userId: created.data.userId }, data: { amount: 500 } });
+  const first = await request('/auth/login', '', { phone, password, deviceId: 'global-first' });
+  const second = await request('/auth/login', '', { phone, password, deviceId: 'global-second' });
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  const connections = await Promise.all([first, second].map(session => socket(session.data.accessToken)));
+  const capabilities = await Promise.all([first, second].map(session => request('/driver/notifications/registration', session.data.accessToken, { enabled: true })));
+  assert.ok(capabilities.every(result => result.status === 200));
+  assert.equal((await startShift(first.data.accessToken, 58.32)).status, 200);
+  assert.equal((await request('/driver/status', first.data.accessToken, { isOnline: true })).status, 200);
+  const native = await request('/driver/shift', first.data.accessToken, { deviceId: 'global-first', refreshToken: first.data.refreshToken });
+  assert.equal(native.status, 201);
+  const job = await order();
+  assert.equal((await request('/orders/accept', first.data.accessToken, { orderId: job.id })).status, 200);
+  assert.equal((await request(`/admin/drivers/${created.data.id}/sign-out-everywhere`, second.data.accessToken, {})).status, 403);
+  const disconnected = connections.map(connection => nextSocketEvent(connection, 'disconnect'));
+  const result = await request(`/admin/drivers/${created.data.id}/sign-out-everywhere`, adminToken, {});
+  assert.equal(result.status, 200);
+  assert.match(result.data.message, /сеансы.*завершены/i);
+  await Promise.all(disconnected);
+  for (const session of [first, second]) {
+    assert.equal((await request('/driver/profile', session.data.accessToken)).status, 401);
+    assert.equal((await request('/auth/refresh', '', { refreshToken: session.data.refreshToken })).status, 401);
+  }
+  for (const registration of capabilities) assert.equal((await request('/native-notifications/event', registration.data.notificationToken, { eventId: 'chat:obsolete' })).status, 401);
+  assert.equal((await request('/native-shift/tick', native.data.shiftToken, { lat: 37.96, lng: 58.32, recordedAt: new Date().toISOString() })).status, 401);
+  const recovered = await request('/auth/login', '', { phone, password, deviceId: 'global-third' });
+  assert.equal(recovered.status, 200, 'unchanged credentials still work on another installation');
+  const profile = await request('/driver/profile', recovered.data.accessToken);
+  assert.equal(profile.data.status, 'APPROVED');
+  assert.equal(profile.data.isOnline, false);
+  assert.equal((await request('/driver/balance', recovered.data.accessToken)).data.amount, '490');
+  assert.equal((await request('/orders/current', recovered.data.accessToken)).data.id, job.id);
+  assert.equal((await request('/orders/waiting', recovered.data.accessToken, { orderId: job.id })).status, 200, 'the assigned trip can be recovered without a shift');
+});
+
+test('offline installations cannot overwrite the shared position and Online acquires ownership with its own fresh GPS atomically', async () => {
+  const phone = '+99361999132';
+  const created = await request('/admin/drivers', adminToken, { phone, fullName: 'Local GPS fixture', password });
+  await prisma.balance.update({ where: { userId: created.data.userId }, data: { amount: 500 } });
+  const first = await request('/auth/login', '', { phone, password, deviceId: 'local-first' });
+  const second = await request('/auth/login', '', { phone, password, deviceId: 'local-second' });
+  for (const session of [first, second]) {
+    assert.equal((await request('/driver/location', session.data.accessToken, { lat: 37.96, lng: 58.32 })).status, 403);
+    const profile = (await request('/driver/profile', session.data.accessToken)).data;
+    assert.equal(profile.lastLat, null);
+    assert.equal(profile.districtId, null);
+  }
+  assert.equal((await request('/driver/status', first.data.accessToken, { isOnline: true })).status, 403);
+  const stale = await request('/driver/status', first.data.accessToken, { isOnline: true, position: { lat: 37.96, lng: 58.32, capturedAt: Date.now() - 61000 } });
+  assert.equal(stale.status, 400);
+  assert.equal((await request('/driver/profile', first.data.accessToken)).data.lastLat, null);
+  const results = await Promise.all([first, second].map((session, index) => request('/driver/status', session.data.accessToken, { isOnline: true, position: { lat: 37.96, lng: index === 0 ? 58.32 : 58.42, capturedAt: Date.now() } })));
+  assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
+  const winner = results[0].status === 200 ? 0 : 1;
+  const profile = (await request('/driver/profile', first.data.accessToken)).data;
+  assert.equal(Number(profile.lastLng), winner === 0 ? 58.32 : 58.42);
+  assert.equal(profile.districtId, winner === 0 ? regionId : otherRegionId);
+  assert.equal((await request('/driver/status', [first, second][winner].data.accessToken, { isOnline: false })).status, 200);
+  assert.equal((await request('/driver/location', [first, second][winner].data.accessToken, { lat: 30, lng: 50 })).status, 403);
+  const offline = (await request('/driver/profile', first.data.accessToken)).data;
+  assert.equal(Number(offline.lastLng), winner === 0 ? 58.32 : 58.42);
+});
+
+test('blocking requires a reason and revokes access without cancelling or refunding a started trip', async () => {
+  const driver = (await request('/driver/profile', driverToken)).data;
+  const job = await order(30);
+  for (const action of ['accept', 'waiting', 'start']) assert.equal((await request(`/orders/${action}`, driverToken, { orderId: job.id })).status, 200);
+  for (const body of [{}, { reason: '   ' }]) assert.equal((await request(`/admin/drivers/${driver.id}/block`, adminToken, body)).status, 400);
+  assert.equal((await request('/driver/profile', driverToken)).data.isOnline, true);
+  assert.equal((await request(`/admin/drivers/${driver.id}/block`, adminToken, { reason: 'Dispatcher safety review' })).status, 200);
+  assert.equal((await request('/driver/profile', driverToken)).status, 401);
+  const detail = (await request(`/admin/drivers/${driver.id}`, adminToken)).data;
+  assert.equal(detail.status, 'BLOCKED');
+  assert.equal(detail.accountDeleted, false);
+  assert.equal(detail.blockReason, 'Dispatcher safety review');
+  assert.equal(detail.isOnline, false);
+  assert.equal(detail.hasActiveTrip, true);
+  assert.equal(detail.user.balance.amount, '470');
+  const orders = (await request('/admin/orders?status=accepted', adminToken)).data.items;
+  assert.equal(orders.find((item: { id: string }) => item.id === job.id).status, 'STARTED');
+  assert.equal((await request(`/admin/drivers/${driver.id}/unblock`, adminToken, {})).status, 200);
+  const fresh = await request('/auth/login', '', { phone: driver.user.phone, password, deviceId: 'after-temporary-block' });
+  assert.equal(fresh.status, 200);
+  assert.equal((await request('/orders/current', fresh.data.accessToken)).data.id, job.id);
+});
+
+test('a permanently deleted phone can apply again without recovering the old balance or history', async () => {
+  const phone = '+99361999133';
+  const created = await request('/admin/drivers', adminToken, { phone, fullName: 'Old deleted identity', password });
+  const oldId = created.data.id;
+  assert.equal((await request(`/admin/drivers/${oldId}/balance`, adminToken, { amount: 70, type: 'TOPUP' })).status, 200);
+  const oldLogin = await request('/auth/login', '', { phone, password, deviceId: 'old-reapply-installation' });
+  assert.equal((await startShift(oldLogin.data.accessToken)).status, 200);
+  const completed = await order(12);
+  for (const action of ['accept', 'waiting', 'start', 'complete']) assert.equal((await request(`/orders/${action}`, oldLogin.data.accessToken, { orderId: completed.id })).status, 200);
+  const cancelled = await order(18);
+  for (const action of ['accept', 'waiting', 'cancel']) assert.equal((await request(`/orders/${action}`, oldLogin.data.accessToken, { orderId: cancelled.id })).status, 200);
+  const beforeToday = (await request('/admin/overview/today', adminToken)).data;
+  const beforeTotals = (await request('/admin/overview', adminToken)).data;
+  const beforeLedger = (await request(`/admin/drivers/${oldId}/history`, adminToken)).data;
+  assert.equal(beforeTotals.completedTrips, 1);
+  assert.equal(beforeTotals.completedTripValue, '12.00');
+  assert.equal(beforeToday.cohort.created, 2);
+  assert.equal(beforeToday.cohort.completed, 1);
+  assert.equal(beforeToday.cohort.cancelled, 1);
+  const deletion = await fetch(`${base}/admin/drivers/${oldId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${adminToken}` } });
+  assert.equal(deletion.status, 204);
+  assert.equal((await request('/driver/profile', oldLogin.data.accessToken)).status, 401);
+  assert.equal((await request(`/admin/drivers/${oldId}/approve`, adminToken, {})).status, 409);
+  assert.equal((await request(`/admin/drivers/${oldId}/unblock`, adminToken, {})).status, 409);
+  const registered = await request('/auth/register', '', { phone, fullName: 'New applicant identity', password: '654321' });
+  assert.equal(registered.status, 201);
+  const newId = registered.data.user.driver.id;
+  assert.notEqual(newId, oldId);
+  assert.equal(registered.data.user.driver.status, 'PENDING');
+  assert.equal((await request('/auth/login', '', { phone, password: '654321', deviceId: 'new-reapply-installation' })).status, 403);
+  assert.equal((await request(`/admin/drivers/${newId}/approve`, adminToken, {})).status, 200);
+  const fresh = await request('/auth/login', '', { phone, password: '654321', deviceId: 'new-reapply-installation' });
+  assert.equal(fresh.status, 200);
+  assert.equal((await request('/driver/balance', fresh.data.accessToken)).data.amount, '0');
+  assert.equal((await request('/driver/history', fresh.data.accessToken)).data.transactions.total, 0);
+  assert.equal((await request('/orders/current', fresh.data.accessToken)).data, null);
+  const old = (await request(`/admin/drivers/${oldId}`, adminToken)).data;
+  assert.equal(old.accountDeleted, true);
+  assert.equal(old.user.phone, phone);
+  assert.equal(old.user.fullName, 'Old deleted identity');
+  assert.equal(old.user.balance.amount, '58');
+  const afterLedger = (await request(`/admin/drivers/${oldId}/history`, adminToken)).data;
+  assert.deepEqual(afterLedger.transactions, beforeLedger.transactions);
+  assert.deepEqual(afterLedger.orders, beforeLedger.orders);
+  assert.equal(afterLedger.driver.phone, phone);
+  const afterToday = (await request('/admin/overview/today', adminToken)).data;
+  assert.deepEqual(afterToday.cohort, beforeToday.cohort);
+  assert.deepEqual(afterToday.acceptance, beforeToday.acceptance);
+  const afterTotals = (await request('/admin/overview', adminToken)).data;
+  assert.equal(afterTotals.completedTrips, 1);
+  assert.equal(afterTotals.completedTripValue, '12.00');
+  assert.equal(afterTotals.averageCompletedTripValue, '12.00');
+  assert.equal(afterTotals.pricedCompletedTrips, beforeTotals.pricedCompletedTrips);
+  assert.equal((await request('/admin/orders?status=completed', adminToken)).data.items[0].driverId, oldId);
+  assert.equal((await request('/admin/orders?status=cancelled', adminToken)).data.items[0].driverId, oldId);
+  assert.equal(JSON.stringify((await request('/admin/orders?status=all', adminToken)).data).includes('deleted:'), false);
+  assert.equal((await request('/driver/profile', oldLogin.data.accessToken)).status, 401, 'new application never revives old sessions');
+});
+
+test('reading chat while FCM delivery is in flight still promptly removes the delivered native notification', async () => {
+  let release!: () => void;
+  let started!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const sending = new Promise<void>(resolve => { started = resolve; });
+  let first = true;
+  await withFakeFcm(async sent => {
+    const driver = (await request('/driver/profile', driverToken)).data;
+    const registration = await request('/driver/notifications/registration', driverToken, { token: 'synthetic-inflight-read-token', enabled: true });
+    const message = await request('/admin/messages', adminToken, { driverId: driver.id, body: 'Read during delayed transport' });
+    try {
+      await Promise.race([sending, new Promise((_, reject) => setTimeout(() => reject(new Error('FCM transport did not start')), 6000))]);
+      assert.equal((await request('/driver/messages/read', driverToken, { throughMessageId: message.data.id })).status, 204);
+      release();
+      const deadline = Date.now() + 2500;
+      while (sent.length < 2 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
+      const eventId = `chat:${message.data.id}`;
+      assert.deepEqual(sent.map(row => row.data.eventId), [eventId, eventId]);
+      assert.equal((await request('/native-notifications/event', registration.data.notificationToken, { eventId })).data.event, null);
+    } finally { release(); }
+  }, async () => {
+    if (!first) return;
+    first = false;
+    started();
+    await gate;
+  });
+});

@@ -87,16 +87,21 @@ const stateLabels: Record<string, string> = {
         :aria-describedby="`${idPrefix}-${driver.id}-detail`"
         @click="emit('select', driver)"
       >
-        <span class="flex min-w-0 items-center justify-between gap-2"
-          ><span class="truncate font-medium">{{ driver.user.fullName }}</span
+        <span class="flex min-w-0 items-start justify-between gap-2"
+          ><span class="min-w-0 flex-1 truncate font-medium">{{
+            driver.user.fullName
+          }}</span
           ><span
-            class="shrink-0 text-xs"
+            class="max-w-[55%] text-right text-xs"
             :class="
               states[driver.id] === 'available'
                 ? 'text-success'
                 : 'text-muted-foreground'
             "
-            >{{ stateLabels[states[driver.id]] }}</span
+            >{{ stateLabels[states[driver.id]]
+            }}<template v-if="!driver.isOnline && driver.hasActiveTrip">
+              · Поездка не завершена</template
+            ></span
           ></span
         >
         <span
