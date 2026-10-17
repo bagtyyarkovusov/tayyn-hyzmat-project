@@ -505,7 +505,8 @@ watch(
         ><DialogHeader class="shrink-0 pr-8"
           ><DialogTitle>Заказы района</DialogTitle
           ><DialogDescription
-            >Выберите заказ и время прибытия.</DialogDescription
+            >Все доступные заказы. Заказы выбранного района показаны
+            первыми.</DialogDescription
           ></DialogHeader
         >
         <AvailableOrders

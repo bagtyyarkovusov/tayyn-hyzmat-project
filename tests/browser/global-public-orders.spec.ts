@@ -105,13 +105,17 @@ async function actors(browser: Browser, delayRegionalPopup = false) {
   }
   const adminSession = await loginFixture(contexts[0]!.request, admin.phone);
   const headers = { Authorization: `Bearer ${adminSession.accessToken}` };
-  async function create(pickupAddress: string, privateOffer = false) {
+  async function create(
+    pickupAddress: string,
+    privateOffer = false,
+    districtId = regions[1]!.id,
+  ) {
     const response = await contexts[0]!.request.post(
       `${process.env.TEST_API_URL}/admin/orders`,
       {
         headers,
         data: {
-          districtId: regions[1]!.id,
+          districtId,
           clientPhone: "+99365999999",
           priceEstimated: 25,
           pickupAddress,
@@ -232,6 +236,103 @@ test("a new public order is immediately claimable from another region and closes
         () => document.documentElement.scrollHeight <= innerHeight,
       ),
     ).toBe(true);
+  } finally {
+    await close();
+  }
+});
+
+test("every region card opens all public orders with its own region first", async ({
+  browser,
+}) => {
+  const { viewer, contexts, region, ownRegion, create, cancel, close } =
+    await actors(browser);
+  try {
+    await viewer
+      .getByRole("group", { name: "Регионы", exact: true })
+      .getByRole("button", { name: new RegExp(region.name) })
+      .click();
+    const queue = viewer.getByRole("dialog", {
+      name: "Заказы района",
+      exact: true,
+    });
+    const remote = await create(
+      "Старый заказ из другого района",
+      false,
+      ownRegion.id,
+    );
+    const selected = await create("Новый заказ выбранного района");
+    const privateOrder = await create(
+      "Личное предложение не в общей очереди",
+      true,
+    );
+    await expect(
+      queue.getByText(remote.pickupAddress, { exact: true }),
+    ).toBeVisible();
+    await expect(
+      queue.getByText(selected.pickupAddress, { exact: true }),
+    ).toBeVisible();
+    await expect(
+      queue.getByText(privateOrder.pickupAddress, { exact: true }),
+    ).toHaveCount(0);
+    const rows = queue.getByRole("article");
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(0)).toContainText(selected.pickupAddress);
+    await expect(rows.nth(0)).toContainText(region.name);
+    await expect(rows.nth(1)).toContainText(remote.pickupAddress);
+    await expect(rows.nth(1)).toContainText(ownRegion.name);
+    await expect(
+      queue.getByRole("region", { name: region.name, exact: true }),
+    ).toContainText(selected.pickupAddress);
+    await expect(
+      queue.getByRole("region", { name: "Другие районы", exact: true }),
+    ).toContainText(remote.pickupAddress);
+
+    const token = await viewer.evaluate(() =>
+      localStorage.getItem("openride.driver.accessToken"),
+    );
+    const headers = { Authorization: `Bearer ${token}` };
+    const scoped = await contexts[0]!.request.get(
+      `${process.env.TEST_API_URL}/orders/available`,
+      { headers, params: { districtId: region.id } },
+    );
+    expect(scoped.ok()).toBe(true);
+    expect(
+      (await scoped.json()).map((order: { id: string }) => order.id),
+    ).toEqual([selected.id]);
+    const all = await contexts[0]!.request.get(
+      `${process.env.TEST_API_URL}/orders/available`,
+      { headers, params: { districtId: region.id, scope: "all" } },
+    );
+    expect(all.ok()).toBe(true);
+    expect((await all.json()).map((order: { id: string }) => order.id)).toEqual(
+      [remote.id, selected.id],
+    );
+    const queued = [];
+    for (let index = 0; index < 7; index++)
+      queued.push(await create(`Очередь для прокрутки ${index + 1}`));
+    await expect(rows).toHaveCount(9);
+    const scrollArea = queue.getByRole("region", {
+      name: "Доступные заказы",
+      exact: true,
+    });
+    expect(
+      await scrollArea.evaluate(
+        (node) => node.scrollHeight > node.clientHeight,
+      ),
+    ).toBe(true);
+    await rows.last().scrollIntoViewIfNeeded();
+    await expect(rows.last()).toBeInViewport();
+    expect(
+      await viewer.evaluate(
+        () => document.documentElement.scrollHeight <= innerHeight,
+      ),
+    ).toBe(true);
+    for (const order of queued) await cancel(order.id);
+    await cancel(remote.id);
+    await cancel(selected.id);
+    await expect(queue.getByText(/Сейчас нет свободных заказов/)).toBeVisible();
+    await expect(rows).toHaveCount(0);
+    await expect(queue).toBeInViewport();
   } finally {
     await close();
   }
