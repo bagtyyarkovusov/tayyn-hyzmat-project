@@ -34,12 +34,19 @@ import {
   DropdownMenuRadioItem,
 } from "@/shared/ui/dropdown-menu";
 import { driverState } from "@/features/driver/useDriver";
+import { useDriverNotifications } from "@/features/driver/notifications";
+import AdminMessageAlert from "@/features/dispatcher/AdminMessageAlert.vue";
 const route = useRoute();
 const development = import.meta.env.DEV;
 const visibility = useDocumentVisibility();
 const networkOnline = useOnline();
 const chat = computed(
   () => route.path === "/driverChat" || route.path.startsWith("/adminChat"),
+);
+useDriverNotifications(
+  computed(
+    () => route.path === "/driverChat" && visibility.value === "visible",
+  ),
 );
 const viewportHeight = ref<string>();
 const viewportTop = ref("0px");
@@ -140,6 +147,7 @@ async function logout() {
       },
     ]"
   >
+    <AdminMessageAlert v-if="!driver" />
     <aside v-if="!driver" class="sidebar">
       <RouterLink to="/adminDashboard" class="brand"><BrandLogo /></RouterLink>
       <p class="mt-7 mb-3 text-xs text-muted-foreground">
@@ -254,6 +262,20 @@ async function logout() {
           /></Button>
         </div>
       </header>
+      <p
+        v-if="driver && !networkOnline"
+        role="status"
+        class="border-b bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-900 dark:bg-amber-950/60 dark:text-amber-200"
+      >
+        Нет интернета. Пытаемся подключиться…
+      </p>
+      <p
+        v-else-if="driver && !session.state.connected"
+        role="status"
+        class="border-b bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-900 dark:bg-amber-950/60 dark:text-amber-200"
+      >
+        Связь с диспетчером прервана. Переподключаемся…
+      </p>
       <nav
         v-if="!driver"
         class="mobile-admin-nav"

@@ -21,6 +21,10 @@ const blockSchema = z.object({
   reason: z.string().trim().max(500).optional()
 });
 
+const blockDriverSchema = z.object({
+  reason: z.string().trim().min(1, 'Укажите причину блокировки').max(500)
+});
+
 const resolveOrderSchema = z.object({
   reason: z.string().trim().min(1, 'Укажите причину принудительного завершения').max(500)
 });
@@ -97,6 +101,7 @@ module.exports = {
   orderIdParamSchema,
   listDriversQuerySchema,
   blockSchema,
+  blockDriverSchema,
   resolveOrderSchema,
   balanceAdjustSchema,
   historyQuerySchema,

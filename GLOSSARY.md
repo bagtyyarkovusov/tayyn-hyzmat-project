@@ -8,7 +8,7 @@ The pilot coordinates dispatcher-created rides and driver claims within regions.
 
 **Driver**: An approved participant who receives available orders and carries out a claimed order.
 
-**Shift owner**: The one approved device currently used by a driver to work their shift. Other signed-in devices can view the account without taking over that shift.
+**Shift owner**: The one phone currently used by a driver to work their shift. Other signed-in devices can view the account without taking over that shift.
 
 **Region**: A dispatch area used to group drivers and orders. “District” and “zone” in inherited code refer to this concept.
 

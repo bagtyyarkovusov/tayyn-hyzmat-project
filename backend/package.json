@@ -17,7 +17,7 @@
     "seed": "node prisma/seed.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "pnpm build && tsc -p tsconfig.tests.json --noEmit",
-    "test:unit": "tsx --test tests/geo.test.ts",
+    "test:unit": "tsx --test tests/geo.test.ts tests/fcm.test.ts",
     "test:integration": "node ../scripts/test-backend.mjs",
     "test": "pnpm test:unit && pnpm test:integration",
     "seed:regions": "node prisma/default-regions.cjs"

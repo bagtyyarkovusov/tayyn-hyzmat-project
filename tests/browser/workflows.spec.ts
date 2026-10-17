@@ -41,13 +41,17 @@ async function startGps(page: Page) {
   await page
     .context()
     .setGeolocation({ latitude: 37.96, longitude: 58.32, accuracy: 10 });
-  const report = page.waitForResponse(
-    (response) =>
-      response.url().endsWith("/driver/location") &&
-      response.request().method() === "POST",
+  const gps = page.getByRole("button", { name: "Включить GPS", exact: true });
+  await gps.click();
+  await expect(gps).toHaveAttribute("data-state", "ready");
+}
+async function expectLocalGpsFix(page: Page) {
+  await expect(
+    page.getByRole("button", { name: "Включить GPS", exact: true }),
+  ).toHaveAttribute("data-state", "ready");
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "37.9600, 58.3200",
   );
-  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
-  expect((await report).ok()).toBe(true);
 }
 for (const role of ["driver", "admin"] as const) {
   test(`${role} mobile login shows the form immediately and keeps it reachable in a short viewport`, async ({
@@ -848,16 +852,10 @@ test("GPS reporting continues across driver routes and stops after logout", asyn
   const page = await context.newPage();
   try {
     await login(page, "driver");
-    const firstReport = page.waitForResponse(
-      (response) =>
-        response.url().endsWith("/driver/location") &&
-        response.request().method() === "POST",
-    );
     await page
       .getByRole("button", { name: "Включить GPS", exact: true })
       .click();
-    await (await firstReport).finished();
-    await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+    await expectLocalGpsFix(page);
     await page
       .getByRole("button", { name: "Выйти на линию", exact: true })
       .click();
@@ -950,7 +948,7 @@ test("GPS is required to go online and can be retried after permission is grante
     await page
       .getByRole("button", { name: "Включить GPS", exact: true })
       .click();
-    await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+    await expectLocalGpsFix(page);
     await expect(power).toBeEnabled();
     await power.click();
     await expect(
@@ -982,7 +980,7 @@ test("switching driver account without logout clears the previous GPS session", 
     await page
       .getByRole("button", { name: "Включить GPS", exact: true })
       .click();
-    await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+    await expectLocalGpsFix(page);
     // Navigate through browser history without reloading the application singleton.
     await page.evaluate(() => {
       history.pushState({}, "", "/driverLogin");
@@ -992,7 +990,9 @@ test("switching driver account without logout clears the previous GPS session", 
     await page.getByLabel("Пароль", { exact: true }).fill(password);
     await page.getByRole("button", { name: "Войти", exact: true }).click();
     await expect(page).toHaveURL(/driverDashboard/);
-    await expect(page.getByText(/GPS · точность/)).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Включить GPS", exact: true }),
+    ).toHaveAttribute("data-state", /inactive|blocked/);
     await expect(
       page.getByRole("button", { name: "Включить GPS", exact: true }),
     ).toBeEnabled();
@@ -1220,7 +1220,7 @@ test("all nine driver regions fit on the home screen without page scrolling", as
     .context()
     .setGeolocation({ latitude: 37.96, longitude: 58.32, accuracy: 10 });
   await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
-  await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+  await expectLocalGpsFix(page);
   const regions = page.getByRole("group", { name: "Регионы", exact: true });
   await expect(regions.getByRole("button")).toHaveCount(9);
   for (const viewport of [
@@ -1264,7 +1264,8 @@ test("regional queues and counts recover through updates, reconnect and reload",
   try {
     await login(dispatcher, "admin");
     await login(driver, "driver", "+99360000103");
-    await startGps(driver);
+    await test.step("acquire local GPS before opening the shift", () =>
+      startGps(driver));
     await driver
       .getByRole("button", { name: "Выйти на линию", exact: true })
       .click();
@@ -1400,10 +1401,11 @@ test("regional queues and counts recover through updates, reconnect and reload",
     for (const name of ["Я на месте", "Начать поездку", "Завершить поездку"])
       await driver.getByRole("button", { name, exact: true }).click();
     await expect(driver.getByLabel("Баланс")).toHaveText("488 TMT");
-    await startGps(driver);
-    await driver
-      .getByRole("button", { name: "Выйти на линию", exact: true })
-      .click();
+    await test.step("refresh GPS without losing readiness after completing the recovered trip", () =>
+      startGps(driver));
+    await expect(
+      driver.getByRole("button", { name: "Уйти с линии", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
     await test.step("an older HTTP snapshot cannot replace newer live counts", async () => {
       let release = () => {};
       try {
@@ -1555,7 +1557,7 @@ test("a delayed one-shot timeout cannot erase a newer successful GPS watch fix",
   ).toHaveAttribute("data-state", "ready");
 });
 
-test("a transient GPS timeout keeps its blocker visible until an explicit retry receives a fresh server-acknowledged fix", async ({
+test("a transient GPS timeout keeps its blocker visible until an explicit retry receives a fresh local fix", async ({
   page,
 }) => {
   // A separate synthetic client exercises recovery without exhausting the login limiter used by earlier workflows.
@@ -1694,7 +1696,7 @@ test("a transient GPS timeout keeps its blocker visible until an explicit retry 
     window.dispatchEvent(new Event("synthetic-gps-release")),
   );
   await expect(power).toBeEnabled({ timeout: 5000 });
-  await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+  await expectLocalGpsFix(page);
 });
 
 async function emulateNativeBridge(page: Page, holdPermission: boolean) {
@@ -1785,7 +1787,12 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
               });
           });
         if (method === "location")
-          return { lat: 0, lng: 0, accuracy: 10, timestamp: Date.now() };
+          return {
+            lat: 37.96,
+            lng: 58.32,
+            accuracy: 10,
+            timestamp: Date.now(),
+          };
         if (method === "status")
           return bridge.syntheticNativeStopped
             ? {
@@ -1896,10 +1903,10 @@ test("a stopped native shift does not erase a newly confirmed GPS fix on later s
   await page.getByRole("link", { name: "Заказы", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Выйти на линию", exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await expect(
     page.getByText("Смена завершена сервером", { exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
 });
 
 test("explicit native GPS acknowledges an old stop before its next status poll", async ({
@@ -1927,8 +1934,10 @@ test("a native GPS permission callback from a previous driver cannot post the ne
   page,
 }) => {
   await page.setExtraHTTPHeaders({ "X-Forwarded-For": "127.0.0.80" });
+  await createAddressDriver(page, "+99360000341");
+  await createAddressDriver(page, "+99360000331");
   await emulateNativeBridge(page, true);
-  await login(page, "driver");
+  await login(page, "driver", "+99360000341");
   await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
   await expect
     .poll(() =>
@@ -1944,7 +1953,7 @@ test("a native GPS permission callback from a previous driver cannot post the ne
     history.pushState({}, "", "/driverLogin");
     dispatchEvent(new PopStateEvent("popstate"));
   });
-  await page.getByLabel("Номер телефона").fill("+99360000102");
+  await page.getByLabel("Номер телефона").fill("+99360000331");
   await page.getByLabel("Пароль", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Войти", exact: true }).click();
   await expect(page).toHaveURL(/driverDashboard/);
@@ -1964,17 +1973,21 @@ test("a native GPS permission callback from a previous driver cannot post the ne
   // Wait for the released bridge promise and resulting network work to settle.
   await page.waitForTimeout(300);
   expect(locationPosted).toBe(false);
-  await expect(page.getByText(/GPS · точность/)).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Включить GPS", exact: true }),
+  ).toHaveAttribute("data-state", /inactive|blocked/);
 });
 
 test("a cancelled native Online operation cannot offline a newly signed-in driver", async ({
   page,
 }) => {
   await page.setExtraHTTPHeaders({ "X-Forwarded-For": "127.0.0.81" });
+  await createAddressDriver(page, "+99360000342");
+  await createAddressDriver(page, "+99360000332");
   await emulateNativeBridge(page, false);
-  await login(page, "driver");
+  await login(page, "driver", "+99360000342");
   await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
-  await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+  await expectLocalGpsFix(page);
   await page.evaluate(() => {
     (
       window as unknown as { holdNativePermission: boolean }
@@ -1997,7 +2010,7 @@ test("a cancelled native Online operation cannot offline a newly signed-in drive
     history.pushState({}, "", "/driverLogin");
     dispatchEvent(new PopStateEvent("popstate"));
   });
-  await page.getByLabel("Номер телефона").fill("+99360000102");
+  await page.getByLabel("Номер телефона").fill("+99360000332");
   await page.getByLabel("Пароль", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Войти", exact: true }).click();
   await expect(page).toHaveURL(/driverDashboard/);
@@ -2020,10 +2033,12 @@ test("a delayed native start from the old account cannot stop the new account's 
   page,
 }) => {
   await page.setExtraHTTPHeaders({ "X-Forwarded-For": "127.0.0.82" });
+  await createAddressDriver(page, "+99360000343");
+  await createAddressDriver(page, "+99360000333");
   await emulateNativeBridge(page, false);
-  await login(page, "driver", "+99360000103");
+  await login(page, "driver", "+99360000343");
   await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
-  await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+  await expectLocalGpsFix(page);
   await page.evaluate(() => {
     (window as unknown as { holdNativeStart: boolean }).holdNativeStart = true;
   });
@@ -2044,7 +2059,7 @@ test("a delayed native start from the old account cannot stop the new account's 
     history.pushState({}, "", "/driverLogin");
     dispatchEvent(new PopStateEvent("popstate"));
   });
-  await page.getByLabel("Номер телефона").fill("+99360000102");
+  await page.getByLabel("Номер телефона").fill("+99360000333");
   await page.getByLabel("Пароль", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Войти", exact: true }).click();
   await expect(page).toHaveURL(/driverDashboard/);
@@ -2052,7 +2067,7 @@ test("a delayed native start from the old account cannot stop the new account's 
     (window as unknown as { holdNativeStart: boolean }).holdNativeStart = false;
   });
   await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
-  await expect(page.getByText(/GPS · точность 10 м/)).toBeVisible();
+  await expectLocalGpsFix(page);
   await page
     .getByRole("button", { name: "Выйти на линию", exact: true })
     .click();
@@ -2080,45 +2095,18 @@ test("a delayed native start from the old account cannot stop the new account's 
     ),
   ).toBe(currentUser);
 });
-test("permission controls distinguish confirmed GPS and enabled notification permission", async ({
+test("GPS remains green during connection loss and reconnects without another permission request", async ({
   browser,
 }) => {
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 },
   });
   const page = await context.newPage();
-  // Headless Chromium's Notification getter can remain denied while its
-  // Permissions API reports granted. Control this browser boundary only.
-  await page.addInitScript(() => {
-    Object.defineProperty(Notification, "permission", {
-      configurable: true,
-      value: "default",
-    });
-  });
   try {
     await login(page, "driver");
     const gps = page.getByRole("button", { name: "Включить GPS", exact: true });
-    const alerts = page.getByRole("button", {
-      name: "Включить уведомления и звук",
-      exact: true,
-    });
     await expect(gps).toHaveAttribute("data-state", /inactive|blocked/);
-    await expect(alerts).toHaveAttribute("data-state", "inactive");
-    let releaseReport!: () => void;
-    const reportGate = new Promise<void>((resolve) => {
-      releaseReport = resolve;
-    });
-    await page.route("**/driver/location", async (route) => {
-      await reportGate;
-      await route.continue();
-    });
-    const gpsStarted = startGps(page);
-    await expect(gps).toHaveAttribute("data-state", "connecting");
-    await expect(
-      page.getByRole("button", { name: "Выйти на линию", exact: true }),
-    ).toBeDisabled();
-    releaseReport();
-    await gpsStarted;
+    await startGps(page);
     await expect(gps).toHaveAttribute("data-state", "ready");
     await page
       .getByRole("button", { name: "Выйти на линию", exact: true })
@@ -2136,34 +2124,19 @@ test("permission controls distinguish confirmed GPS and enabled notification per
       "aria-description",
       /Нет связи с диспетчером/,
     );
-    await expect(gps).toHaveAttribute("data-state", "connecting");
+    await expect(gps).toHaveAttribute("data-state", "ready");
     await expect(
-      page.getByText("Последнее положение", { exact: true }),
+      page.getByText("Нет интернета. Пытаемся подключиться…", { exact: true }),
     ).toBeVisible();
     await context.setOffline(false);
     await expect(power).toHaveAttribute(
       "aria-description",
       /Связь с диспетчером установлена/,
     );
+    await expect(
+      page.getByText("Нет интернета. Пытаемся подключиться…", { exact: true }),
+    ).toHaveCount(0);
     await power.click();
-    await page.evaluate(() => {
-      Object.defineProperty(Notification, "permission", { value: "granted" });
-      window.dispatchEvent(new Event("focus"));
-    });
-    await expect(alerts).toHaveAttribute(
-      "aria-description",
-      /Уведомления разрешены/,
-    );
-    // Permission alone does not prove audio has been unlocked by a gesture.
-    await expect(alerts).not.toHaveAttribute("data-state", "ready");
-    await alerts.click();
-    await expect(alerts).toHaveAttribute("data-state", "ready");
-    await page.evaluate(() => {
-      Object.defineProperty(Notification, "permission", { value: "denied" });
-      window.dispatchEvent(new Event("focus"));
-    });
-    await expect(alerts).toHaveAttribute("data-state", "blocked");
-    await expect(alerts).toHaveAttribute("aria-description", /заблокированы/);
   } finally {
     await context.close();
   }
@@ -2187,9 +2160,9 @@ test("offline drivers keep a local GPS fix, show its timestamp, and send no loca
   });
   await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
   const gps = page.getByRole("button", { name: "Включить GPS", exact: true });
-  await expect(gps).toHaveAttribute("data-state", "connecting");
+  await expect(gps).toHaveAttribute("data-state", "ready");
   await expect(
-    page.getByText("Последнее положение", { exact: true }),
+    page.getByText("GPS этого телефона", { exact: true }),
   ).toBeVisible();
   await expect(page.getByText(/Последнее обновление/)).toBeVisible();
   expect(uploads).toBe(0);
@@ -2437,11 +2410,11 @@ test("a delayed address cannot replace a newer GPS position outside the saved re
     /\/geo\/drivers\/[^/]+\/address/.test(request.url()),
   );
   await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
-  await lookup;
-  await expect.poll(() => originalAddress).toBe("Synthetic street, 12");
   await page
     .getByRole("button", { name: "Выйти на линию", exact: true })
     .click();
+  await lookup;
+  await expect.poll(() => originalAddress).toBe("Synthetic street, 12");
   await expect(
     page.getByRole("button", { name: "Уйти с линии", exact: true }),
   ).toBeVisible();
@@ -2477,7 +2450,22 @@ test("a delayed address survives a nearby GPS fix during its request", async ({
     );
     expect(response.ok()).toBe(true);
   };
-  await report(37.961234, 58.321234);
+  const online = await page.request.post(
+    `${process.env.TEST_API_URL}/driver/status`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+      data: {
+        isOnline: true,
+        position: {
+          lat: 37.961234,
+          lng: 58.321234,
+          accuracy: 10,
+          capturedAt: Date.now(),
+        },
+      },
+    },
+  );
+  expect(online.ok()).toBe(true);
   await login(page, "admin");
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
@@ -2510,6 +2498,9 @@ test("an unavailable server Geocoder leaves GPS readiness and actual coordinates
     /\/geo\/drivers\/[^/]+\/address/.test(response.url()),
   );
   await startGps(page);
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
   expect((await lookup).ok()).toBe(true);
   await expect(page.getByLabel("Местоположение GPS")).toContainText(
     "37.9600, 58.3200",
@@ -2518,7 +2509,7 @@ test("an unavailable server Geocoder leaves GPS readiness and actual coordinates
     page.getByRole("button", { name: "Включить GPS", exact: true }),
   ).toHaveAttribute("data-state", "ready");
   await expect(
-    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+    page.getByRole("button", { name: "Уйти с линии", exact: true }),
   ).toBeEnabled();
 });
 
@@ -2539,7 +2530,12 @@ test("background GPS does not request addresses until the driver location screen
       requests.push(request.url());
   });
   await startGps(page);
-  await page.waitForTimeout(200);
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Уйти с линии", exact: true }),
+  ).toBeVisible();
   expect(requests).toHaveLength(0);
   await page.evaluate(() => {
     Object.defineProperty(document, "visibilityState", {
@@ -2767,7 +2763,7 @@ test("private offer picker disables an online driver whose balance cannot cover 
   }
 });
 
-test("fresh acknowledged GPS enters a shift without another preflight upload and stops reporting offline", async ({
+test("a fresh local GPS fix starts the shift atomically and Offline stops location uploads", async ({
   page,
 }) => {
   await login(page, "driver");
@@ -2777,23 +2773,38 @@ test("fresh acknowledged GPS enters a shift without another preflight upload and
     uploads++;
     await route.continue();
   });
+  const shiftStarted = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/driver/status") &&
+      response.request().postDataJSON()?.isOnline === true,
+  );
   await page
     .getByRole("button", { name: "Выйти на линию", exact: true })
     .click();
+  const started = await shiftStarted;
+  expect(started.ok()).toBe(true);
+  expect(started.request().postDataJSON().position).toMatchObject({
+    lat: 37.96,
+    lng: 58.32,
+    accuracy: 10,
+  });
   await expect(
     page.getByRole("button", { name: "Уйти с линии", exact: true }),
   ).toBeVisible();
-  expect(uploads).toBe(0);
   await page.getByRole("button", { name: "Уйти с линии", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Выйти на линию", exact: true }),
   ).toBeVisible();
   await expect(page.getByText(/Последнее обновление/)).toBeVisible();
+  const uploadsAtOffline = uploads;
   await page
     .context()
     .setGeolocation({ latitude: 37.97, longitude: 58.33, accuracy: 10 });
-  await page.waitForTimeout(300);
-  expect(uploads).toBe(0);
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "37.9700, 58.3300",
+  );
+  expect(uploads).toBe(uploadsAtOffline);
 });
 
 test("dispatcher driver details follow fresh location events without a manual refresh", async ({
@@ -2808,10 +2819,18 @@ test("dispatcher driver details follow fresh location events without a manual re
   await expect(page.getByText("Нет координат", { exact: true })).toBeVisible();
   await page.getByLabel("Марка", { exact: true }).fill("Draft vehicle make");
   const report = await page.request.post(
-    `${process.env.TEST_API_URL}/driver/location`,
+    `${process.env.TEST_API_URL}/driver/status`,
     {
       headers: { Authorization: `Bearer ${token}` },
-      data: { lat: 37.96, lng: 58.32, accuracy: 10 },
+      data: {
+        isOnline: true,
+        position: {
+          lat: 37.96,
+          lng: 58.32,
+          accuracy: 10,
+          capturedAt: Date.now(),
+        },
+      },
     },
   );
   expect(report.ok()).toBe(true);
@@ -3096,6 +3115,45 @@ test("monitoring keeps a claimed driver busy across delayed snapshots and reconn
     await admin.unroute("**/api/admin/drivers?**");
     await expect(row).toContainText("В поездке");
     await admin.reload();
+    await expect(row).toContainText("В поездке");
+    const stopped = await driver.request.post(
+      `${process.env.TEST_API_URL}/driver/status`,
+      {
+        headers: driverHeaders,
+        data: { isOnline: false },
+      },
+    );
+    expect(stopped.ok()).toBe(true);
+    await expect(row).toContainText("Поездка не завершена");
+    await row.click();
+    const selected = admin.getByRole("region", {
+      name: "Выбранный водитель",
+      exact: true,
+    });
+    await expect(selected).toContainText("Не в сети");
+    await expect(selected).toContainText("Поездка не завершена");
+    await expect(selected).toContainText(
+      "Последнее местоположение · обновление остановлено",
+    );
+    await expect(
+      admin.getByRole("button", { name: "Предложить заказ", exact: true }),
+    ).toBeDisabled();
+    const resumed = await driver.request.post(
+      `${process.env.TEST_API_URL}/driver/status`,
+      {
+        headers: driverHeaders,
+        data: {
+          isOnline: true,
+          position: {
+            lat: 37.96,
+            lng: 58.32,
+            accuracy: 10,
+            capturedAt: Date.now(),
+          },
+        },
+      },
+    );
+    expect(resumed.ok()).toBe(true);
     await expect(row).toContainText("В поездке");
     for (const path of ["waiting", "start", "complete"])
       expect(

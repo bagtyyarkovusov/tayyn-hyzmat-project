@@ -13,19 +13,14 @@ async function getProfile(driverId, deviceId) {
   const driver = await prisma.driver.findUnique({
     where: { id: driverId },
     include: {
-      user: { select: { id: true, phone: true, fullName: true, avatarUrl: true, status: true, createdAt: true } },
+      user: { select: { id: true, phone: true, archivedPhone: true, deletedAt: true, fullName: true, avatarUrl: true, status: true, createdAt: true } },
       district: true,
       currentVehicle: true,
       vehicles: true
     }
   });
   if (!driver) return driver;
-  // pushToken is an internal routing detail (see savePushToken below), not
-  // something the profile endpoint's consumers need echoed back.
-  const { pushToken, ...rest } = driver;
-  void pushToken;
-  const owner = driver.shiftDeviceId && await prisma.driverDevice.findUnique({ where: { driverId_deviceId: { driverId, deviceId: driver.shiftDeviceId } } });
-  return { ...rest, canControlShift: !driver.isOnline || driver.shiftDeviceId === deviceId, activeShiftDeviceLabel: driver.isOnline ? owner?.label ?? null : null };
+  return { ...require('./public-profile').publicDriverProfile(driver), canControlShift: !driver.isOnline || driver.shiftDeviceId === deviceId };
 }
 
 async function getBalance(userId) {
@@ -53,10 +48,8 @@ function emitToInterestedRooms(driver, event, payload) {
   target.emit(event, payload);
 }
 
-// A driver's district is NOT a fixed assignment - it is derived live from
-// their GPS ping via nearest-center lookup, so the 9 district cards always
-// reflect where drivers actually are right now, not where an admin last
-// filed them. See src/utils/geo.js for the nearest-center math.
+// The operating region comes from fresh shift GPS and saved boundaries.
+// Outside all configured regions, keep the coordinates and clear the region.
 async function updateLocation(driver, data) {
   const { lat, lng, heading, speed, accuracy, capturedAt } = data;
   const now = Date.now();
@@ -74,6 +67,7 @@ async function updateLocation(driver, data) {
     await tx.$queryRaw`SELECT id FROM drivers WHERE id = ${driver.id} FOR UPDATE`;
     const current = await tx.driver.findUniqueOrThrow({ where: { id: driver.id } });
     require('./shift-ownership').assertShiftControl(current, driver.sessionDeviceId);
+    if (!current.isOnline) throw ApiError.forbidden('Выйдите на линию, чтобы передавать местоположение', { code: 'DRIVER_OFFLINE' });
     const updated = await tx.driver.update({ where: { id: driver.id }, data: {
       lastLat: lat, lastLng: lng, lastHeading: heading, lastSpeed: speed,
       lastLocationAt: recordedAt, districtId: newDistrictId
@@ -106,6 +100,11 @@ async function updateLocation(driver, data) {
 async function setStatus(driver, data, credentialVersion) {
   const { updateCredentialedStatus } = require('./credentialed-status');
   const updated = await updateCredentialedStatus(driver.id, driver.userId, credentialVersion, data, driver.sessionDeviceId, driver.sessionDeviceVersion);
+
+  if (data.isOnline === true && data.position) {
+    try { emitToInterestedRooms(updated, 'driver:location', { driverId: driver.id, lat: Number(updated.lastLat), lng: Number(updated.lastLng), recordedAt: updated.lastLocationAt.toISOString() }); }
+    catch (err) { logger.warn({ err }, 'Failed to broadcast initial shift position'); }
+  }
 
   try {
     emitToInterestedRooms(updated, 'driver:status', {
@@ -185,33 +184,6 @@ async function upsertVehicle(driver, data) {
   }
 }
 
-// Manual fallback for `districtId` - normally set live from GPS
-// (updateLocation above). Exists because a driver whose GPS genuinely can't
-// be read (e.g. this deployment's website is still plain http://, and
-// browsers refuse the Geolocation API on anything but a secure origin/
-// localhost - see services/geo.js on the frontend) would otherwise never
-// get a district at all and so never join a district room / never receive
-// order:new broadcasts, with no way to fix it themselves. Reuses the exact
-// same room-sync path GPS updates use, so once picked this works identically
-// to a GPS-derived district until the driver's GPS starts reporting again
-// and overwrites it on the next successful location update.
-async function setDistrict(driver, districtId) {
-  const district = await prisma.district.findUnique({ where: { id: districtId } });
-  if (!district) throw ApiError.badRequest('Район не найден');
-
-  const updated = await prisma.$transaction(async tx => {
-    await require('./shift-ownership').lockDeviceSession(tx, driver);
-    await tx.$queryRaw`SELECT id FROM drivers WHERE id = ${driver.id} FOR UPDATE`;
-    require('./shift-ownership').assertShiftControl(await tx.driver.findUniqueOrThrow({ where: { id: driver.id } }), driver.sessionDeviceId);
-    return tx.driver.update({ where: { id: driver.id }, data: { districtId }, include: { district: true } });
-  });
-
-  await syncDriverDistrictRoom(driver.id);
-  await districtsService.broadcastDistrictStats();
-
-  return updated;
-}
-
 // Same conversation model as admin.service.js#getDriverMessages: every
 // Message where this driver's own user id is either sender or receiver.
 // isBroadcast admin messages are included too (receiverId is null on
@@ -289,6 +261,33 @@ async function getMessages(driver, { page, limit, beforeMessageId }) {
 // admin sent up to now counts as seen.
 async function markChatRead(driver, throughMessageId) {
   await markRead(driver.id, { OR: [{ receiverId: driver.userId }, { isBroadcast: true }] }, throughMessageId, 'lastChatReadAt', 'lastChatReadMessageId');
+  // Reading is account-wide. A second signed-in device must clear its native
+  // notification ledger too, while exact event IDs protect newer alerts.
+  try {
+    const current = await prisma.driver.findUnique({ where: { id: driver.id }, select: { lastChatReadAt: true, lastChatReadMessageId: true } });
+    if (!current?.lastChatReadAt) return;
+    const messages = await prisma.message.findMany({
+      where: {
+        NOT: { senderId: driver.userId },
+        AND: [{ OR: [{ receiverId: driver.userId }, { isBroadcast: true }] }, { OR: [
+          { sentAt: { lt: current.lastChatReadAt } },
+          ...(current.lastChatReadMessageId ? [{ sentAt: current.lastChatReadAt, id: { lte: current.lastChatReadMessageId } }] : [])
+        ] }],
+        sentAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+      }, select: { id: true }
+    });
+    const ids = messages.map((message) => `chat:${message.id}`);
+    if (!ids.length) return;
+    const installations = await prisma.notificationInstallation.findMany({ where: { driverId: driver.id }, select: { id: true } });
+    await prisma.notificationDelivery.updateMany({ where: { installationId: { in: installations.map((row) => row.id) }, eventId: { in: ids } }, data: { acknowledgedAt: new Date(), invalidatedAt: new Date(), notBefore: new Date() } });
+    getIO().to(rooms.driver(driver.id)).emit('chat:read', {
+      lastChatReadAt: current.lastChatReadAt.toISOString(),
+      lastChatReadMessageId: current.lastChatReadMessageId,
+      eventIds: ids
+    });
+  } catch (err) {
+    logger.warn({ err }, 'Failed to synchronise chat notification read state');
+  }
 }
 
 // A driver message has no single recipient (any on-duty admin can pick it
@@ -301,7 +300,7 @@ async function sendMessage(driver, body, clientMessageId) {
   try {
     getIO()
       .to(rooms.admins())
-      .emit('driver:message', { id: message.id, senderId: driver.userId, driverId: driver.id, body, sentAt: message.sentAt });
+      .emit('driver:message', { id: message.id, senderId: driver.userId, driverId: driver.id, senderName: driver.user?.fullName ?? null, body, sentAt: message.sentAt });
   } catch (err) {
     logger.warn({ err }, 'Failed to broadcast driver:message');
   }
@@ -323,7 +322,6 @@ module.exports = {
   updateLocation,
   setStatus,
   upsertVehicle,
-  setDistrict,
   getHistory,
   getMessages,
   markChatRead,

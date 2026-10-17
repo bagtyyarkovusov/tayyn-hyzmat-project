@@ -18,7 +18,7 @@ const ROTATION_GRACE_MS = 60 * 1000;
 function sanitizeUser(user) {
   if (!user) return null;
   const { passwordHash, ...rest } = user;
-  return rest;
+  return { ...rest, ...(rest.driver ? { driver: require('../driver/public-profile').publicDriverProfile(rest.driver) } : {}) };
 }
 
 // Registers a new DRIVER account. Client/admin creation are intentionally
@@ -96,6 +96,7 @@ async function issueTokenPair(user, db = prisma, deviceId, deviceVersion) {
 async function revokeSessionGeneration(tx, userId) {
   await tx.user.update({ where: { id: userId }, data: { credentialVersion: { increment: 1 } } });
   await tx.refreshToken.updateMany({ where: { userId }, data: { revokedAt: new Date(0) } });
+  await tx.notificationInstallation.updateMany({ where: { driver: { userId } }, data: { secretHash: null, token: null, coordinatorEnabled: false } });
   await tx.$executeRaw`UPDATE native_shift_leases SET revoked_at = NOW() WHERE driver_id IN (SELECT id FROM drivers WHERE user_id = ${userId}) AND revoked_at IS NULL`;
   await tx.driver.updateMany({ where: { userId }, data: { isOnline: false, shiftDeviceId: null } });
 }
@@ -140,7 +141,7 @@ async function login({ phone, password, deviceId, deviceLabel }) {
       throw ApiError.unauthorized('Данные входа изменены. Войдите снова');
     }
     if (user.status === 'BLOCKED') throw ApiError.forbidden('Ваш аккаунт заблокирован');
-    let approvedDevice;
+    let installation;
     if (user.role === 'DRIVER') {
       if (!user.driver) throw ApiError.notFound('Профиль водителя не найден');
       if (user.driver.status !== 'APPROVED') throw ApiError.forbidden(
@@ -148,28 +149,16 @@ async function login({ phone, password, deviceId, deviceLabel }) {
         { status: user.driver.status }
       );
       if (!deviceId) throw ApiError.badRequest('Для входа водителя требуется идентификатор устройства');
-      const first = !user.driver.currentDeviceId;
-      const active = user.driver.currentDeviceId === deviceId;
-      const known = !active && Boolean(await tx.driverDevice.findUnique({ where: { driverId_deviceId: { driverId: user.driver.id, deviceId } } }));
-      if (!first && !active && !known) {
-        await tx.driver.update({ where: { id: user.driver.id }, data: { pendingDeviceId: deviceId, pendingDeviceLabel: deviceLabel || null, pendingDeviceRequestedAt: new Date() } });
-        // Commit the approval request; throwing inside the transaction loses it.
-        return { pending: true };
-      }
-      if (first) await tx.driver.update({ where: { id: user.driver.id }, data: {
-        currentDeviceId: deviceId, currentDeviceLabel: deviceLabel || null
-      } });
-      approvedDevice = await tx.driverDevice.upsert({
+      installation = await tx.driverDevice.upsert({
         where: { driverId_deviceId: { driverId: user.driver.id, deviceId } },
         update: { lastLoginAt: new Date(), ...(deviceLabel ? { label: deviceLabel } : {}) },
         create: { driverId: user.driver.id, deviceId, label: deviceLabel || null }
       });
     }
-    const pair = await issueTokenPair(user, tx, approvedDevice?.deviceId, approvedDevice?.sessionVersion);
+    const pair = await issueTokenPair(user, tx, installation?.deviceId, installation?.sessionVersion);
     await tx.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
     return { ...pair, user: sanitizeUser(user) };
   });
-  if (result.pending) throw ApiError.forbidden('Вход с этого устройства требует подтверждения администратора. Заявка отправлена.', { code: 'DEVICE_APPROVAL_PENDING' });
   return result;
 }
 

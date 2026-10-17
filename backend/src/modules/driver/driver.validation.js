@@ -11,11 +11,8 @@ const locationSchema = z.object({
 
 const statusSchema = z.object({
   isOnline: z.boolean().optional(),
-  isAvailable: z.boolean().optional()
-});
-
-const districtSchema = z.object({
-  districtId: z.string().uuid('Некорректный идентификатор района')
+  isAvailable: z.boolean().optional(),
+  position: locationSchema.extend({ capturedAt: z.number().int().positive() }).optional()
 });
 
 const sendMessageSchema = z.object({
@@ -38,7 +35,6 @@ const pushTokenSchema = z.object({
 module.exports = {
   locationSchema,
   statusSchema,
-  districtSchema,
   sendMessageSchema,
   messagesQuerySchema,
   pushTokenSchema,

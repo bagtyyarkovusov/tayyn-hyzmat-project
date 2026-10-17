@@ -14,12 +14,12 @@ stateDiagram-v2
   GPS_ready --> GPS_stale: fix expires
   GPS_stale --> GPS_ready: new local fix
   GPS_ready --> Connecting: driver taps Online
-  Connecting --> Online: API, Socket.IO, and first report confirmed
+  Connecting --> Online: fresh fix and ownership accepted atomically
   Connecting --> Offline: no network or server confirmation
   Online --> Reconnecting: network or GPS interruption
   Reconnecting --> Online: lease and fresh report restored
   Reconnecting --> Offline: 60-second lease expires
-  Online --> Offline: driver taps Offline, logout, force-close
+  Online --> Offline: driver taps Offline or logs out
   Offline --> GPS_ready: local GPS remains enabled
 ```
 
@@ -137,7 +137,7 @@ sequenceDiagram
   participant S as Server
   participant N as Notification channel
 
-  U->>A: Grant location and notification permissions
+  U->>A: Grant precise location; notifications are optional
   U->>A: Tap Online in visible app
   A->>S: Fresh GPS and start shift
   S-->>A: 60-second lease
@@ -148,9 +148,71 @@ sequenceDiagram
   alt network loss
     A->>S: Retry
     S-->>A: Lease expires after 60s if no accepted report
-  else logout, force-close, task swipe
+  else explicit Offline or logout
     A->>S: End shift when possible
   end
 ```
 
+Swiping the task away preserves the shift. Android Force stop blocks delivery until reopening; without reports the lease expires. After failed 60-second recovery, the driver must tap Online again. Notification permission never gates the shift.
+
 The server deadline is authoritative. Doze, battery saver, or manufacturer limits can delay a notification and must be tested on a physical Infinix Android 14 phone.
+
+## Chat on signed-in devices
+
+```mermaid
+flowchart TD
+  M[Message saved on server] --> S[Socket.IO to signed-in devices]
+  S --> V{Conversation visible?}
+  V -- yes --> Q[Update quietly and acknowledge read]
+  V -- no --> P[Show preview outside chat]
+  M --> F[FCM fallback for missed or background delivery]
+  F --> C[Fetch current event and check notification preference]
+  C --> N[Show valid alert; deduplicate by event ID]
+  Q --> R[Clear corresponding unread alerts across devices]
+```
+
+Chat does not require GPS or an active shift. Profile has one notification switch; it does not block shift start. Android permission and network or battery restrictions still apply.
+
+## Account approval and one shift owner
+
+The candidate keeps account approval and removes separate device approval.
+
+```mermaid
+flowchart TD
+  A[Approved driver signs in on phone B] --> B{Phone A owns active shift?}
+  B -- yes --> C[Allow chat and viewing; block second shift]
+  B -- no --> D[Phone B may request Online with fresh GPS and connection]
+  C --> E[Wait for A Offline, logout or 60-second expiry]
+  E --> D
+  F[Dispatcher: Sign out everywhere] --> G[Revoke all sessions and end shift]
+  G --> H[Keep assigned trip, password and balance]
+```
+
+For a lost phone, reset the password too. Signing out alone does not prevent a new login with the same password.
+
+## Account access and local location
+
+```mermaid
+flowchart TD
+  A[Approved account signs in on any phone] --> B[Off-shift GPS stays on that phone]
+  B --> C[Tap Online with fresh fix]
+  C --> D{Another phone owns shift?}
+  D -- yes --> E[Reject start; preserve working phone]
+  D -- no --> F[Atomically save GPS and grant shift]
+  F --> G[Only owner reports positions]
+  G --> H[Explicit Offline stops reporting; trip stays assigned]
+```
+
+```mermaid
+flowchart TD
+  A[Dispatcher account action] --> S[Sign out everywhere]
+  S --> P[End sessions and shift; preserve trip/password/balance]
+  A --> B[Temporary Block with reason]
+  B --> C[Revoke access immediately; preserve assigned trip]
+  C --> U[Unblock permits new login]
+  A --> D{Delete account: unfinished trip?}
+  D -- yes --> R[Refuse; resolve trip first]
+  D -- no --> X[Remove access permanently; retain old records]
+  X --> N[Same phone may make new application]
+  N --> Q[New approval; zero balance; separate history]
+```

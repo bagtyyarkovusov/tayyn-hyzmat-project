@@ -20,7 +20,34 @@ export function geocoderConfig() {
     cacheSeconds > 300
   )
     return null;
-  return { key, dailyLimit, timezone, resetHour, cacheSeconds };
+  let referer: string | undefined;
+  const configuredReferer = process.env.YANDEX_GEOCODER_REFERER;
+  if (configuredReferer) {
+    try {
+      // This comes only from server configuration, never the caller's
+      // Referer header. Allow an HTTPS origin and an optional final slash;
+      // reject credentials, paths and control characters before forwarding.
+      if (
+        !/^https:\/\//i.test(configuredReferer) ||
+        /[\s\\?#@]/.test(configuredReferer)
+      )
+        return null;
+      const url = new URL(configuredReferer);
+      if (
+        url.protocol !== 'https:' ||
+        url.username ||
+        url.password ||
+        url.pathname !== '/' ||
+        url.search ||
+        url.hash
+      )
+        return null;
+      referer = `${url.origin}/`;
+    } catch {
+      return null;
+    }
+  }
+  return { key, dailyLimit, timezone, resetHour, cacheSeconds, referer };
 }
 export class GeocoderFailure extends Error {
   constructor(public readonly status: number = 0) {
@@ -30,6 +57,7 @@ export class GeocoderFailure extends Error {
 export async function reverseAddress(
   position: { lat: number; lng: number },
   key: string,
+  referer?: string,
 ): Promise<string | null> {
   const params = new URLSearchParams({
     apikey: key,
@@ -40,7 +68,10 @@ export async function reverseAddress(
   });
   const response = await fetch(
     `https://geocode-maps.yandex.ru/1.x/?${params}`,
-    { signal: AbortSignal.timeout(4000) },
+    {
+      signal: AbortSignal.timeout(4000),
+      ...(referer ? { headers: { Referer: referer } } : {}),
+    },
   );
   if (!response.ok) throw new GeocoderFailure(response.status);
   const body = await response.json();

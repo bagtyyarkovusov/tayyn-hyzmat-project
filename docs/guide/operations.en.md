@@ -4,9 +4,11 @@ This guide describes the driver app, dispatcher dashboard, and the rules they sh
 
 ## Roles and access
 
-A dispatcher signs in with the fixed `+993` phone format and password. A driver uses the same format. The dispatcher creates or edits driver credentials; drivers do not receive or display an existing password. A phone or password reset revokes the old access and takes that driver offline. The driver keeps their approved device, balance, and active trip, then signs in again.
+A dispatcher signs in with the fixed `+993` phone format and password. A driver uses the same format. The dispatcher creates or edits driver credentials; drivers do not receive or display an existing password. A phone or password reset revokes the old access and takes that driver offline. The driver keeps their balance and active trip, then signs in again.
 
-Driver login identifies the app installation or browser profile. A new device requires dispatcher approval. Several approved devices can stay signed in, but only one can work the driver's shift. Signing in on a second device leaves the working device connected. The second device can view the account and use chat; it cannot change the working device's location, shift or order progress. End the first shift before starting on the second device. Logout ends only that device's sessions and its own shift. Offline logout stops its local service; server availability expires with its lease. An accepted trip stays assigned to the driver.
+In the current candidate, dispatcher approval applies to the driver account. An approved account can sign in on any phone without separate device approval. Several phones can remain signed in and use chat, but exactly one owns the shift. A second phone cannot start a shift or change the working phone's location or trip progress until the owner goes Offline, logs out, or its 60-second availability expires. Signing in alone does not take over the shift. Device identifiers stay internal; there is no device-management screen. An accepted trip stays assigned to the account.
+
+The dispatcher can choose Sign out everywhere to revoke all sessions and end that driver's shift. This preserves the assigned trip, password and balance. If a phone is lost, reset the password as well: signing out does not prevent someone who knows the password from signing in again.
 
 The pilot has one dispatcher and synthetic driver accounts. It uses TMT only and no real payments. The development seed is not a production credential store. Keep production secrets outside the repository and Railway logs.
 
@@ -27,7 +29,7 @@ GPS, network, dispatcher connection, and availability are different facts:
 
 The Online action must confirm a fresh location with the server before it turns green. Address lookup never blocks this action. A stale or missing GPS report stops new offers and eventually expires the online lease. An accepted trip remains assigned while the driver reconnects.
 
-On Android, location and notification permissions are requested while the app is visible. During a shift the native service renews a 60-second server lease and polls the canonical order/chat inbox. Force-closing, swiping the task away, logout, or lease expiry ends availability. Doze and manufacturer battery rules can delay a notification, so physical-phone checks remain a release gate.
+In the current Android candidate, the shift service renews a 60-second server lease. Swiping the app from recent tasks does not end the shift. Explicit Offline or logout ends it. During a network interruption the app tries to recover on the same device for 60 seconds. If recovery fails, restore the connection and tap Online again. Accepted trips remain assigned. Android Force stop blocks delivery until the app is reopened; availability expires without fresh reports. Doze and manufacturer battery rules still require physical-phone verification.
 
 The merged readiness contract separates local GPS, dispatcher connection and shift availability. Canonical busy-driver availability (#94, `b21b4d0`) now overrides stale flags in status responses, monitoring lists and region counts. Offline stops recurring location uploads and keeps a timestamped last position. Foreground return checks Android permission and system GPS again. Hardware and background reliability still require the target-phone checks.
 
@@ -59,7 +61,7 @@ A driver needs a positive synthetic balance to go online or receive public work.
 
 Every dispatcher balance adjustment has a unique operation identifier. If the response is uncertain, retry the same unchanged action; the app reuses its identifier instead of adding money twice. An old dashboard tab that asks you to refresh must reload before adjusting balances. Check the current balance and history before starting a different adjustment.
 
-Removing a driver deactivates access and preserves their balance, ledger and order history. A driver with an active trip cannot be removed. Resolve that trip first.
+Deleting an account permanently removes access; there is no Reactivate action. Its old balance, ledger, messages and order history remain for records. Resolve all assigned trips first. The released phone can submit a new application, which needs dispatcher approval and starts with zero balance and no inherited history.
 
 ## Trip lifecycle
 
@@ -94,13 +96,19 @@ Manual completion confirms that the drive was provided. It is available for a st
 
 ## Notifications and chat
 
-The browser uses Socket.IO while the app is open and reconnects or reconciles state when it returns to the foreground. A closed browser cannot guarantee delivery. The Android test service polls a stable inbox every 10 seconds and uses separate order and chat notification channels. It hides customer phones and chat bodies on the lock screen. Notification taps open the relevant screen and the server remains the source of truth.
+The current Android candidate delivers chat alerts independently of shift and GPS to every signed-in installation of an approved account. Foreground events use Socket.IO; Firebase Cloud Messaging is the fallback for missed or background delivery. Alerts include a message preview, subject to Android lock-screen privacy settings. Dashboard, Map and Profile show incoming previews; the visible chat stays quiet. Reading synchronizes across devices and removes the corresponding alerts. Logout, account blocking and credential changes revoke the old installation access. A closed browser cannot guarantee background delivery. Android Force stop, network loss and battery restrictions can prevent or delay delivery. These paths still need verification on the target phone.
+
+Profile contains one notification control for both orders and chat. Muting notifications or denying Android notification permission never blocks starting a shift. To receive system alerts, enable both the Profile control and the Android permission. Dispatchers receive a banner, sender, preview and short sound in each signed-in dashboard tab outside the active conversation. Browser sound may require a prior tap or click.
 
 Chat has independent scrolling, draft preservation on a failed send, and automatic bottom-following only when the reader is already near the bottom. It recovers missed messages after reconnect, loads older history without gaps, and preserves unread messages when timestamps match. A retry reuses the same message identity to avoid sending a duplicate. Read acknowledgement runs only while the chat is visible. Routine refresh controls are replaced by live recovery and deliberate retry after failure (PR #87, `2935991`).
 
+## Profile order history
+
+Open Profile and expand a history entry to review its TMT price, status, region and date. Available details include pickup and destination, the customer phone with a call action, dispatcher notes, cancellation reason and lifecycle timestamps. Missing route details are left unspecified; contact the customer when needed. The order identifier helps the dispatcher find the same record. History describes an existing order and does not create a second charge or repeat its lifecycle actions.
+
 ## Driver addresses and the Yandex quota
 
-GPS and polygon matching decide eligibility. Address lookup only adds a street or building label. The server policy is merged in PR [#68](https://github.com/bagtyyarkovusov/tayyn-hyzmat-project/pull/68) (`cf8bf84`); provider activation and live configuration checks remain separate. It looks up a visible driver location no more than once per five minutes after meaningful movement, shares a daily cap across devices and restarts, keeps 20% in reserve, backs off on provider errors, and falls back to coordinates. A stale address is hidden when the driver moves. A provider failure or exhausted quota never blocks GPS or going online.
+GPS and polygon matching decide eligibility. Address lookup only adds a street or building label. The server policy is merged in PR [#68](https://github.com/bagtyyarkovusov/tayyn-hyzmat-project/pull/68) (`cf8bf84`); a direct live request now succeeds with the configured allowed Referer. Automatic lookups remain disabled until the daily quota reset period and timezone are confirmed. It looks up a visible driver location no more than once per five minutes after meaningful movement, shares a daily cap across devices and restarts, keeps 20% in reserve, backs off on provider errors, and falls back to coordinates. A stale address is hidden when the driver moves. A provider failure or exhausted quota never blocks GPS or going online.
 
 ## Analytics
 
@@ -123,3 +131,11 @@ Chat recovery (#87), shared address budgeting (#68), and consistent locking for 
 Readiness-state separation (#85, `2095f56`) and audience expansion (#79, `715b648`) are merged.
 
 Today analytics (#67) is merged. Pending: provider activation checks; physical Infinix Android 14 background/Doze verification; and release signing/update policy. The compact driver feed (#95) and canonical busy-driver availability (#94) are merged. The separate client-facing progress brief is linked from the guide index.
+
+## GPS on two phones and account safety
+
+Off shift, GPS only obtains a local fix on that phone. It does not upload coordinates or fetch an address. Each phone shows its own coordinates. Tap Online to submit the fresh fix and start the shift together; only the working phone then sends regular location reports. Another signed-in phone cannot overwrite that location. Explicit Offline stops reports even if a trip remains assigned. The dispatcher sees the last reported point and time, with an unfinished-trip warning where needed.
+
+Use **Выйти на всех устройствах** to end all sessions and the shift without changing the password, balance or assigned trip. Use **Заблокировать** for a temporary access restriction: enter a required reason, then confirm the warning. Access ends immediately even during a trip; the trip stays assigned with no automatic cancellation, reassignment or refund. Contact the driver and resolve the trip separately. **Разблокировать** permits a new login. **Удалить аккаунт** is permanent and has no recovery action; use Block when you intend a temporary restriction.
+
+Permanent account deletion preserves historical statistics and financial attribution. Clearing an isolated test environment is separate maintenance, never the ordinary Delete action.

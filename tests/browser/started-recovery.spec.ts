@@ -79,17 +79,18 @@ test("dispatcher completes a started drive with a reason and cannot select refun
   const driverHeaders = { Authorization: `Bearer ${driverToken}` };
   expect(
     (
-      await page.request.post(`${process.env.TEST_API_URL}/driver/location`, {
-        headers: driverHeaders,
-        data: { lat: 37.96, lng: 58.32, capturedAt: Date.now() },
-      })
-    ).ok(),
-  ).toBe(true);
-  expect(
-    (
       await page.request.post(`${process.env.TEST_API_URL}/driver/status`, {
         headers: driverHeaders,
-        data: { isOnline: true, isAvailable: true },
+        data: {
+          isOnline: true,
+          isAvailable: true,
+          position: {
+            lat: 37.96,
+            lng: 58.32,
+            capturedAt: Date.now(),
+            accuracy: 10,
+          },
+        },
       })
     ).ok(),
   ).toBe(true);

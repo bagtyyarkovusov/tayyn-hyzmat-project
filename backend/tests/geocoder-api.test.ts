@@ -36,6 +36,8 @@ async function request(path: string, token = '', body?: unknown) {
 }
 const originalFetch = globalThis.fetch;
 let providerRequests: URL[] = [];
+let providerHeaders: Headers[] = [];
+let requiredReferer: string | null = null;
 let providerStatus = 200;
 let providerHangs = false;
 globalThis.fetch = async (input, init) => {
@@ -43,6 +45,10 @@ globalThis.fetch = async (input, init) => {
   if (url.origin !== 'https://geocode-maps.yandex.ru')
     return originalFetch(input, init);
   providerRequests.push(url);
+  const headers = new Headers(init?.headers);
+  providerHeaders.push(headers);
+  if (requiredReferer && headers.get('referer') !== requiredReferer)
+    return new Response('', { status: 403 });
   if (providerHangs)
     return new Promise<Response>((_, reject) => {
       const signal = init?.signal;
@@ -79,12 +85,19 @@ globalThis.fetch = async (input, init) => {
 };
 beforeEach(async () => {
   providerRequests = [];
+  providerHeaders = [];
+  requiredReferer = null;
   providerStatus = 200;
   providerHangs = false;
   delete process.env.YANDEX_GEOCODER_CACHE_SECONDS;
   delete process.env.YANDEX_GEOCODER_API_KEY;
+  delete process.env.YANDEX_GEOCODER_REFERER;
   await prisma.driverAddressState.deleteMany();
   await prisma.geocoderBudget.deleteMany();
+  await prisma.driver.updateMany({
+    where: { user: { phone: { in: ['+99360000201', '+99360000202'] } } },
+    data: { isOnline: true, shiftDeviceId: 'synthetic-address-device', lastLocationAt: new Date() },
+  });
   if (driverId)
     await prisma.driver.update({
       where: { id: driverId },
@@ -165,6 +178,7 @@ test('a foreground address request uses the private HTTP credential and server G
   assert.equal(result.status, 200);
   assert.equal(result.data.address, 'Synthetic street, 12');
   assert.equal(providerRequests.length, 1);
+  assert.equal(providerHeaders[0].get('referer'), null);
   assert.equal(providerRequests[0].searchParams.get('geocode'), '58.32,37.96');
   assert.equal(
     providerRequests[0].searchParams.get('apikey'),
@@ -173,6 +187,72 @@ test('a foreground address request uses the private HTTP credential and server G
   assert.ok(
     !JSON.stringify(result.data).includes('synthetic-private-geocoder'),
   );
+});
+
+test('off-shift and non-owning phones never fetch an address for shared driver GPS', async () => {
+  process.env.YANDEX_GEOCODER_API_KEY = 'synthetic-private-geocoder';
+  process.env.YANDEX_GEOCODER_DAILY_LIMIT = '1000';
+  process.env.YANDEX_GEOCODER_QUOTA_TIMEZONE = 'UTC';
+  const path = `/geo/drivers/${driverId}/address`;
+  await prisma.driver.update({ where: { id: driverId }, data: { isOnline: false, shiftDeviceId: null } });
+  for (const token of [driverToken, adminToken]) {
+    const result = await request(path, token);
+    assert.equal(result.status, 200);
+    assert.equal(result.data.address, null);
+    assert.equal(result.data.position, null);
+    assert.equal(result.data.reason, 'off-shift');
+  }
+  assert.equal(providerRequests.length, 0);
+  await prisma.driver.update({ where: { id: driverId }, data: { isOnline: true, shiftDeviceId: 'another-phone' } });
+  const spectator = await request(path, driverToken);
+  assert.equal(spectator.status, 200);
+  assert.equal(spectator.data.reason, 'other-shift-device');
+  assert.equal(spectator.data.position, null);
+  assert.equal(providerRequests.length, 0);
+  const dispatcher = await request(path, adminToken);
+  assert.equal(dispatcher.data.address, 'Synthetic street, 12');
+  assert.equal(providerRequests.length, 1);
+});
+
+test('a domain-restricted geocoder resolves addresses with the configured HTTPS Referer origin', async () => {
+  process.env.YANDEX_GEOCODER_API_KEY = 'synthetic-private-geocoder';
+  process.env.YANDEX_GEOCODER_DAILY_LIMIT = '1000';
+  process.env.YANDEX_GEOCODER_QUOTA_TIMEZONE = 'UTC';
+  process.env.YANDEX_GEOCODER_REFERER = 'https://dispatch.example';
+  requiredReferer = 'https://dispatch.example/';
+  const result = await request(`/geo/drivers/${driverId}/address`, driverToken);
+  assert.equal(result.status, 200);
+  assert.equal(result.data.address, 'Synthetic street, 12');
+  assert.equal(result.data.reason, 'resolved');
+  assert.equal(providerHeaders[0].get('referer'), requiredReferer);
+});
+
+test('invalid geocoder Referer configuration falls back without calling the provider', async () => {
+  process.env.YANDEX_GEOCODER_API_KEY = 'synthetic-private-geocoder';
+  process.env.YANDEX_GEOCODER_DAILY_LIMIT = '1000';
+  process.env.YANDEX_GEOCODER_QUOTA_TIMEZONE = 'UTC';
+  for (const referer of [
+    'http://dispatch.example',
+    'https://user:password@dispatch.example',
+    'https://@dispatch.example',
+    'https://dispatch.example/path',
+    'https://dispatch.example/?key=unwanted',
+    'https://dispatch.example/#fragment',
+    'https://dispatch.example?',
+    'https://dispatch.example#',
+    'https://dispatch.example/\r\nX-Injected: value',
+    'https:dispatch.example',
+    'https://dispatch.example\\path',
+    'not-a-url',
+  ]) {
+    process.env.YANDEX_GEOCODER_REFERER = referer;
+    const result = await request(`/geo/drivers/${driverId}/address`, driverToken);
+    assert.equal(result.status, 200);
+    assert.equal(result.data.address, null);
+    assert.equal(result.data.reason, 'unconfigured');
+    assert.deepEqual(result.data.position, { lat: 37.96, lng: 58.32 });
+  }
+  assert.equal(providerRequests.length, 0);
 });
 
 test('driver and dispatcher share the same five-minute gate even after movement and concurrent requests', async () => {
@@ -310,7 +390,7 @@ test('a provider 403 opens a fleet circuit breaker, consumes its attempt and nev
     update: { amount: 500 },
   });
   assert.equal(
-    (await request('/driver/status', driverToken, { isOnline: true })).status,
+    (await request('/driver/status', driverToken, { isOnline: true, position: { lat: 37.96, lng: 58.32, capturedAt: Date.now() } })).status,
     200,
   );
 });

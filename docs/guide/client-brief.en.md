@@ -1,7 +1,11 @@
 # Tayyn Hyzmat progress brief
 
-The dispatcher and driver apps now have a clearer, simpler design. Dispatchers create orders with a phone number, region and TMT price, choose a driver on the map, and send a private offer or publish to the regional queue. After 20 seconds, an unanswered order can open to all regions. Drivers always choose whether to accept.
+The dispatcher and driver apps now have a clearer, simpler design. Dispatchers create orders with a phone number, region and TMT price, choose a driver on the map, and send a private offer or publish to all regions immediately. Only drivers in the chosen region receive the incoming public popup. An unanswered private offer can open to all regions after 20 seconds if the dispatcher allows it. Drivers always choose whether to accept.
 
 We added driver account management, live region counts, balance checks, chat recovery and a recorded way for dispatchers to close a trip left unfinished. GPS determines the region; an unavailable street address never blocks work. Existing region boundaries are preserved.
 
 The main workflows have automated checks. Live driver availability, compact trip controls, daily figures and financial safeguards are included. A larger order map makes pickup selection easier. Cancellation and completion now follow different rules: a started trip is completed with a recorded reason rather than cancelled and refunded. Account session and device protections are now merged and covered by the release checks. Before release, we must verify the fresh APK on the Infinix Android 14 phone, including locked-screen alerts and interrupted connections. Balances remain for testing; real payments are disabled.
+
+The new APK candidate adds message previews outside chat, background chat delivery independent of shift, and detailed driver order history with route, customer phone and trip stages when available. Swiping away the app preserves the shift. These changes still require physical-phone verification.
+
+Approved drivers can sign in on several phones without separate device permission, while only one phone works the shift. Off-shift GPS stays on the phone. Dispatchers can sign out all sessions, block access temporarily with a reason, or permanently delete access while retaining historical records. A new application with a released number starts fresh and needs approval.

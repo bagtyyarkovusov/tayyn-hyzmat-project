@@ -12,6 +12,7 @@ import { hasFreshGps } from '../driver/gps-eligibility';
 export interface AddressActor {
   role: string;
   driverId?: string;
+  deviceId?: string;
 }
 export async function driverAddress(actor: AddressActor, driverId: string) {
   if (
@@ -27,6 +28,12 @@ export async function driverAddress(actor: AddressActor, driverId: string) {
   if (!driver) throw ApiError.notFound('Водитель не найден');
   if (driver.status !== 'APPROVED' || driver.user.status !== 'ACTIVE')
     throw ApiError.forbidden();
+  // Off-shift fixes belong to each installation. Never reverse-geocode a
+  // different phone's last shift position or spend quota for offline tracking.
+  if (!driver.isOnline)
+    return { address: null, position: null, reason: 'off-shift' };
+  if (actor.role === 'DRIVER' && driver.shiftDeviceId !== actor.deviceId)
+    return { address: null, position: null, reason: 'other-shift-device' };
   const position = hasFreshGps(driver)
     ? { lat: Number(driver.lastLat), lng: Number(driver.lastLng) }
     : null;
@@ -101,7 +108,7 @@ export async function driverAddress(actor: AddressActor, driverId: string) {
   if (typeof reserved === 'string')
     return { address: null, position, reason: reserved };
   try {
-    const address = await reverseAddress(position, config.key);
+    const address = await reverseAddress(position, config.key, config.referer);
     if (address && config.cacheSeconds > 0)
       await prisma.driverAddressState.update({
         where: { driverId },

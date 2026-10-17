@@ -14,4 +14,6 @@ These guides explain the current dispatcher and driver workflows in plain langua
 
 The guides track the workflows in this repository. Deployed behavior depends on the installed APK and deployed backend release. A section named **Pending** means the behavior is planned or under review and is not a promise about the deployed build. The canonical region polygons live in [`docs/regions.md`](../regions.md). Development and release checks live in [`docs/development.md`](../development.md), [`docs/testing.md`](../testing.md), and [`docs/android.md`](../android.md).
 
-The client HTML/PDF editions contain eight pages per language, including a separate explanation of cancellation and completion. Keep both exports synchronized when operating rules change. Their diagrams are rendered inside the document and do not need an external diagram service.
+The client HTML/PDF editions contain eleven pages per language, including a separate explanation of cancellation and completion. Keep both exports synchronized when operating rules change. Their diagrams are rendered inside the document and do not need an external diagram service.
+
+The current candidate adds pages for profile history, notification settings and account/shift access. Android background delivery still needs target-phone verification; automatic Yandex address lookup remains disabled until the quota reset period is confirmed.

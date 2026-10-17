@@ -28,13 +28,17 @@ const postLocation = asyncHandler(async (req, res) => {
 
 const postStatus = asyncHandler(async (req, res) => {
   const updated = await service.setStatus(req.driver, req.body, req.user.credentialVersion);
-  res.json({ driverId: updated.id, isOnline: updated.isOnline, isAvailable: updated.isAvailable });
+  res.json({ driverId: updated.id, isOnline: updated.isOnline, isAvailable: updated.isAvailable, districtId: updated.districtId, lastLat: updated.lastLat, lastLng: updated.lastLng, lastLocationAt: updated.lastLocationAt });
 });
 
-const postDistrict = asyncHandler(async (req, res) => {
-  const updated = await service.setDistrict(req.driver, req.body.districtId);
-  res.json(updated);
-});
+// Retain the authenticated endpoint for old clients without accepting a
+// manual region override. Fresh shift GPS is the only region authority.
+const postDistrict = (req, res) => {
+  res.status(410).json({
+    message: 'Район определяется по GPS при выходе на линию',
+    details: { code: 'GPS_DERIVED_REGION' }
+  });
+};
 
 const getHistory = asyncHandler(async (req, res) => {
   const result = await service.getHistory(req.driver, req.query);

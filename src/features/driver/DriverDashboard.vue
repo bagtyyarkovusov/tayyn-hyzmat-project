@@ -1,13 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useDocumentVisibility, useOnline } from "@vueuse/core";
 import {
   MapPin,
   LocateFixed,
   Power,
-  Bell,
-  BellRing,
-  BellOff,
   Check,
   MapPinOff,
   LoaderCircle,
@@ -22,7 +19,6 @@ import {
 } from "@/shared/ui/dialog";
 import { useDriver, canControlShift } from "./useDriver";
 import { useDriverAddress } from "./useDriverAddress";
-import { alertState, enableOrderAlerts, syncAlertPermission } from "./alerts";
 import { nativeAndroid } from "./nativeShift";
 import { money } from "./model";
 import IncomingOrder from "./components/IncomingOrder.vue";
@@ -41,7 +37,7 @@ const {
 const address = useDriverAddress(
   () => state.position,
   () => state.profile?.id,
-  () => state.gpsReady,
+  () => state.gpsReady && !!state.profile?.isOnline && canControlShift(),
 );
 function closeIncoming() {
   if (state.incoming?.privateOfferExpiresAt) void declinePrivateOffer();
@@ -60,13 +56,17 @@ const connectionReady = computed(
 const localFixFresh = computed(
   () => state.gpsFixReady && state.clock - state.locationUpdatedAt < 60_000,
 );
+// GPS is a device capability. It stays green while the phone has a fresh
+// local fix, even when the dispatcher connection is down. Server acknowledgement
+// remains a separate requirement for starting a shift and claiming an order.
+const gpsStatusReady = computed(() => localFixFresh.value);
 const locationReady = computed(
   () => localFixFresh.value && state.gpsReady && connectionReady.value,
 );
 const locationState = computed(() => {
   if (state.gpsPending) return "pending";
   if (!state.gpsFixReady && state.gpsError) return "blocked";
-  if (locationReady.value) return "ready";
+  if (gpsStatusReady.value) return "ready";
   if (state.gpsFixReady || state.locationSyncPending) return "connecting";
   return "inactive";
 });
@@ -85,33 +85,20 @@ const availabilityDescription = computed(() =>
           ? "Нет актуального GPS."
           : "На линии. Связь с диспетчером установлена.",
 );
-const alertsReady = computed(
-  () => alertState.permission === "granted" && alertState.soundReady,
-);
-const alertDescription = computed(() => {
-  if (alertState.pending) return "Включаем уведомления и звук…";
-  if (alertState.permission === "denied")
-    return nativeAndroid
-      ? "Разрешите уведомления о заказах и сообщениях в настройках приложения."
-      : "Уведомления заблокированы. Разрешите их в настройках браузера.";
-  if (alertState.permission === "unsupported")
-    return "Системные уведомления недоступны в этом браузере.";
-  if (alertState.permission === "granted")
-    return alertState.soundReady
-      ? "Уведомления разрешены. Звук включён."
-      : "Уведомления разрешены. Нажмите, чтобы включить звук.";
-  return "Нажмите, чтобы разрешить уведомления и включить звук.";
-});
 const gpsDescription = computed(() =>
   state.gpsPending
     ? "Получаем местоположение…"
-    : locationReady.value
-      ? "GPS и связь с диспетчером подтверждены."
+    : gpsStatusReady.value
+      ? !state.profile?.isOnline || shiftElsewhere.value
+        ? "GPS работает. Координаты этого телефона не передаются вне смены."
+        : locationReady.value
+          ? "GPS и связь с диспетчером подтверждены."
+          : !networkOnline.value
+            ? "GPS работает. Нет интернета, пытаемся подключиться…"
+            : state.locationSyncError ||
+              "GPS работает. Ожидаем связь с диспетчером…"
       : state.gpsFixReady
-        ? !localFixFresh.value
-          ? "Последнее положение устарело. Нажмите GPS, чтобы обновить."
-          : state.locationSyncError ||
-            "GPS работает. Ожидаем связь с диспетчером…"
+        ? "Последнее положение устарело. Нажмите GPS, чтобы обновить."
         : state.gpsError || "GPS не включён. Нажмите, чтобы включить.",
 );
 const lastLocationDescription = computed(() =>
@@ -122,28 +109,6 @@ const lastLocationDescription = computed(() =>
       })
     : "",
 );
-let permissionStatus: PermissionStatus | undefined;
-let disposed = false;
-onMounted(async () => {
-  syncAlertPermission();
-  window.addEventListener("focus", syncAlertPermission);
-  try {
-    const status = await navigator.permissions.query({ name: "notifications" });
-    if (disposed) return;
-    permissionStatus = status;
-    status.addEventListener("change", syncAlertPermission);
-  } catch {
-    /* Some mobile browsers do not expose notification permission queries. */
-  }
-});
-onUnmounted(() => {
-  disposed = true;
-  window.removeEventListener("focus", syncAlertPermission);
-  permissionStatus?.removeEventListener("change", syncAlertPermission);
-});
-watch(visibility, () => {
-  if (visibility.value === "visible") syncAlertPermission();
-});
 const availabilityPulse = ref(false);
 watch(
   () => state.profile?.isOnline,
@@ -245,7 +210,7 @@ watch(
               :data-state="locationState"
               :aria-description="gpsDescription"
               :title="gpsDescription"
-              :disabled="!state.profile || state.gpsPending || shiftElsewhere"
+              :disabled="!state.profile || state.gpsPending"
               aria-label="Включить GPS"
               @click="enableGps"
             >
@@ -262,59 +227,6 @@ watch(
               <LocateFixed v-else class="size-5" aria-hidden="true" />
               <Check
                 v-if="locationState === 'ready'"
-                class="absolute bottom-1 right-1 size-3 rounded-full bg-background"
-                aria-hidden="true"
-              />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              class="relative size-11 rounded-full"
-              :class="
-                alertsReady
-                  ? 'bg-success/10 text-success'
-                  : alertState.permission === 'denied' ||
-                      alertState.permission === 'unsupported'
-                    ? 'text-destructive'
-                    : 'text-muted-foreground'
-              "
-              :data-state="
-                alertState.pending
-                  ? 'pending'
-                  : alertsReady
-                    ? 'ready'
-                    : alertState.permission === 'denied' ||
-                        alertState.permission === 'unsupported'
-                      ? 'blocked'
-                      : 'inactive'
-              "
-              :disabled="alertState.pending"
-              :aria-description="alertDescription"
-              :title="alertDescription"
-              aria-label="Включить уведомления и звук"
-              @click="enableOrderAlerts"
-            >
-              <LoaderCircle
-                v-if="alertState.pending"
-                class="size-5 motion-safe:animate-spin"
-                aria-hidden="true"
-              />
-              <BellRing
-                v-else-if="alertsReady"
-                class="size-5"
-                aria-hidden="true"
-              />
-              <BellOff
-                v-else-if="
-                  alertState.permission === 'denied' ||
-                  alertState.permission === 'unsupported'
-                "
-                class="size-5"
-                aria-hidden="true"
-              />
-              <Bell v-else class="size-5" aria-hidden="true" />
-              <Check
-                v-if="alertsReady"
                 class="absolute bottom-1 right-1 size-3 rounded-full bg-background"
                 aria-hidden="true"
               />
@@ -384,9 +296,11 @@ watch(
             <span class="truncate">{{
               locationReady
                 ? ownRegion
-                : state.position
-                  ? "Последнее положение"
-                  : "Ожидаем GPS"
+                : localFixFresh
+                  ? "GPS этого телефона"
+                  : state.position
+                    ? "Последнее положение"
+                    : "Ожидаем GPS"
             }}</span>
             <span
               v-if="state.position"

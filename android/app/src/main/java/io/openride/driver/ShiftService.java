@@ -27,7 +27,7 @@ public final class ShiftService extends Service {
   private static final int SHIFT_ID = 1;
   private static volatile ShiftService instance;
   private static volatile String phase = "off", detail = "";
-  private static volatile long lastReportAt, stopSequence;
+  private static volatile long lastReportAt, lastFixAt, stopSequence;
   private static volatile double latitude, longitude, accuracy;
   private String apiBase, token;
   private static volatile String userId = "";
@@ -43,6 +43,10 @@ public final class ShiftService extends Service {
         @Override
         public void onLocationChanged(Location location) {
           latest = location;
+          lastFixAt = System.currentTimeMillis();
+          latitude = location.getLatitude();
+          longitude = location.getLongitude();
+          accuracy = location.getAccuracy();
         }
 
         @Override
@@ -88,6 +92,7 @@ public final class ShiftService extends Service {
           .put("phase", phase)
           .put("detail", detail)
           .put("lastReportAt", lastReportAt)
+          .put("lastFixAt", lastFixAt)
           .put("stopSequence", stopSequence)
           .put("lat", latitude)
           .put("lng", longitude)
@@ -209,7 +214,7 @@ public final class ShiftService extends Service {
             LocationManager.NETWORK_PROVIDER, 10000, 0, listener, Looper.getMainLooper());
       worker.scheduleWithFixedDelay(this::tick, 0, 10, TimeUnit.SECONDS);
     } catch (RuntimeException error) {
-      finishShift("Разрешите точный GPS и уведомления в настройках приложения.");
+      finishShift("Разрешите точный GPS в настройках приложения.");
     }
     return START_NOT_STICKY;
   }
@@ -225,7 +230,7 @@ public final class ShiftService extends Service {
                   null,
                   getMainExecutor(),
                   location -> {
-                    if (location != null) latest = location;
+                    if (location != null) listener.onLocationChanged(location);
                   });
             else
               locations.requestSingleUpdate(
@@ -243,10 +248,6 @@ public final class ShiftService extends Service {
       finishShift("Связь потеряна. Включите линию снова.");
       return;
     }
-    if (!channelEnabled(this, ORDER_CHANNEL) || !channelEnabled(this, CHAT_CHANNEL)) {
-      finishShift("Включите уведомления о заказах и сообщениях в настройках.");
-      return;
-    }
     requestFreshLocation();
     Location fix = latest;
     if (fix == null
@@ -262,13 +263,16 @@ public final class ShiftService extends Service {
               .put("lng", fix.getLongitude())
               .put("accuracy", fix.getAccuracy())
               .put("recordedAt", iso(fix.getTime()));
+      long requestStarted = SystemClock.elapsedRealtime();
       JSONObject response = request("/native-shift/tick", payload);
+      long requestElapsed = Math.max(0L, SystemClock.elapsedRealtime() - requestStarted);
       if (closing) return;
       long serverTime = parseIso(response.getString("serverTime"));
       leaseDeadline =
           SystemClock.elapsedRealtime()
-              + parseIso(response.getString("leaseExpiresAt"))
-              - serverTime;
+              + NotificationDelivery.expiryFromServerTime(
+                  parseIso(response.getString("leaseExpiresAt")), serverTime,
+                  0L, requestElapsed);
       lastReportAt = System.currentTimeMillis();
       latitude = fix.getLatitude();
       longitude = fix.getLongitude();
@@ -279,7 +283,8 @@ public final class ShiftService extends Service {
       List<NotificationInbox.Event> events = new ArrayList<>();
       for (int i = 0; i < raw.length(); i++) {
         JSONObject event = raw.getJSONObject(i);
-        long expires = now + parseIso(event.getString("expiresAt")) - serverTime;
+        long expires = NotificationDelivery.expiryFromServerTime(
+            parseIso(event.getString("expiresAt")), serverTime, now, requestElapsed);
         events.add(
             new NotificationInbox.Event(
                 event.getString("id"),
@@ -288,7 +293,17 @@ public final class ShiftService extends Service {
                 event.getString("body"),
                 expires));
       }
-      inbox.reconcile(events, now);
+      if (PushNotificationService.configured(this)) {
+        // The canonical coordinator is the sole renderer once the signed
+        // installation capability exists. Polling remains a catch-up trigger
+        // for devices where Socket.IO/FCM was unavailable.
+        for (NotificationInbox.Event event : events)
+          PushNotificationService.execute(() -> PushNotificationService.deliver(this, event.id));
+      } else {
+        // Legacy isolated APKs without Firebase configuration retain the
+        // server inbox renderer until they are configured.
+        inbox.reconcile(events, now);
+      }
     } catch (RejectedShift error) {
       finishShift("Смена завершена сервером. Войдите или включите линию снова.");
     } catch (Exception error) {
@@ -348,7 +363,8 @@ public final class ShiftService extends Service {
 
   @Override
   public void onTaskRemoved(Intent rootIntent) {
-    finishShift("");
+    // Removing the task is not the driver's explicit Offline action. The
+    // location foreground service keeps its server lease until stopped.
     super.onTaskRemoved(rootIntent);
   }
 

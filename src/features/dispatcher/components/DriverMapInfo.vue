@@ -6,6 +6,8 @@ function locationLabel(driver: Driver, now: number) {
     return "Координат пока нет";
   const timestamp = Date.parse(driver.lastLocationAt ?? "");
   if (!Number.isFinite(timestamp)) return "Время координат неизвестно";
+  if (!driver.isOnline)
+    return "Последнее местоположение · обновление остановлено";
   return now - timestamp > 60_000
     ? "Координаты устарели"
     : "Координаты обновлены";
@@ -26,8 +28,13 @@ function locationLabel(driver: Driver, now: number) {
     </p>
     <p>{{ driver.district?.name || "Район не определён" }}</p>
     <p>
-      {{ driver.isOnline ? "На линии" : "Не в сети" }} ·
-      {{ driver.isAvailable ? "Свободен" : "Занят" }}
+      {{ driver.isOnline ? "На линии" : "Не в сети" }}
+      <template v-if="driver.hasActiveTrip">
+        · {{ driver.isOnline ? "В поездке" : "Поездка не завершена" }}
+      </template>
+      <template v-else-if="driver.isOnline">
+        · {{ driver.isAvailable ? "Свободен" : "Занят" }}
+      </template>
     </p>
     <p class="text-xs text-muted-foreground">
       {{ locationLabel(driver, now) }}

@@ -25,6 +25,12 @@ export interface Order {
   note?: string | null;
   etaMinutes?: number;
   createdAt: string;
+  acceptedAt?: string | null;
+  arrivedAt?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  cancelledAt?: string | null;
+  cancelReason?: string | null;
   privateOfferExpiresAt?: string | null;
   privateOfferRemainingMs?: number;
   districtId?: string | null;
@@ -41,8 +47,6 @@ export interface DriverProfile {
   isOnline: boolean;
   isAvailable: boolean;
   canControlShift?: boolean;
-  activeShiftDeviceLabel?: string | null;
-  shiftDeviceId?: string | null;
   lastLat?: Money | null;
   lastLng?: Money | null;
   user: { id: string; fullName: string; phone: string };
