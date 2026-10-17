@@ -1,7 +1,9 @@
 import { test, expect, type Page } from "@playwright/test";
+import { isolateBrowserClient } from "./helpers/device-session";
 if (process.env.DISPOSABLE_BROWSER_TEST !== "true")
   throw new Error("Use disposable browser runner");
 async function login(page: Page, phone = "60000101") {
+  await isolateBrowserClient(page.context());
   await page.getByLabel("Номер телефона").fill(phone);
   await page
     .getByLabel("Пароль", { exact: true })

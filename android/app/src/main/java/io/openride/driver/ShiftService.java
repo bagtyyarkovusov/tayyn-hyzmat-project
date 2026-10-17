@@ -32,7 +32,7 @@ public final class ShiftService extends Service {
   private String apiBase, token;
   private static volatile String userId = "";
   private volatile boolean closing;
-  private long leaseDeadline;
+  private volatile long leaseDeadline;
   private final Handler main = new Handler(Looper.getMainLooper());
   private final ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor();
   private LocationManager locations;
@@ -85,6 +85,7 @@ public final class ShiftService extends Service {
   public static JSONObject status(Context context) {
     createChannels(context);
     JSONObject result = new JSONObject();
+    ShiftService service = instance;
     try {
       result
           .put("running", instance != null)
@@ -92,6 +93,7 @@ public final class ShiftService extends Service {
           .put("phase", phase)
           .put("detail", detail)
           .put("lastReportAt", lastReportAt)
+          .put("leaseRemainingMs", service == null ? 0L : Math.max(0L, service.leaseDeadline - SystemClock.elapsedRealtime()))
           .put("lastFixAt", lastFixAt)
           .put("stopSequence", stopSequence)
           .put("lat", latitude)

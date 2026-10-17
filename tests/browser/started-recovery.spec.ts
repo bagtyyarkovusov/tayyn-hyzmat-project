@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { isolateBrowserClient } from "./helpers/device-session";
 import { createRequire } from "node:module";
 const require = createRequire(
   new URL("../../backend/package.json", import.meta.url),
@@ -24,6 +25,7 @@ if (process.env.DISPOSABLE_BROWSER_TEST !== "true")
 test("dispatcher completes a started drive with a reason and cannot select refund cancellation", async ({
   page,
 }) => {
+  await isolateBrowserClient(page.context());
   await page.goto("/adminLogin");
   await page.getByLabel("Номер телефона").fill("60000000");
   await page

@@ -6,7 +6,9 @@ export interface District {
   name: string;
   centerLat?: Money;
   centerLng?: Money;
+  boundary?: number[][][] | null;
   activeOrders: number;
+  publicAvailableOrders: number;
   freeDrivers: number;
   onlineDrivers?: number;
 }

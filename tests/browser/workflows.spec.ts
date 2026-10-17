@@ -1777,6 +1777,7 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
       nativeStatusHeld?: boolean;
       releaseNativeStatus?: () => void;
       nativeFixAt?: number;
+      syntheticConnectionStatus?: Record<string, unknown>;
     };
     bridge.holdNativePermission = holdPermission;
     bridge.CapacitorCustomPlatform = { name: "android" };
@@ -1792,6 +1793,24 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
     bridge.Capacitor = {
       PluginHeaders: [
         {
+          name: "DriverNotifications",
+          methods: [
+            ...[
+              "status",
+              "requestPermissions",
+              "configure",
+              "setEnabled",
+              "setPresence",
+              "deliver",
+              "clear",
+              "reset",
+              "settings",
+              "removeListener",
+            ].map((name) => ({ name, rtype: "promise" })),
+            { name: "addListener", rtype: "callback" },
+          ],
+        },
+        {
           name: "DriverShift",
           methods: [
             "permissions",
@@ -1804,11 +1823,16 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
           ].map((name) => ({ name, rtype: "promise" })),
         },
       ],
+      nativeCallback: () => "synthetic-notification-listener",
       nativePromise: async (
-        _plugin: string,
+        plugin: string,
         method: string,
         options?: { shiftToken?: string; userId?: string },
       ) => {
+        if (plugin === "DriverNotifications")
+          return method === "status" || method === "requestPermissions"
+            ? { permission: "denied", enabled: false, configured: false }
+            : {};
         if (method === "start") {
           activeToken = options?.shiftToken || "";
           bridge.activeNativeUser = options?.userId;
@@ -1867,6 +1891,7 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
             lat: 37.96,
             lng: 58.32,
             accuracy: 10,
+            ...bridge.syntheticConnectionStatus,
             ...(bridge.syntheticNativeStopped
               ? {
                   detail: "Смена завершена сервером",
@@ -1892,6 +1917,8 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
 test("native foreground detects revoked GPS permission while the shift is off", async ({
   page,
 }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
   await emulateNativeBridge(page, false);
   await login(page, "driver");
   const gps = page.getByRole("button", { name: "Включить GPS", exact: true });
@@ -1907,6 +1934,7 @@ test("native foreground detects revoked GPS permission while the shift is off", 
   await expect(
     page.getByRole("button", { name: "Выйти на линию", exact: true }),
   ).toBeDisabled();
+  expect(pageErrors).toEqual([]);
 });
 
 type NativeGpsRaceBridge = {
@@ -2002,6 +2030,87 @@ test("an offline native driver sees the healthy dispatcher connection before sta
   await expect(
     page.getByRole("button", { name: "Выйти на линию", exact: true }),
   ).toBeEnabled();
+});
+
+test("native connection recovery turns red at the actual lease deadline and requires Online again", async ({
+  page,
+}) => {
+  await emulateNativeBridge(page, false);
+  await createAddressDriver(page, "+99360000342");
+  await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Уйти с линии", exact: true }),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { activeNativeUser?: string }).activeNativeUser,
+      ),
+    )
+    .toBeTruthy();
+  await page.evaluate(() => {
+    const bridge = window as unknown as {
+      activeNativeUser: string;
+      syntheticConnectionStatus: Record<string, unknown>;
+    };
+    bridge.syntheticConnectionStatus = {
+      running: true,
+      userId: bridge.activeNativeUser,
+      phase: "reconnecting",
+      leaseRemainingMs: 20_000,
+      lastFixAt: Date.now(),
+      lastReportAt: Date.now() - 5000,
+    };
+    window.dispatchEvent(new Event("focus"));
+  });
+  const connection = page.getByRole("button", {
+    name: "Связь с диспетчером",
+    exact: true,
+  });
+  await expect(connection).toHaveAttribute("data-state", "reconnecting");
+  await page.evaluate(() => {
+    const bridge = window as unknown as {
+      syntheticConnectionStatus: Record<string, unknown>;
+    };
+    bridge.syntheticConnectionStatus.leaseRemainingMs = 0;
+    window.dispatchEvent(new Event("focus"));
+  });
+  // An online account snapshot must not extend a native service's expired lease.
+  await expect(connection).toHaveAttribute("data-state", "disconnected");
+  await page.evaluate(() => {
+    const bridge = window as unknown as {
+      syntheticConnectionStatus: Record<string, unknown>;
+    };
+    bridge.syntheticConnectionStatus = {
+      running: false,
+      phase: "off",
+      detail: "Связь потеряна. Включите линию снова.",
+      stopSequence: 1,
+      lastFixAt: Date.now(),
+      leaseRemainingMs: 0,
+    };
+    window.dispatchEvent(new Event("focus"));
+  });
+  const online = page.getByRole("button", {
+    name: "Выйти на линию",
+    exact: true,
+  });
+  await expect(online).toHaveAttribute("aria-pressed", "false");
+  await expect(online).toBeEnabled();
+  await expect(
+    page.getByRole("button", { name: "Включить GPS", exact: true }),
+  ).toHaveAttribute("data-state", "ready");
+  await expect(connection).toHaveAttribute("data-state", "ready");
+  await expect(
+    page.getByText(
+      "Смена завершена. После восстановления связи нажмите кнопку выхода на линию.",
+      { exact: true },
+    ),
+  ).toBeVisible();
 });
 
 test("a stopped native shift does not erase a newly confirmed GPS fix on later status reconciliation", async ({
@@ -2240,6 +2349,17 @@ test("GPS remains green during connection loss and reconnects without another pe
   try {
     await login(page, "driver");
     const gps = page.getByRole("button", { name: "Включить GPS", exact: true });
+    const connection = page.getByRole("button", {
+      name: "Связь с диспетчером",
+      exact: true,
+    });
+    await expect(connection).toHaveAttribute("data-state", "ready");
+    await connection.click();
+    await expect(page.getByRole("menu")).toContainText(
+      "Связь с диспетчером установлена",
+    );
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".workspace-header .connection")).toHaveCount(0);
     await expect(gps).toHaveAttribute("data-state", /inactive|blocked/);
     await startGps(page);
     await expect(gps).toHaveAttribute("data-state", "ready");
@@ -2255,6 +2375,8 @@ test("GPS remains green during connection loss and reconnects without another pe
       /Связь с диспетчером установлена/,
     );
     await context.setOffline(true);
+    await expect(connection).toHaveAttribute("data-state", "reconnecting");
+    await expect(connection).toHaveAttribute("aria-description", /60 секунд/);
     await expect(power).toHaveAttribute(
       "aria-description",
       /Нет связи с диспетчером/,
@@ -2264,6 +2386,7 @@ test("GPS remains green during connection loss and reconnects without another pe
       page.getByText("Нет интернета. Пытаемся подключиться…", { exact: true }),
     ).toBeVisible();
     await context.setOffline(false);
+    await expect(connection).toHaveAttribute("data-state", "ready");
     await expect(power).toHaveAttribute(
       "aria-description",
       /Связь с диспетчером установлена/,
@@ -2272,6 +2395,16 @@ test("GPS remains green during connection loss and reconnects without another pe
       page.getByText("Нет интернета. Пытаемся подключиться…", { exact: true }),
     ).toHaveCount(0);
     await power.click();
+    await expect(
+      page.getByRole("button", { name: "Выйти на линию", exact: true }),
+    ).toBeVisible();
+    await context.setOffline(true);
+    await expect(connection).toHaveAttribute("data-state", "disconnected");
+    await expect(connection).toHaveAttribute(
+      "aria-description",
+      /Нет интернета/,
+    );
+    await expect(gps).toHaveAttribute("data-state", "ready");
   } finally {
     await context.close();
   }
@@ -2296,9 +2429,9 @@ test("offline drivers keep a local GPS fix, show its timestamp, and send no loca
   await page.getByRole("button", { name: "Включить GPS", exact: true }).click();
   const gps = page.getByRole("button", { name: "Включить GPS", exact: true });
   await expect(gps).toHaveAttribute("data-state", "ready");
-  await expect(
-    page.getByText("GPS этого телефона", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "37.9600, 58.3200",
+  );
   await expect(page.getByText(/Последнее обновление/)).toBeVisible();
   expect(uploads).toBe(0);
   await page.context().setOffline(false);
@@ -2566,42 +2699,30 @@ test("a delayed address cannot replace a newer GPS position outside the saved re
   await page.waitForTimeout(250);
   await expect(location).not.toContainText("Synthetic street");
   await expect(location).toContainText("30.2328, 120.0398");
+  await page.unrouteAll({ behavior: "wait" });
 });
 
-test("a delayed address survives a nearby GPS fix during its request", async ({
+test("a delayed address survives a nearby driver GPS fix during its request", async ({
   page,
 }) => {
-  const created = await createAddressDriver(page, "+99360000325");
-  const token = await page.evaluate(() =>
-    localStorage.getItem("openride.driver.accessToken"),
+  await createAddressDriver(page, "+99360000325");
+  await startGps(page, {
+    latitude: 37.961234,
+    longitude: 58.321234,
+    accuracy: 10,
+  });
+  // Consume the off-shift convenience allowance first. Relaunch with its
+  // durable marker, then exercise a delayed Online lookup without an earlier
+  // still-fresh label hiding the coordinate fallback under test.
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "Synthetic street, 12",
   );
-  const report = async (lat: number, lng: number) => {
-    const response = await page.request.post(
-      `${process.env.TEST_API_URL}/driver/location`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-        data: { lat, lng, accuracy: 10 },
-      },
-    );
-    expect(response.ok()).toBe(true);
-  };
-  const online = await page.request.post(
-    `${process.env.TEST_API_URL}/driver/status`,
-    {
-      headers: { Authorization: `Bearer ${token}` },
-      data: {
-        isOnline: true,
-        position: {
-          lat: 37.961234,
-          lng: 58.321234,
-          accuracy: 10,
-          capturedAt: Date.now(),
-        },
-      },
-    },
-  );
-  expect(online.ok()).toBe(true);
-  await login(page, "admin");
+  await page.reload();
+  await startGps(page, {
+    latitude: 37.961234,
+    longitude: 58.321234,
+    accuracy: 10,
+  });
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -2613,16 +2734,31 @@ test("a delayed address survives a nearby GPS fix during its request", async ({
     await gate;
     await route.fulfill({ response });
   });
-  await page.goto(`/adminDrivers/${created.id}`);
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
   await expect.poll(() => received).toBe(true);
-  await report(37.9613, 58.3213);
-  await expect(
-    page.getByText("37.96130, 58.32130", { exact: true }),
-  ).toBeVisible();
+  const refresh = page.getByRole("button", {
+    name: "Обновить адрес",
+    exact: true,
+  });
+  await expect(refresh).toBeDisabled();
+  await page
+    .context()
+    .setGeolocation({ latitude: 37.9613, longitude: 58.3213, accuracy: 10 });
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "37.9613, 58.3213",
+  );
   release();
-  await expect(
-    page.getByText("Synthetic street, 12", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "Synthetic street, 12",
+  );
+  await expect(refresh).toBeDisabled();
+  await expect(refresh).toHaveAttribute(
+    "title",
+    "Обновить адрес можно раз в пять минут",
+  );
+  await page.unrouteAll({ behavior: "wait" });
 });
 
 test("an unavailable server Geocoder leaves GPS readiness and actual coordinates usable", async ({
@@ -2648,7 +2784,7 @@ test("an unavailable server Geocoder leaves GPS readiness and actual coordinates
   ).toBeEnabled();
 });
 
-test("background GPS does not request addresses until the driver location screen is visible", async ({
+test("hidden Online catches up once when the driver returns to the foreground", async ({
   page,
 }) => {
   await createAddressDriver(page, "+99360000323");
@@ -2679,7 +2815,310 @@ test("background GPS does not request addresses until the driver location screen
     });
     document.dispatchEvent(new Event("visibilitychange"));
   });
+  await page.waitForTimeout(350);
   await expect.poll(() => requests.length).toBe(1);
+  await expect(
+    page.getByRole("button", { name: "Обновить адрес", exact: true }),
+  ).toBeDisabled();
+});
+
+test("one off-shift convenience lookup survives relaunch and Online refreshes it once", async ({
+  page,
+}) => {
+  const created = await createAddressDriver(page, "+99360000326");
+  const requests: string[] = [];
+  page.on("request", (request) => {
+    if (/\/geo\/drivers\/[^/]+\/address/.test(request.url()))
+      requests.push(request.postDataJSON().purpose);
+  });
+  await startGps(page, {
+    latitude: 37.961234,
+    longitude: 58.321234,
+    accuracy: 10,
+  });
+  await expect.poll(() => requests.length).toBe(1);
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "Synthetic street, 12",
+  );
+  await page.reload();
+  await startGps(page, {
+    latitude: 37.961234,
+    longitude: 58.321234,
+    accuracy: 10,
+  });
+  expect(requests).toHaveLength(1);
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  await expect.poll(() => requests).toEqual(["off-shift", "online"]);
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "Synthetic street, 12",
+  );
+  // Opening another app must not erase a still-fresh address or spend quota
+  // when the driver returns to the same location.
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "hidden",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(page.getByLabel("Местоположение GPS")).not.toContainText(
+    "Synthetic street, 12",
+  );
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "visible",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "Synthetic street, 12",
+  );
+  await page
+    .context()
+    .setGeolocation({ latitude: 37.963, longitude: 58.32, accuracy: 10 });
+  await expect(page.getByLabel("Местоположение GPS")).not.toContainText(
+    "Synthetic street",
+  );
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "37.9630, 58.3200",
+  );
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Уйти с линии", exact: true }),
+  ).toBeVisible();
+  await page.waitForTimeout(400);
+  expect(requests).toHaveLength(2);
+  const refresh = page.getByRole("button", {
+    name: "Обновить адрес",
+    exact: true,
+  });
+  await expect(refresh).toBeDisabled();
+  expect(requests).toHaveLength(2);
+  await login(page, "admin");
+  await page.goto(`/adminDrivers/${created.id}`);
+  await expect(page.getByText("GPS", { exact: true })).toBeVisible();
+  await page.waitForTimeout(400);
+  expect(requests).toHaveLength(2);
+});
+
+test("a due visible shift refreshes at the unchanged GPS point and reconnect never bursts", async ({
+  page,
+}) => {
+  const driver = await createAddressDriver(page, "+99360000327");
+  await startGps(page, {
+    latitude: 37.961234,
+    longitude: 58.321234,
+    accuracy: 10,
+  });
+  const onlineResponse = page.waitForResponse(
+    (response) =>
+      /\/geo\/drivers\/[^/]+\/address/.test(response.url()) &&
+      response.request().postDataJSON().purpose === "online",
+  );
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  expect((await onlineResponse).ok()).toBe(true);
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "Synthetic street, 12",
+  );
+  await page.addInitScript(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "hidden",
+    });
+  });
+  const prisma = new PrismaClient();
+  try {
+    await prisma.driverAddressState.update({
+      where: { driverId: driver.id },
+      data: {
+        attemptedAt: new Date(Date.now() - 360_000),
+        purpose: "shift",
+        onlineExceptionReady: false,
+        pendingUntil: null,
+        address: null,
+        cacheUntil: null,
+      },
+    });
+  } finally {
+    await prisma.$disconnect();
+  }
+  await page.evaluate((id) => {
+    localStorage.setItem(
+      `tayyn.address.${id}.synthetic-approved-browser`,
+      JSON.stringify({ consumed: true, retryAt: Date.now() - 1000 }),
+    );
+  }, driver.id);
+  const purposes: string[] = [];
+  page.on("request", (request) => {
+    if (/\/geo\/drivers\/[^/]+\/address/.test(request.url()))
+      purposes.push(request.postDataJSON().purpose);
+  });
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Включить GPS", exact: true }),
+  ).toHaveAttribute("data-state", "ready");
+  expect(purposes).toEqual([]);
+  const response = page.waitForResponse((response) =>
+    /\/geo\/drivers\/[^/]+\/address/.test(response.url()),
+  );
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "visible",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  expect((await response).ok()).toBe(true);
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "Synthetic street, 12",
+  );
+  expect(purposes).toEqual(["refresh"]);
+  await page.evaluate(() => {
+    for (const state of ["hidden", "visible"]) {
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => state,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    }
+  });
+  await page.context().setOffline(true);
+  await page.context().setOffline(false);
+  await expect(
+    page.getByRole("button", { name: "Уйти с линии", exact: true }),
+  ).toHaveAttribute("title", "На линии. Связь с диспетчером установлена.");
+  await page.waitForTimeout(1100);
+  expect(purposes).toEqual(["refresh"]);
+});
+
+test("a shared address deadline refreshes when the server allows it instead of adding five minutes", async ({
+  page,
+}) => {
+  const driver = await createAddressDriver(page, "+99360000328");
+  await startGps(page, {
+    latitude: 37.961234,
+    longitude: 58.321234,
+    accuracy: 10,
+  });
+  const initialOnline = page.waitForResponse(
+    (response) =>
+      /\/geo\/drivers\/[^/]+\/address/.test(response.url()) &&
+      response.request().postDataJSON().purpose === "online",
+  );
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  expect((await initialOnline).ok()).toBe(true);
+  await page.addInitScript(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "hidden",
+    });
+  });
+  await page.evaluate((id) => {
+    localStorage.setItem(
+      `tayyn.address.${id}.synthetic-approved-browser`,
+      JSON.stringify({ consumed: true, retryAt: Date.now() - 1000 }),
+    );
+  }, driver.id);
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Включить GPS", exact: true }),
+  ).toHaveAttribute("data-state", "ready");
+  const prisma = new PrismaClient();
+  try {
+    // Another viewer spent most of the shared cooldown before this phone asks.
+    await prisma.driverAddressState.update({
+      where: { driverId: driver.id },
+      data: {
+        attemptedAt: new Date(Date.now() - 290_000),
+        purpose: "shift",
+        onlineExceptionReady: false,
+        pendingUntil: null,
+        address: null,
+        cacheUntil: null,
+      },
+    });
+  } finally {
+    await prisma.$disconnect();
+  }
+  const limited = page.waitForResponse((response) =>
+    /\/geo\/drivers\/[^/]+\/address/.test(response.url()),
+  );
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "visible",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  expect((await (await limited).json()).reason).toBe("limited");
+  const refreshed = page.waitForResponse(
+    (response) => /\/geo\/drivers\/[^/]+\/address/.test(response.url()),
+    { timeout: 15_000 },
+  );
+  expect((await (await refreshed).json()).reason).toBe("resolved");
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "Synthetic street, 12",
+  );
+});
+
+test("relaunch preserves a pending Online address demand through the shared cooldown", async ({
+  page,
+}) => {
+  await createAddressDriver(page, "+99360000329");
+  await startGps(page, {
+    latitude: 37.961234,
+    longitude: 58.321234,
+    accuracy: 10,
+  });
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "Synthetic street, 12",
+  );
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let serverFinished!: () => void;
+  const providerReply = new Promise<void>((resolve) => {
+    serverFinished = resolve;
+  });
+  await page.route("**/geo/drivers/*/address", async (route) => {
+    if (route.request().postDataJSON().purpose !== "online") {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    serverFinished();
+    await gate;
+    if (!route.request().failure()) await route.fulfill({ response });
+  });
+  await page
+    .getByRole("button", { name: "Выйти на линию", exact: true })
+    .click();
+  await providerReply;
+  await expect(
+    page.getByRole("button", { name: "Уйти с линии", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+  const resumed = page.waitForResponse(
+    (response) => /\/geo\/drivers\/[^/]+\/address/.test(response.url()),
+    { timeout: 7000 },
+  );
+  await page.reload();
+  release();
+  const reply = await resumed;
+  expect(reply.ok()).toBe(true);
+  expect(reply.request().postDataJSON().purpose).toBe("online");
+  expect((await reply.json()).reason).toBe("limited");
+  await expect(
+    page.getByRole("button", { name: "Включить GPS", exact: true }),
+  ).toHaveAttribute("data-state", "ready");
 });
 
 test("dispatcher overview uses global counts and labels completed trip values as all-time", async ({
@@ -2724,10 +3163,19 @@ test("authenticated actor shells show exactly one brand at mobile, tablet and de
           dark,
         );
         await expect(page.locator(".brand-lockup:visible")).toHaveCount(1);
-        await expect(page.locator(".connection")).toBeVisible();
-        await expect(page.locator(".connection")).toContainText(
-          role === "admin" ? "На связи" : "Не на линии",
-        );
+        if (role === "admin") {
+          await expect(page.locator(".connection")).toContainText("На связи");
+        } else {
+          await expect(
+            page.locator(".workspace-header .connection"),
+          ).toHaveCount(0);
+          await expect(
+            page.getByRole("button", {
+              name: "Связь с диспетчером",
+              exact: true,
+            }),
+          ).toHaveAttribute("data-state", "ready");
+        }
         expect(
           await page.evaluate(() => document.documentElement.scrollWidth),
         ).toBeLessThanOrEqual(width);

@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { isolateBrowserClient } from "./helpers/device-session";
 import { createRequire } from "node:module";
 
 if (process.env.DISPOSABLE_BROWSER_TEST !== "true")
@@ -12,6 +13,7 @@ test("driver can expand their trip history to inspect route, customer contact an
   page,
 }) => {
   await page.setViewportSize({ width: 360, height: 740 });
+  await isolateBrowserClient(page.context());
   await page.goto("/adminLogin");
   await page.getByLabel("Номер телефона").fill("60000000");
   await page

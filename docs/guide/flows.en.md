@@ -56,7 +56,7 @@ sequenceDiagram
   alt Accept before deadline
     S->>S: Lock order and driver, charge quoted TMT once
     S-->>V: Accepted, reveal customer phone
-    S-->>O: order:taken, remove offer
+    S-->>O: order:taken, remove offer and decrease available count
   else Decline before deadline
     S->>S: Stop private delivery; preserve deadline
     S-->>V: Offer ended
@@ -108,25 +108,42 @@ stateDiagram-v2
 
 The server enforces the actor-specific cancellation path shown here. The driver can cancel only in Waiting. The dispatcher can cancel before Started, including New and Accepted. Started has no ordinary cancellation path. Force-resolution records a completed order, not a separate status. The quoted amount is charged once at acceptance. Completion does not charge again or refund it. A lost connection keeps an accepted trip assigned while new work is blocked.
 
-## Location, address, and dispatcher map
-
-GPS, map paths, and the shared server address budget are merged. Provider activation is a separate deployment check.
+## Region grid and live claims
 
 ```mermaid
 flowchart TD
-  G[Fresh GPS report] --> R{Inside saved polygon?}
-  R -- yes --> RI[Assign region]
-  R -- no --> RO[Show Outside region + live coordinates]
-  RI --> M[Dispatcher map and roster]
-  RO --> M
-  M --> V{Driver location visible in app or dashboard?}
-  V -- yes --> L[Optional address lookup under shared budget]
-  V -- no --> C[Keep GPS only]
-  L --> A[Show address if fresh]
-  L --> C[On quota/provider failure show coordinates]
+  O[Unassigned public order] --> C[Left count: available orders in its region]
+  S[Driver shift on, free or busy] --> D[Right count: working drivers in that region]
+  C --> G[Green card when left count is above zero]
+  L[Fresh usable local GPS] --> I{Internet connected and inside saved polygon?}
+  I -- yes --> B[Blue border on this phone's current region, even off shift]
+  I -- no --> N[No blue border; GPS may still be green]
+  A[First valid claim] --> R[Remove order from every queue and decrease left count]
+  R --> T[Trip remains assigned; it is not an available order]
 ```
 
-GPS remains authoritative. Address text never controls eligibility.
+Blue identifies this phone's region; green identifies available work. Neither colour transfers a shift or replaces server claim validation. Live counts and order actions require an active shift.
+
+## Location, address, and dispatcher map
+
+```mermaid
+flowchart TD
+  G[Fresh precise local GPS + internet + visible home-screen location view] --> C{Convenience attempt used on this installation?}
+  C -- no --> O[One off-shift address using transient point]
+  C -- yes --> L[Local coordinates; do not repeat convenience request]
+  O --> N[No shared tracking or dispatcher map update]
+  S[Explicit Online succeeds and owns shift] --> A[Fresh address; one exception to convenience cooldown]
+  A --> V{Foreground and connected?}
+  V -- yes --> D{Five minutes due?}
+  D -- yes --> Q[One budgeted refresh; no movement requirement]
+  D -- no --> W[Wait without spending quota]
+  V -- no --> P[Pause address requests; GPS service stays separate]
+  P --> V
+  Q --> V
+  M[Dispatcher] --> X[Region, coordinates and position age; no address requests]
+```
+
+The server remembers convenience attempts and enforces a shared driver cooldown, daily reserve and provider backoff. Repeated Online taps cannot repeat the one-time exception. Foreground/reconnect catches up once if due, never replays missed intervals. Manual refresh shares the same limit. Address failure never blocks work.
 
 ## Android delivery and recovery
 
@@ -194,7 +211,7 @@ For a lost phone, reset the password too. Signing out alone does not prevent a n
 
 ```mermaid
 flowchart TD
-  A[Approved account signs in on any phone] --> B[Off-shift GPS stays on that phone]
+  A[Approved account signs in on any phone] --> B[Off-shift GPS never changes shared tracking]
   B --> C[Tap Online with fresh fix]
   C --> D{Another phone owns shift?}
   D -- yes --> E[Reject start; preserve working phone]

@@ -1,9 +1,11 @@
 import { test, expect, type BrowserContext, type Page } from "@playwright/test";
+import { isolateBrowserClient } from "./helpers/device-session";
 
 if (process.env.DISPOSABLE_BROWSER_TEST !== "true")
   throw new Error("Use pnpm test:e2e with its disposable database");
 
 async function nativePermissions(context: BrowserContext) {
+  await isolateBrowserClient(context);
   await context.addInitScript(() => {
     const bridge = window as any;
     bridge.CapacitorCustomPlatform = { name: "android" };
@@ -130,6 +132,7 @@ async function nativePermissions(context: BrowserContext) {
   });
 }
 async function login(page: Page, phone = "60000101") {
+  await isolateBrowserClient(page.context());
   await page.getByLabel("Номер телефона").fill(phone);
   await page
     .getByLabel("Пароль", { exact: true })

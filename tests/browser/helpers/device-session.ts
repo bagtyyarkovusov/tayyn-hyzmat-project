@@ -5,6 +5,15 @@ import {
 } from "@playwright/test";
 
 let nextAuthClient = 1;
+let nextBrowserClient = 1;
+const browserClients = new WeakMap<BrowserContext, string>();
+/** The loopback proxy must not merge unrelated browsers into one auth bucket. */
+export async function isolateBrowserClient(context: BrowserContext) {
+  if (browserClients.has(context)) return;
+  const address = `198.21.${process.pid % 200}.${nextBrowserClient++}`;
+  browserClients.set(context, address);
+  await context.setExtraHTTPHeaders({ "X-Forwarded-For": address });
+}
 /** Real auth sessions retain the same signed device identity through refresh and reload. */
 export async function loginFixture(
   request: APIRequestContext,

@@ -27,8 +27,8 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         // Increment packaged app versions before distributing updates.
         // The active Vue app has no automatic APK updater; see docs/android.md.
-        versionCode 16
-        versionName "1.15"
+        versionCode 17
+        versionName "1.16"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

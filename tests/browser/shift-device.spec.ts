@@ -79,12 +79,7 @@ test("second device signs in immediately without ending or controlling the first
     const offShiftRequests: string[] = [];
     for (const page of [owner, spectator])
       page.on("request", (request) => {
-        if (
-          new URL(request.url()).pathname.endsWith("/driver/location") ||
-          /\/geo\/drivers\/[^/]+\/address$/.test(
-            new URL(request.url()).pathname,
-          )
-        )
+        if (new URL(request.url()).pathname.endsWith("/driver/location"))
           offShiftRequests.push(request.url());
       });
     await owner
@@ -99,6 +94,8 @@ test("second device signs in immediately without ending or controlling the first
     await expect(
       spectator.getByRole("button", { name: "Включить GPS", exact: true }),
     ).toHaveAttribute("data-state", "ready");
+    // One address convenience request is allowed per installation. It must
+    // never upload either phone’s point as dispatcher tracking.
     expect(offShiftRequests).toEqual([]);
     const offlineDetail = await admin.request.get(
       `${api}/admin/drivers/${id}`,

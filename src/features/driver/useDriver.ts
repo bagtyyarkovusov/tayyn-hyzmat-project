@@ -20,6 +20,7 @@ const state = reactive({
   busy: false,
   error: "",
   actionAttempt: 0,
+  addressLookupRequest: 0,
   notice: "",
   gpsError: "",
   gpsPending: false,
@@ -29,6 +30,7 @@ const state = reactive({
   locationSyncError: "",
   nativeRunning: false,
   nativeConnected: false,
+  nativeLeaseExpiresAt: 0,
   offerSeconds: 0,
   position: null as { lat: number; lng: number; accuracy: number } | null,
   locationUpdatedAt: 0,
@@ -74,6 +76,13 @@ const LOCATION_SYNC_FAILURE_GRACE_MS = 60000;
 export function canControlShift() {
   return !!state.profile && state.profile.canControlShift !== false;
 }
+export function connectionRecovering() {
+  if (!canControlShift() || !state.profile?.isOnline) return false;
+  return nativeAndroid
+    ? state.nativeRunning && state.clock < state.nativeLeaseExpiresAt
+    : locationSyncFailureAt > 0 &&
+        state.clock < locationSyncFailureAt + LOCATION_SYNC_FAILURE_GRACE_MS;
+}
 const otherDeviceMessage =
   "Смена активна на другом устройстве. Завершите её там, чтобы выйти на линию здесь.";
 function requireShiftControl() {
@@ -100,6 +109,7 @@ function hideAvailableOrders() {
   state.districts = state.districts.map((d) => ({
     ...d,
     activeOrders: 0,
+    publicAvailableOrders: 0,
     onlineDrivers: 0,
     freeDrivers: 0,
   }));
@@ -122,6 +132,9 @@ async function forceOffline(message: string, preserveLocalGps = false) {
     gpsRetryRequired = true;
   }
   state.gpsError = message;
+  if (preserveLocalGps)
+    state.notice =
+      "Смена завершена. После восстановления связи нажмите кнопку выхода на линию.";
   state.locationSyncError = "";
   locationSyncFailureAt = 0;
   lastLocationSent = 0;
@@ -298,6 +311,7 @@ watch(
     state.locationSyncError = "";
     state.nativeRunning = false;
     state.nativeConnected = false;
+    state.nativeLeaseExpiresAt = 0;
     handledNativeStop = -1;
     lastFixAt = 0;
     gpsRetryRequired = false;
@@ -554,6 +568,9 @@ async function setOnline() {
           state.profile.isOnline = true;
           enableGps();
         }
+        // Only a successful explicit Online action requests an optional label.
+        // Reconnects/profile restores and recurring GPS never trigger lookup.
+        state.addressLookupRequest++;
         await refresh();
       }
     });
@@ -598,6 +615,11 @@ async function synchronizeNative() {
     return;
   }
   state.nativeRunning = native.running;
+  // Project the native service's existing monotonic lease. This only controls
+  // presentation; the native service remains responsible for expiry/recovery.
+  state.nativeLeaseExpiresAt = native.running
+    ? Date.now() + Math.max(0, native.leaseRemainingMs ?? 0)
+    : 0;
   const now = Date.now();
   const nativeFixAt = native.lastFixAt ?? native.lastReportAt;
   const localPermission =
@@ -647,6 +669,9 @@ async function synchronizeNative() {
     // The service can stop after a network failure while its last hardware fix
     // remains fresh. End availability without changing that local fix's age.
     handledNativeStop = native.stopSequence;
+    if (native.detail.startsWith("Связь потеряна"))
+      state.notice =
+        "Смена завершена. После восстановления связи нажмите кнопку выхода на линию.";
     hideAvailableOrders();
     state.locationSyncError = "";
     state.gpsError = state.gpsFixReady ? "" : native.detail;

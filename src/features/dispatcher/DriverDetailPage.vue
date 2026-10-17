@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { useLocationAddress } from "@/shared/useLocationAddress";
 import { formatPhone } from "@/shared/phone";
 import { ref, watch, onMounted, onUnmounted } from "vue";
 import { RouterLink, useRouter } from "vue-router";
@@ -151,18 +150,6 @@ onUnmounted(() => {
 watch(tab, () => {
   if (tab.value === "info") refreshVisibleLocation();
 });
-const gpsAddress = useLocationAddress(
-  () =>
-    driver.value?.lastLat != null &&
-    driver.value?.lastLng != null &&
-    driver.value.lastLocationAt &&
-    Date.now() - new Date(driver.value.lastLocationAt).getTime() < 60_000
-      ? { lat: Number(driver.value.lastLat), lng: Number(driver.value.lastLng) }
-      : null,
-  () => (adminSession.state.user ? props.driverId : undefined),
-  adminApi,
-  () => tab.value === "info" && !!driver.value?.isOnline,
-);
 watch(driver, (d, previous) => {
   // GPS/profile refreshes must not replace a dispatcher’s vehicle draft.
   if (
@@ -340,8 +327,7 @@ function adjust(withdraw: boolean) {
                 <dd class="mt-1">
                   {{
                     driver.lastLat != null && driver.lastLng != null
-                      ? gpsAddress ||
-                        `${Number(driver.lastLat).toFixed(5)}, ${Number(driver.lastLng).toFixed(5)}`
+                      ? `${Number(driver.lastLat).toFixed(5)}, ${Number(driver.lastLng).toFixed(5)}`
                       : "Нет координат"
                   }}
                 </dd>

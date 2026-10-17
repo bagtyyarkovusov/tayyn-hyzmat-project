@@ -375,7 +375,7 @@ test('missing or stale GPS blocks online status, order browsing and claims witho
     assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 403);
     assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
     const regions = await request('/districts', driverToken);
-    assert.ok(regions.data.every((region: { activeOrders: number }) => region.activeOrders === 0));
+    assert.ok(regions.data.every((region: { activeOrders: number; publicAvailableOrders: number }) => region.activeOrders === 0 && region.publicAvailableOrders === 0));
   }
 });
 
@@ -508,6 +508,73 @@ test('regional operating car count includes an online driver during a trip', asy
   assert.equal(region.onlineDrivers, 1);
   assert.equal(region.freeDrivers, 0);
   assert.equal(region.activeOrders, 1);
+});
+
+test('region public availability excludes assigned, reserved and stopped orders while unfinished totals remain intact', async () => {
+  const outside = await socket(otherToken);
+  type Stats = Array<{ id: string; activeOrders: number; publicAvailableOrders: number }>;
+  const region = (stats: Stats) => stats.find(row => row.id === regionId)!;
+  try {
+    const createdStats = nextSocketEvent<Stats>(outside, 'districts:stats');
+    const publicOrder = await order();
+    assert.equal(region(await createdStats).publicAvailableOrders, 1);
+    assert.equal(region((await request('/districts', driverToken)).data).publicAvailableOrders, 1);
+    const claimedStats = nextSocketEvent<Stats>(outside, 'districts:stats');
+    assert.equal((await request('/orders/accept', driverToken, { orderId: publicOrder.id })).status, 200);
+    const afterClaim = region(await claimedStats);
+    assert.equal(afterClaim.publicAvailableOrders, 0);
+    assert.equal(afterClaim.activeOrders, 1, 'dispatcher unfinished work still includes the assigned trip');
+    const otherDriver = (await request('/driver/profile', otherToken)).data;
+    const reservedStats = nextSocketEvent<Stats>(outside, 'districts:stats');
+    const privateOffer = await request('/admin/orders', adminToken, {
+      districtId: regionId, priceEstimated: 10, clientPhone: '+99360000999',
+      privateOfferDriverId: otherDriver.id, broadcastAfterPrivateExpiry: false
+    });
+    assert.equal(privateOffer.status, 201);
+    assert.equal(region(await reservedStats).publicAvailableOrders, 0, 'private reservations never appear in the common count');
+    // Fixture of an expired stopped private offer. Its hidden status must not
+    // be counted as public work, even though the dispatcher still resolves it.
+    await prisma.order.update({ where: { id: privateOffer.data.id }, data: { privateOfferExpiresAt: new Date(Date.now() - 1) } });
+    assert.deepEqual((await request(`/orders/available?districtId=${regionId}`, otherToken)).data, []);
+    const stopped = region((await request('/districts', adminToken)).data);
+    assert.equal(stopped.publicAvailableOrders, 0);
+    assert.equal(stopped.activeOrders, 2);
+    const cancelledStats = nextSocketEvent<Stats>(outside, 'districts:stats');
+    assert.equal((await request(`/admin/orders/${publicOrder.id}/cancel`, adminToken, { reason: 'Synthetic resolution' })).status, 200);
+    assert.equal(region(await cancelledStats).publicAvailableOrders, 0);
+    assert.equal(region((await request('/districts', adminToken)).data).activeOrders, 1);
+  } finally { outside.disconnect(); }
+});
+
+test('overlapping public creation and resolution leaves every region viewer with the final available count', async () => {
+  const outside = await socket(otherToken);
+  type Stats = Array<{ id: string; activeOrders: number; publicAvailableOrders: number }>;
+  const snapshots: Stats = [];
+  const receive = (rows: Stats) => { snapshots.push(rows.find(row => row.id === regionId)!); };
+  outside.on('districts:stats', receive);
+  try {
+    const created = await Promise.all(Array.from({ length: 8 }, () => order()));
+    assert.equal((await request('/districts', otherToken)).data.find((row: { id: string }) => row.id === regionId).publicAvailableOrders, 8);
+    const finalSnapshot = new Promise<Stats[number]>((resolve, reject) => {
+      const timer = setTimeout(() => { outside.off('districts:stats', final); reject(new Error('Missing final public count')); }, 5000);
+      function final(rows: Stats) {
+        const row = rows.find(row => row.id === regionId)!;
+        if (row.publicAvailableOrders === 0 && row.activeOrders === 1) {
+          clearTimeout(timer); outside.off('districts:stats', final); resolve(row);
+        }
+      }
+      outside.on('districts:stats', final);
+    });
+    const results = await Promise.all(created.map((item, index) => index === 0
+      ? request('/orders/accept', driverToken, { orderId: item.id })
+      : request(`/admin/orders/${item.id}/cancel`, adminToken, { reason: 'Concurrent synthetic resolution' })));
+    assert.ok(results.every(result => result.status === 200));
+    assert.equal((await finalSnapshot).publicAvailableOrders, 0);
+    const finalHttp = (await request('/districts', otherToken)).data.find((row: { id: string }) => row.id === regionId);
+    assert.equal(finalHttp.publicAvailableOrders, 0);
+    assert.equal(finalHttp.activeOrders, 1);
+    assert.equal(snapshots.at(-1)?.publicAvailableOrders, 0);
+  } finally { outside.off('districts:stats', receive); outside.disconnect(); }
 });
 
 test('only online drivers in the selected region receive an order offer without the customer phone', async () => {

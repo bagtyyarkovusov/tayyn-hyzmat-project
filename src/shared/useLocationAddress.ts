@@ -1,5 +1,5 @@
-import { onMounted, onUnmounted, ref, watch } from "vue";
-import { useDocumentVisibility } from "@vueuse/core";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { useDocumentVisibility, useOnline } from "@vueuse/core";
 
 interface Position {
   lat: number;
@@ -8,11 +8,24 @@ interface Position {
 interface AddressReply {
   address: string | null;
   resolvedAt?: string;
+  retryAt?: string;
+  reason?: string;
+  convenienceConsumed?: boolean;
   position: Position | null;
 }
 interface AddressApi {
-  get<T>(path: string): Promise<{ data: T }>;
+  post<T>(path: string, body: unknown): Promise<{ data: T }>;
 }
+export interface AddressPolicy {
+  online: () => boolean;
+  connected: () => boolean;
+  transitionPending: () => boolean;
+  capturedAt: () => number;
+  installation: () => string;
+  onlineRequest: () => number;
+}
+type Purpose = "off-shift" | "online" | "refresh";
+const interval = 300_000;
 function distance(a: Position, b: Position) {
   const rad = Math.PI / 180;
   const h =
@@ -23,82 +36,194 @@ function distance(a: Position, b: Position) {
   return 6_371_000 * 2 * Math.asin(Math.sqrt(h));
 }
 
-/** Best-effort visible-screen demand. GPS and availability never depend on it. */
+/** Address demand is optional. Local GPS and shift availability never await it. */
 export function useLocationAddress(
   position: () => Position | null,
   driverId: () => string | undefined,
   api: AddressApi,
-  enabled: () => boolean = () => true,
+  enabled: () => boolean,
+  policy: AddressPolicy,
 ) {
   const address = ref("");
+  const pending = ref(false);
+  const retryAt = ref(0);
+  const clock = ref(Date.now());
   const visibility = useDocumentVisibility();
+  const network = useOnline();
   let generation = 0;
-  let lastRequestAt = 0;
-  let lastDriver: string | undefined;
-  let resolved:
-    | { driverId: string; point: Position; address: string; at: number }
-    | undefined;
+  let disposed = false;
+  let identity = "";
+  let consumed = false;
+  let inFlight = false;
+  let queuedOnline = false;
+  let onlineRetryAt = 0;
+  let lastAttemptAt = 0;
+  let lastOnlineRequest = policy.onlineRequest();
+  let resolved: { point: Position; address: string; at: number } | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
-  async function reconcile() {
-    const point = position(),
-      id = driverId();
-    if (id !== lastDriver) {
-      ++generation;
-      lastRequestAt = 0;
-      resolved = undefined;
-      lastDriver = id;
+  function persist() {
+    if (!identity) return;
+    try {
+      localStorage.setItem(
+        identity,
+        JSON.stringify({
+          consumed,
+          retryAt: retryAt.value,
+          queuedOnline,
+          onlineRetryAt,
+        }),
+      );
+    } catch {
+      // The server also enforces the installation allowance and shared cooldown.
     }
-    if (!enabled() || !point || !id) {
+  }
+  function reconcile() {
+    const id = driverId();
+    const installation = policy.installation();
+    const nextIdentity =
+      id && installation ? `tayyn.address.${id}.${installation}` : "";
+    if (identity !== nextIdentity) {
       ++generation;
-      address.value = "";
+      identity = nextIdentity;
       resolved = undefined;
-      return;
+      consumed = false;
+      retryAt.value = 0;
+      queuedOnline = false;
+      onlineRetryAt = 0;
+      try {
+        const saved = JSON.parse(localStorage.getItem(identity) || "null");
+        consumed = saved?.consumed === true;
+        if (Number.isFinite(saved?.retryAt)) retryAt.value = saved.retryAt;
+        queuedOnline = saved?.queuedOnline === true;
+        if (Number.isFinite(saved?.onlineRetryAt))
+          onlineRetryAt = saved.onlineRetryAt;
+      } catch {
+        // An invalid local cache cannot grant server access or extra quota.
+      }
     }
+    const point = position();
+    // Hiding the app only hides the label. Keep a still-fresh result so a return
+    // at the same position does not spend quota or leave an empty cooldown.
     address.value =
+      enabled() &&
+      point &&
+      visibility.value === "visible" &&
       resolved &&
-      resolved.driverId === id &&
-      Date.now() - resolved.at < 300_000 &&
+      clock.value - resolved.at < interval &&
       distance(point, resolved.point) < 150
         ? resolved.address
         : "";
-    if (visibility.value !== "visible") {
-      ++generation;
-      return;
+  }
+  function ready() {
+    return !!(
+      !disposed &&
+      !policy.transitionPending() &&
+      identity &&
+      enabled() &&
+      position() &&
+      visibility.value === "visible" &&
+      network.value &&
+      policy.connected()
+    );
+  }
+  const refreshDisabled = computed(
+    () =>
+      pending.value ||
+      !ready() ||
+      !policy.online() ||
+      retryAt.value > clock.value,
+  );
+  const refreshHint = computed(() =>
+    pending.value
+      ? "Получаем адрес…"
+      : retryAt.value > clock.value
+        ? "Обновить адрес можно раз в пять минут"
+        : "Обновить адрес",
+  );
+  function schedule() {
+    reconcile();
+    if (inFlight || !ready() || Date.now() - lastAttemptAt < 1000) return;
+    if (queuedOnline && policy.online()) {
+      if (clock.value >= onlineRetryAt) void request("online");
+    } else if (policy.online()) {
+      if (clock.value >= retryAt.value) void request("refresh");
+    } else if (!consumed) void request("off-shift");
+  }
+  async function request(purpose: Purpose) {
+    const point = position();
+    const id = driverId();
+    if (inFlight || !ready() || !point || !id) return;
+    inFlight = true;
+    lastAttemptAt = Date.now();
+    pending.value = true;
+    const current = generation;
+    if (purpose === "off-shift") {
+      // Survives reload/swipe-away, including a lost response. Do not retry
+      // convenience lookups indefinitely when the provider is unavailable.
+      consumed = true;
+      persist();
     }
-    if (!navigator.onLine || Date.now() - lastRequestAt < 30_000) return;
-    lastRequestAt = Date.now();
-    const current = ++generation;
     try {
-      const { data } = await api.get<AddressReply>(
+      const { data } = await api.post<AddressReply>(
         `/geo/drivers/${encodeURIComponent(id)}/address`,
+        {
+          purpose,
+          ...(purpose === "off-shift"
+            ? {
+                position: {
+                  lat: point.lat,
+                  lng: point.lng,
+                  capturedAt: policy.capturedAt(),
+                },
+              }
+            : {}),
+        },
       );
-      if (
-        generation !== current ||
-        driverId() !== id ||
-        visibility.value !== "visible" ||
-        !enabled()
-      )
-        return;
-      const latest = position();
-      if (!latest || !data.position || distance(latest, data.position) >= 150)
-        return;
+      if (generation !== current || driverId() !== id) return;
+      const next = Date.parse(data.retryAt || "");
+      // The shared server deadline may already be nearly due. Do not add a
+      // new five-minute wait on this phone; one-second scheduling bounds
+      // catch-up retries when a deadline elapsed during network delivery.
+      retryAt.value = Number.isFinite(next) ? next : Date.now() + interval;
+      if (data.convenienceConsumed) consumed = true;
+      if (purpose === "online") {
+        queuedOnline = data.reason === "pending";
+        onlineRetryAt = queuedOnline ? retryAt.value : 0;
+      }
+      persist();
       const resolvedAt = Date.parse(data.resolvedAt || "");
       if (
         data.address &&
+        data.position &&
         Number.isFinite(resolvedAt) &&
-        Date.now() - resolvedAt < 300_000
+        Date.now() - resolvedAt < interval
       ) {
         resolved = {
-          driverId: id,
           point: data.position,
           address: data.address,
           at: resolvedAt,
         };
-        address.value = data.address;
       }
+      reconcile();
     } catch {
-      /* Coordinates remain the fallback, including auth/provider/network failures. */
+      if (generation === current) {
+        retryAt.value = Date.now() + interval;
+        // A transport loss does not tell us whether Online demand reached
+        // the server. Retain it for a short probe after reconnect/relaunch;
+        // the server owns admission and never duplicates a provider attempt.
+        if (purpose === "online") onlineRetryAt = Date.now() + 1000;
+        persist();
+      }
+      // Coordinates remain usable for auth, network, quota and provider failures.
+    } finally {
+      inFlight = false;
+      pending.value = false;
+      schedule();
     }
+  }
+  async function refresh() {
+    reconcile();
+    if (!refreshDisabled.value) await request("refresh");
   }
   const stop = watch(
     () =>
@@ -108,21 +233,37 @@ export function useLocationAddress(
         driverId(),
         enabled(),
         visibility.value,
+        network.value,
+        policy.online(),
+        policy.connected(),
+        policy.installation(),
+        policy.onlineRequest(),
+        policy.transitionPending(),
       ] as const,
     () => {
-      void reconcile();
+      reconcile();
+      const requested = policy.onlineRequest();
+      if (requested !== lastOnlineRequest) {
+        lastOnlineRequest = requested;
+        queuedOnline = true;
+        onlineRetryAt = 0;
+        persist();
+      }
+      schedule();
     },
     { immediate: true },
   );
   onMounted(() => {
     timer = setInterval(() => {
-      void reconcile();
-    }, 30_000);
+      clock.value = Date.now();
+      schedule();
+    }, 1000);
   });
   onUnmounted(() => {
+    disposed = true;
     ++generation;
     clearInterval(timer);
     stop();
   });
-  return address;
+  return { address, pending, refresh, refreshDisabled, refreshHint };
 }

@@ -10,6 +10,7 @@ export interface NativeShiftStatus {
   phase: "off" | "connecting" | "online" | "reconnecting" | "gps-unavailable";
   detail: string;
   lastReportAt: number;
+  leaseRemainingMs?: number;
   lastFixAt?: number;
   stopSequence: number;
   lat: number;

@@ -144,6 +144,7 @@ async function actors(browser: Browser, delayRegionalPopup = false) {
     local: pages[1]!,
     contexts,
     region: regions[1]!,
+    ownRegion: regions[0]!,
     create,
     cancel,
     heldPopup,
@@ -169,11 +170,15 @@ test("a new public order is immediately claimable from another region and closes
     await actors(browser);
   try {
     const card = viewer
-      .getByRole("group", { name: "Регионы", exact: true })
-      .getByRole("button", { name: new RegExp(region.name) });
+      .getByRole("group", { name: "Регионы", exact: true, includeHidden: true })
+      .getByRole("button", {
+        name: new RegExp(region.name),
+        includeHidden: true,
+      });
     await expect(card.getByLabel("Заказов: 0. Машин на линии: 1")).toHaveText(
       "0:1",
     );
+    await expect(card).not.toHaveClass(/bg-emerald-100/);
     await card.click();
     const queue = viewer.getByRole("dialog", {
       name: "Заказы района",
@@ -181,6 +186,18 @@ test("a new public order is immediately claimable from another region and closes
     });
     await expect(queue.getByText(/Сейчас нет свободных заказов/)).toBeVisible();
     const order = await create("Доступен сразу в другом районе");
+    await expect(card.getByLabel("Заказов: 1. Машин на линии: 1")).toHaveText(
+      "1:1",
+    );
+    await expect(card).toHaveClass(/bg-emerald-100/);
+    const currentCard = local
+      .getByRole("group", { name: "Регионы", exact: true, includeHidden: true })
+      .getByRole("button", {
+        name: new RegExp(region.name),
+        includeHidden: true,
+      });
+    await expect(currentCard).toHaveClass(/bg-emerald-100/);
+    await expect(currentCard).toHaveClass(/ring-blue-500/);
     await expect(
       queue.getByText("Доступен сразу в другом районе", { exact: true }),
     ).toBeVisible();
@@ -201,10 +218,11 @@ test("a new public order is immediately claimable from another region and closes
       .getByRole("dialog", { name: "Управление поездкой", exact: true })
       .getByRole("button", { name: "Close", exact: true })
       .click();
-    // Assigned unfinished orders remain in the region's active-order score.
-    await expect(card.getByLabel("Заказов: 1. Машин на линии: 1")).toHaveText(
-      "1:1",
+    // Assigned work belongs to the trip feed, never the public queue score.
+    await expect(card.getByLabel("Заказов: 0. Машин на линии: 1")).toHaveText(
+      "0:1",
     );
+    await expect(card).not.toHaveClass(/bg-emerald-100/);
     await cancel(order.id);
     await expect(card.getByLabel("Заказов: 0. Машин на линии: 1")).toHaveText(
       "0:1",
@@ -231,10 +249,14 @@ test("an order-new packet delayed behind a successful claim cannot reopen a take
     deliverRegionalPopup,
     close,
   } = await actors(browser, true);
+  let releaseSnapshots = () => {};
   try {
     const localCard = local
-      .getByRole("group", { name: "Регионы", exact: true })
-      .getByRole("button", { name: new RegExp(region.name) });
+      .getByRole("group", { name: "Регионы", exact: true, includeHidden: true })
+      .getByRole("button", {
+        name: new RegExp(region.name),
+        includeHidden: true,
+      });
     await localCard.click();
     const localQueue = local.getByRole("dialog", {
       name: "Заказы района",
@@ -244,8 +266,11 @@ test("an order-new packet delayed behind a successful claim cannot reopen a take
       localQueue.getByText(/Сейчас нет свободных заказов/),
     ).toBeVisible();
     await viewer
-      .getByRole("group", { name: "Регионы", exact: true })
-      .getByRole("button", { name: new RegExp(region.name) })
+      .getByRole("group", { name: "Регионы", exact: true, includeHidden: true })
+      .getByRole("button", {
+        name: new RegExp(region.name),
+        includeHidden: true,
+      })
       .click();
     const remoteQueue = viewer.getByRole("dialog", {
       name: "Заказы района",
@@ -263,9 +288,60 @@ test("an order-new packet delayed behind a successful claim cannot reopen a take
         exact: true,
       }),
     ).toBeVisible();
+    let capturedSnapshots = 0;
+    let captured!: () => void;
+    const snapshotsCaptured = new Promise<void>((resolve) => {
+      captured = resolve;
+    });
+    const heldSnapshots = new Promise<void>((resolve) => {
+      releaseSnapshots = resolve;
+    });
+    for (const path of ["**/api/districts", "**/api/orders/available?*"]) {
+      await local.route(
+        path,
+        async (route) => {
+          const response = await route.fetch();
+          if (++capturedSnapshots === 2) captured();
+          await heldSnapshots;
+          await route.fulfill({ response });
+        },
+        { times: 1 },
+      );
+    }
+    await local.evaluate(() =>
+      document.dispatchEvent(new Event("visibilitychange")),
+    );
+    await snapshotsCaptured;
     await remoteQueue
       .getByRole("button", { name: "Принять заказ", exact: true })
       .click();
+    await expect(
+      localQueue.getByText("Позднее событие уже принятого заказа", {
+        exact: true,
+      }),
+    ).not.toBeVisible();
+    await expect(
+      localCard.getByLabel("Заказов: 0. Машин на линии: 1"),
+    ).toHaveText("0:1");
+    await expect(localCard).not.toHaveClass(/bg-emerald-100/);
+    // Both HTTP replies describe the queue before the rival claim. Neither
+    // may restore its score, green card or a now-unavailable order row.
+    const oldReplies = [
+      local.waitForResponse("**/api/districts"),
+      local.waitForResponse("**/api/orders/available?*"),
+    ];
+    releaseSnapshots();
+    for (const reply of await Promise.all(oldReplies)) await reply.finished();
+    await local.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    await expect(
+      localCard.getByLabel("Заказов: 0. Машин на линии: 1"),
+    ).toHaveText("0:1");
+    await expect(localCard).not.toHaveClass(/bg-emerald-100/);
     await expect(
       localQueue.getByText("Позднее событие уже принятого заказа", {
         exact: true,
@@ -290,6 +366,86 @@ test("an order-new packet delayed behind a successful claim cannot reopen a take
       local.getByRole("dialog", { name: "Предложение заказа", exact: true }),
     ).not.toBeVisible();
   } finally {
+    releaseSnapshots();
+    await close();
+  }
+});
+
+test("the current-region border follows fresh local GPS off shift and never the persisted shift region", async ({
+  browser,
+}) => {
+  const { viewer, contexts, region, ownRegion, close } = await actors(browser);
+  try {
+    await viewer
+      .getByRole("button", { name: "Уйти с линии", exact: true })
+      .click();
+    await viewer.reload();
+    const cards = viewer
+      .getByRole("group", { name: "Регионы", exact: true })
+      .getByRole("button");
+    // The server still remembers the previous region, but this page has no
+    // local GPS fix until requested. That old record cannot create a border.
+    await expect(cards.filter({ hasText: "Мой район" })).toHaveCount(0);
+    const uploads: string[] = [];
+    viewer.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        new URL(request.url()).pathname.endsWith("/driver/location")
+      )
+        uploads.push(request.url());
+    });
+    await contexts[0]!.setGeolocation({
+      latitude: 20,
+      longitude: 20,
+      accuracy: 10,
+    });
+    const gps = viewer.getByRole("button", {
+      name: "Включить GPS",
+      exact: true,
+    });
+    await gps.click();
+    await expect(gps).toHaveAttribute("data-state", "ready");
+    const current = cards.filter({ hasText: region.name });
+    await expect(current).toHaveAttribute("aria-current", "location");
+    await expect(current).toHaveClass(/ring-blue-500/);
+    await expect(current).not.toHaveClass(/bg-emerald-100/);
+    await expect(cards.filter({ hasText: ownRegion.name })).not.toHaveAttribute(
+      "aria-current",
+      "location",
+    );
+    await expect(viewer.getByLabel("Местоположение GPS")).toContainText(
+      region.name,
+    );
+    await contexts[0]!.setOffline(true);
+    await expect(cards.filter({ hasText: "Мой район" })).toHaveCount(0);
+    await expect(gps).toHaveAttribute("data-state", "ready");
+    await contexts[0]!.setOffline(false);
+    await expect(current).toHaveAttribute("aria-current", "location");
+    await contexts[0]!.setGeolocation({
+      latitude: 30,
+      longitude: 30,
+      accuracy: 10,
+    });
+    await gps.click();
+    await expect(gps).toHaveAttribute("data-state", "ready");
+    await expect(cards.filter({ hasText: "Мой район" })).toHaveCount(0);
+    await expect(viewer.getByLabel("Местоположение GPS")).toContainText(
+      "Вне районов",
+    );
+    await contexts[0]!.setGeolocation({
+      latitude: 20,
+      longitude: 20,
+      accuracy: 10,
+    });
+    await gps.click();
+    await expect(current).toHaveAttribute("aria-current", "location");
+    // Only advance the app clock after all real geolocation samples: browser
+    // geolocation timestamps come from the OS clock, which Playwright does not advance.
+    await viewer.clock.install();
+    await viewer.clock.fastForward(61_000);
+    await expect(cards.filter({ hasText: "Мой район" })).toHaveCount(0);
+    expect(uploads).toEqual([]);
+  } finally {
     await close();
   }
 });
@@ -301,10 +457,13 @@ test("private expiry publishes into an already open remote queue without a secon
   const { viewer, local, region, create, cancel, close } =
     await actors(browser);
   try {
-    await viewer
-      .getByRole("group", { name: "Регионы", exact: true })
-      .getByRole("button", { name: new RegExp(region.name) })
-      .click();
+    const card = viewer
+      .getByRole("group", { name: "Регионы", exact: true, includeHidden: true })
+      .getByRole("button", {
+        name: new RegExp(region.name),
+        includeHidden: true,
+      });
+    await card.click();
     const queue = viewer.getByRole("dialog", {
       name: "Заказы района",
       exact: true,
@@ -323,9 +482,17 @@ test("private expiry publishes into an already open remote queue without a secon
     await expect(
       queue.getByText("Личное предложение стало общим", { exact: true }),
     ).not.toBeVisible();
+    await expect(card.getByLabel("Заказов: 0. Машин на линии: 1")).toHaveText(
+      "0:1",
+    );
+    await expect(card).not.toHaveClass(/bg-emerald-100/);
     await expect(
       queue.getByText("Личное предложение стало общим", { exact: true }),
     ).toBeVisible({ timeout: 25000 });
+    await expect(card.getByLabel("Заказов: 1. Машин на линии: 1")).toHaveText(
+      "1:1",
+    );
+    await expect(card).toHaveClass(/bg-emerald-100/);
     await expect(incoming).not.toBeVisible();
     await expect(
       viewer.getByRole("dialog", { name: "Предложение заказа", exact: true }),
@@ -353,8 +520,11 @@ test("the regional public popup expires after 20 seconds while the order stays a
     await expect(incoming.getByRole("timer")).toHaveText(/(?:1[0-9]|20) сек/);
     await expect(incoming).not.toBeVisible({ timeout: 25000 });
     await local
-      .getByRole("group", { name: "Регионы", exact: true })
-      .getByRole("button", { name: new RegExp(region.name) })
+      .getByRole("group", { name: "Регионы", exact: true, includeHidden: true })
+      .getByRole("button", {
+        name: new RegExp(region.name),
+        includeHidden: true,
+      })
       .click();
     const queue = local.getByRole("dialog", {
       name: "Заказы района",

@@ -197,6 +197,7 @@ model DriverDevice {
   sessionVersion Int @default(0) @map("session_version")
   firstSeenAt DateTime @default(now()) @map("first_seen_at")
   lastLoginAt DateTime @default(now()) @map("last_login_at")
+  addressConvenienceAt DateTime? @map("address_convenience_at") @db.Timestamptz
 
   @@unique([driverId, deviceId])
   @@map("driver_devices")
@@ -502,6 +503,9 @@ model DriverAddressState {
   sourceLng Decimal @map("source_lng") @db.Decimal(10, 7)
   address String?
   cacheUntil DateTime? @map("cache_until") @db.Timestamptz
+  purpose String @default("shift")
+  onlineExceptionReady Boolean @default(false) @map("online_exception_ready")
+  pendingUntil DateTime? @map("pending_until") @db.Timestamptz
 
   @@map("driver_address_state")
 }

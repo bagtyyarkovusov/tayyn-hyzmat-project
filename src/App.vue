@@ -33,7 +33,6 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
 } from "@/shared/ui/dropdown-menu";
-import { driverState } from "@/features/driver/useDriver";
 import { useDriverNotifications } from "@/features/driver/notifications";
 import { useDriverPermissionOnboarding } from "@/features/driver/permissionOnboarding";
 import AdminMessageAlert from "@/features/dispatcher/AdminMessageAlert.vue";
@@ -197,33 +196,16 @@ async function logout() {
     <div class="min-w-0 flex-1">
       <header class="workspace-header">
         <div class="flex min-w-0 items-center gap-3">
-          <BrandLogo compact /><span class="connection"
+          <BrandLogo compact /><span v-if="!driver" class="connection"
             ><i
               :class="{
-                online: driver
-                  ? driverState.profile?.isOnline &&
-                    driverState.profile?.canControlShift !== false
-                  : session.state.connected,
+                online: session.state.connected,
                 'connection-pulse':
                   visibility === 'visible' &&
                   networkOnline &&
-                  session.state.connected &&
-                  (!driver ||
-                    (driverState.profile?.isOnline &&
-                      driverState.profile?.canControlShift !== false &&
-                      driverState.gpsReady)),
+                  session.state.connected,
               }"
-            />{{
-              driver
-                ? driverState.profile?.canControlShift === false
-                  ? "Смена на другом устройстве"
-                  : driverState.profile?.isOnline
-                    ? "На линии"
-                    : "Не на линии"
-                : session.state.connected
-                  ? "На связи"
-                  : "Подключение…"
-            }}</span
+            />{{ session.state.connected ? "На связи" : "Подключение…" }}</span
           >
         </div>
         <div class="flex shrink-0 items-center gap-2">

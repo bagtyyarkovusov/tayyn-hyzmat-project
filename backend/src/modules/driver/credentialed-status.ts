@@ -91,6 +91,14 @@ export async function updateCredentialedStatus(
       if (!balance.amount.greaterThan(0))
         throw ApiError.forbidden("Пополните баланс, чтобы выйти на линию");
     }
+    // Only a real explicit shift acquisition may make the one off-shift
+    // convenience attempt exempt from the next shared cooldown. Merely posting
+    // purpose=online to the address endpoint cannot grant this exception.
+    if (data.isOnline === true && !driver.isOnline && data.position)
+      await tx.driverAddressState.updateMany({
+        where: { driverId, purpose: "off-shift" },
+        data: { onlineExceptionReady: true },
+      });
     const active = await tx.order.findFirst({
       where: { driverId, status: { in: ["ACCEPTED", "WAITING", "STARTED"] } },
       select: { id: true },

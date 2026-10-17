@@ -8,8 +8,16 @@ import {
   Check,
   MapPinOff,
   LoaderCircle,
+  RefreshCw,
+  Wifi,
+  WifiOff,
 } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+} from "@/shared/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -17,10 +25,11 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/shared/ui/dialog";
-import { useDriver, canControlShift } from "./useDriver";
+import { useDriver, canControlShift, connectionRecovering } from "./useDriver";
 import { useDriverAddress } from "./useDriverAddress";
 import { nativeAndroid } from "./nativeShift";
 import { money } from "./model";
+import { localRegionAt } from "./local-region";
 import IncomingOrder from "./components/IncomingOrder.vue";
 import DriverFeedback from "./components/DriverFeedback.vue";
 import ActiveTripFeed from "./components/ActiveTripFeed.vue";
@@ -34,10 +43,29 @@ const {
   dismissIncoming,
   declinePrivateOffer,
 } = useDriver();
-const address = useDriverAddress(
+const {
+  address,
+  pending: addressPending,
+  refresh: refreshAddress,
+  refreshDisabled: addressRefreshDisabled,
+  refreshHint: addressRefreshHint,
+} = useDriverAddress(
   () => state.position,
   () => state.profile?.id,
-  () => state.gpsReady && !!state.profile?.isOnline && canControlShift(),
+  () =>
+    state.gpsFixReady &&
+    state.clock - state.locationUpdatedAt < 60_000 &&
+    (!state.profile?.isOnline || canControlShift()),
+  {
+    online: () => !!state.profile?.isOnline && canControlShift(),
+    capturedAt: () => state.locationUpdatedAt,
+    onlineRequest: () => state.addressLookupRequest,
+    transitionPending: () => state.busy,
+    connected: () =>
+      nativeAndroid && state.profile?.isOnline && canControlShift()
+        ? state.nativeConnected
+        : session.state.connected,
+  },
 );
 function closeIncoming() {
   if (state.incoming?.privateOfferExpiresAt) void declinePrivateOffer();
@@ -49,9 +77,25 @@ const networkOnline = useOnline();
 const connectionReady = computed(
   () =>
     networkOnline.value &&
-    (nativeAndroid && state.profile?.isOnline
+    (nativeAndroid && state.profile?.isOnline && canControlShift()
       ? state.nativeConnected
       : session.state.connected),
+);
+const connectionState = computed(() =>
+  connectionReady.value
+    ? "ready"
+    : connectionRecovering()
+      ? "reconnecting"
+      : "disconnected",
+);
+const connectionDescription = computed(() =>
+  connectionState.value === "ready"
+    ? "Связь с диспетчером установлена. GPS и смена показаны отдельно."
+    : connectionState.value === "reconnecting"
+      ? "Переподключаемся к диспетчеру. Смена сохраняется до 60 секунд. Принятая поездка остаётся за вами."
+      : !networkOnline.value
+        ? "Нет интернета. После восстановления связи нажмите кнопку выхода на линию, чтобы начать смену."
+        : "Нет связи с диспетчером. Пробуем подключиться. Когда связь восстановится, нажмите кнопку выхода на линию.",
 );
 const localFixFresh = computed(
   () => state.gpsFixReady && state.clock - state.locationUpdatedAt < 60_000,
@@ -134,10 +178,16 @@ const tripOpen = ref(false);
 const selectedDistrict = computed(() =>
   state.districts.find((d) => d.id === selected.value),
 );
+const currentLocalRegion = computed(() =>
+  localFixFresh.value && state.position
+    ? localRegionAt(state.districts, state.position)
+    : null,
+);
 const ownRegion = computed(
-  () =>
-    state.districts.find((d) => d.id === state.profile?.districtId)?.name ||
-    "Вне районов",
+  () => currentLocalRegion.value?.name || "Вне районов",
+);
+const highlightedRegionId = computed(() =>
+  connectionReady.value ? currentLocalRegion.value?.id : undefined,
 );
 const blockers = computed(() => {
   const messages: string[] = [];
@@ -190,7 +240,7 @@ watch(
         <div class="flex shrink-0 items-center gap-3">
           <div
             role="group"
-            aria-label="Разрешения устройства"
+            aria-label="GPS и связь"
             class="flex items-center rounded-full bg-secondary/60 px-1"
           >
             <Button
@@ -231,6 +281,46 @@ watch(
                 aria-hidden="true"
               />
             </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger as-child>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="size-11 rounded-full"
+                  :class="
+                    connectionState === 'ready'
+                      ? 'bg-success/10 text-success'
+                      : connectionState === 'reconnecting'
+                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                        : 'text-destructive'
+                  "
+                  :data-state="connectionState"
+                  aria-label="Связь с диспетчером"
+                  :aria-description="connectionDescription"
+                  :title="connectionDescription"
+                >
+                  <LoaderCircle
+                    v-if="connectionState === 'reconnecting'"
+                    class="size-5 motion-safe:animate-spin"
+                    aria-hidden="true"
+                  />
+                  <Wifi
+                    v-else-if="connectionState === 'ready'"
+                    class="size-5"
+                    aria-hidden="true"
+                  />
+                  <WifiOff v-else class="size-5" aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                class="max-w-[min(18rem,calc(100vw-2rem))] p-3"
+              >
+                <p class="text-sm leading-relaxed">
+                  {{ connectionDescription }}
+                </p>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
           <Button
             variant="outline"
@@ -260,7 +350,9 @@ watch(
               state.locationSyncPending ||
               !state.profile ||
               (!state.profile.isOnline &&
-                (Number(state.balance?.amount ?? 0) <= 0 || !localFixFresh))
+                (Number(state.balance?.amount ?? 0) <= 0 ||
+                  !localFixFresh ||
+                  !connectionReady))
             "
             @click="setOnline"
           >
@@ -294,13 +386,11 @@ watch(
           <MapPin class="size-4 shrink-0 text-primary" />
           <span class="flex min-w-0 flex-col leading-snug">
             <span class="truncate">{{
-              locationReady
+              localFixFresh
                 ? ownRegion
-                : localFixFresh
-                  ? "GPS этого телефона"
-                  : state.position
-                    ? "Последнее положение"
-                    : "Ожидаем GPS"
+                : state.position
+                  ? "Последнее положение"
+                  : "Ожидаем GPS"
             }}</span>
             <span
               v-if="state.position"
@@ -320,6 +410,23 @@ watch(
             </span>
           </span>
         </div>
+        <Button
+          v-if="state.profile?.isOnline && canControlShift()"
+          variant="ghost"
+          size="icon"
+          class="size-10 shrink-0 rounded-full text-muted-foreground"
+          aria-label="Обновить адрес"
+          :title="addressRefreshHint"
+          :aria-description="addressRefreshHint"
+          :disabled="addressRefreshDisabled"
+          @click="refreshAddress"
+        >
+          <RefreshCw
+            :class="addressPending ? 'motion-safe:animate-spin' : ''"
+            class="size-4"
+            aria-hidden="true"
+          />
+        </Button>
       </div>
       <DriverFeedback
         :blockers="state.active && !shiftElsewhere ? [] : blockers"
@@ -365,27 +472,28 @@ watch(
         :key="d.id"
         class="flex min-h-0 min-w-0 flex-col items-center justify-center gap-2 rounded-xl border p-2 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         :class="[
-          d.activeOrders > 0
+          d.publicAvailableOrders > 0
             ? 'border-emerald-300 bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-900'
             : 'bg-card hover:bg-secondary/50',
-          d.id === state.profile?.districtId ? 'ring-1 ring-primary' : '',
+          d.id === highlightedRegionId ? 'ring-2 ring-blue-500' : '',
         ]"
+        :aria-current="d.id === highlightedRegionId ? 'location' : undefined"
         :disabled="shiftElsewhere || !locationReady || !state.profile?.isOnline"
         @click="selected = d.id"
       >
         <span
           class="region-name break-words text-[13px] font-medium leading-tight"
           >{{ d.name
-          }}<span v-if="d.id === state.profile?.districtId" class="sr-only">
+          }}<span v-if="d.id === highlightedRegionId" class="sr-only">
             · Мой район</span
           ></span
         >
         <strong
           class="region-score text-2xl font-semibold leading-none tabular-nums"
-          :aria-label="`Заказов: ${d.activeOrders}. Машин на линии: ${d.onlineDrivers ?? d.freeDrivers}`"
+          :aria-label="`Заказов: ${d.publicAvailableOrders}. Машин на линии: ${d.onlineDrivers ?? d.freeDrivers}`"
           >{{
             locationReady && state.profile?.isOnline
-              ? `${d.activeOrders}:${d.onlineDrivers ?? d.freeDrivers}`
+              ? `${d.publicAvailableOrders}:${d.onlineDrivers ?? d.freeDrivers}`
               : "—:—"
           }}</strong
         >

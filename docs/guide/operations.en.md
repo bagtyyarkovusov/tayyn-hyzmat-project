@@ -16,7 +16,9 @@ After the first verified driver login, the APK asks for precise location, then n
 
 ## What the driver sees
 
-The home screen shows all saved dispatch regions as a compact grid. Each region card shows active orders first and online drivers second: orders:drivers. Active orders include accepted trips until completion or cancellation. The count is not the number available to claim; a claimed offer disappears from the queue even while that region count stays unchanged. The driver cannot choose a region manually. The server assigns the current region from the driver's fresh GPS point and the saved polygon. A point outside every polygon shows **Outside region** and the real coordinates. A region centre is only a fallback coordinate, never proof of the driver's exact pickup.
+The home screen shows all saved dispatch regions as a compact grid. Each card reads **available public orders : drivers on shift**. The left count includes only unassigned public orders available to claim; accepted, waiting-for-customer and started trips are excluded. The right count includes working drivers who are already busy. A successful claim removes the order from every open queue and decreases the left count through live updates.
+
+A green card means that region has available public orders. A blue border marks this phone's current saved region only while local GPS is fresh, accurate enough and permitted, and internet is connected. It may appear off shift; it disappears without internet, without usable GPS or outside all saved polygons. Green and blue are independent: another region can be green while this region has the blue border. Starting a shift enables live counts and claiming. A green GPS status alone does not mean the phone is online or on shift. The driver cannot choose a region manually. Outside all polygons, show Outside region and the phone's coordinates; never use a region centre as a customer's exact pickup.
 
 The driver can open orders, map, chat, and profile from the bottom navigation. The current trip shows its price, call action and next step above the grid. Open its details dialog for route information and permitted cancellation. Region order lists use dialogs. Message history scrolls inside the chat; Enter sends a message and Shift+Enter adds a line.
 
@@ -28,6 +30,8 @@ GPS, network, dispatcher connection, and availability are different facts:
 - **Connected** means the app can reach the API and Socket.IO. It is required for live work.
 - **Online** means the driver explicitly started a shift and the server accepted a fresh location report.
 - **Outside region** describes the GPS point. It does not mean GPS is broken.
+
+The home controls run left to right: GPS, dispatcher connection, shift power. Tap the connection icon for an explanation. It is green when the dispatcher connection is confirmed, including off shift; amber only during the existing shift recovery lease; red when disconnected outside that lease. After expiry, the power button returns to Offline. The connection keeps retrying; when it is healthy again, tap the same power button to start a new shift. The top warning banner remains, and the redundant connection dot beside the logo is removed.
 
 The Online action must confirm a fresh location with the server before it turns green. Address lookup never blocks this action. A stale or missing GPS report stops new offers and eventually expires the online lease. An accepted trip remains assigned while the driver reconnects.
 
@@ -110,7 +114,9 @@ Open Profile and expand a history entry to review its TMT price, status, region 
 
 ## Driver addresses and the Yandex quota
 
-GPS and polygon matching decide eligibility. Address lookup only adds a street or building label. The server policy is merged in PR [#68](https://github.com/bagtyyarkovusov/tayyn-hyzmat-project/pull/68) (`cf8bf84`); a direct live request now succeeds with the configured allowed Referer. Automatic lookups remain disabled until the daily quota reset period and timezone are confirmed. It looks up a visible driver location no more than once per five minutes after meaningful movement, shares a daily cap across devices and restarts, keeps 20% in reserve, backs off on provider errors, and falls back to coordinates. A stale address is hidden when the driver moves. A provider failure or exhausted quota never blocks GPS or going online.
+GPS and saved polygons decide the region and work eligibility. Address text is optional. With fresh precise GPS, internet and the visible home-screen location view, a signed-in phone may fetch one convenience address before the shift. This sends a transient point for lookup, not a shared tracking update. It does not change the dispatcher map. The server remembers the installation's attempt, so reload, relaunch and reconnect do not repeat it.
+
+After you explicitly start a shift successfully, the app requests a fresh address again. That first on-shift request may bypass the convenience lookup's five-minute wait once; repeatedly tapping Online cannot bypass the limit. The visible home-screen location view then refreshes every five minutes without requiring movement. Hidden/background screens pause. Returning or reconnecting requests one update only if due, without replaying missed intervals. Manual refresh shares the same per-driver limit across phones and restarts. The shared daily budget keeps a 20% reserve and backs off on provider failures. Missing or stale addresses fall back to region and coordinates. Dispatcher screens do not request or display address labels. Lookup failure never blocks work; Yandex documents a midnight Moscow reset. The isolated APK environment is the only planned active consumer of this key; confirm deployed variables before relying on address delivery. Shared development stays disabled.
 
 ## Analytics
 
@@ -136,7 +142,7 @@ Today analytics (#67) is merged. Pending: provider activation checks; physical I
 
 ## GPS on two phones and account safety
 
-Off shift, GPS only obtains a local fix on that phone. It does not upload coordinates or fetch an address. Each phone shows its own coordinates. Tap Online to submit the fresh fix and start the shift together; only the working phone then sends regular location reports. Another signed-in phone cannot overwrite that location. Explicit Offline stops reports even if a trip remains assigned. The dispatcher sees the last reported point and time, with an unfinished-trip warning where needed.
+Off shift, each phone shows its own GPS point without updating shared tracking. One convenience address lookup may use that transient point without changing the dispatcher map. Tap Online to submit a fresh tracking fix and start the shift together; only the working phone then reports regular locations. Another phone cannot overwrite it. Explicit Offline stops tracking even during an assigned trip. The dispatcher keeps the last reported point and time, with an unfinished-trip warning when needed.
 
 Use **Выйти на всех устройствах** to end all sessions and the shift without changing the password, balance or assigned trip. Use **Заблокировать** for a temporary access restriction: enter a required reason, then confirm the warning. Access ends immediately even during a trip; the trip stays assigned with no automatic cancellation, reassignment or refund. Contact the driver and resolve the trip separately. **Разблокировать** permits a new login. **Удалить аккаунт** is permanent and has no recovery action; use Block when you intend a temporary restriction.
 
