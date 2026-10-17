@@ -3,7 +3,11 @@ const maximumPlaybackMs = 750;
 
 /** Optional browser audio. Banners remain available when coordination or audio fails. */
 export function createAdminChatSound(adminId: () => string | null) {
+  // Logout clears the reactive account before this shell unmounts. Cleanup
+  // must still target the account that received this tab's message preview.
+  const account = adminId();
   let disposed = false;
+  let requestedMessageId: string | null = null;
   let playing: { id: string; audio: HTMLAudioElement } | null = null;
   let deadline: ReturnType<typeof setTimeout> | undefined;
   const cancelled = new Set<string>();
@@ -33,7 +37,6 @@ export function createAdminChatSound(adminId: () => string | null) {
   }
 
   function storageChanged(event: StorageEvent) {
-    const account = adminId();
     if (!account || event.key !== `${key(account)}.cancel` || !event.newValue)
       return;
     try {
@@ -47,7 +50,6 @@ export function createAdminChatSound(adminId: () => string | null) {
 
   function cancel(id: string) {
     rememberCancellation(id);
-    const account = adminId();
     if (!account) return;
     try {
       // Dismiss is local UI state, not a shared read acknowledgement. Only the
@@ -62,10 +64,11 @@ export function createAdminChatSound(adminId: () => string | null) {
   }
 
   async function play(id: string, isCurrent: () => boolean) {
-    const account = adminId();
     const eligible = () =>
       !disposed && adminId() === account && !cancelled.has(id) && isCurrent();
-    if (!account || !navigator.locks || !eligible()) return;
+    if (!account || !eligible()) return;
+    requestedMessageId = id;
+    if (!navigator.locks) return;
     try {
       await navigator.locks.request(key(account), () => {
         if (!eligible()) return;
@@ -108,7 +111,9 @@ export function createAdminChatSound(adminId: () => string | null) {
   }
 
   function dispose() {
+    if (disposed) return;
     disposed = true;
+    if (requestedMessageId) cancel(requestedMessageId);
     window.removeEventListener("storage", storageChanged);
     stopLocal();
   }

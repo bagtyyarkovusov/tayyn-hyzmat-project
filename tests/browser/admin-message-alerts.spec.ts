@@ -731,3 +731,169 @@ test("cross-tab dismissal cancels a chime still waiting for the browser lock", a
     await close();
   }
 });
+
+test("logging out a silent tab stops that message's sound in another tab without reading it", async ({
+  browser,
+}) => {
+  const { adminPage, sameBrowserPage, send, close } = await fixture(browser);
+  let releaseLogout = () => {};
+  try {
+    await Promise.all([adminPage, sameBrowserPage].map(dashboard));
+    const now = Date.now();
+    await Promise.all([
+      adminPage.clock.pauseAt(now),
+      sameBrowserPage.clock.pauseAt(now),
+    ]);
+    await send("Выйти из тихой вкладки");
+    await expect
+      .poll(
+        async () =>
+          (await sound(adminPage)).active +
+          (await sound(sameBrowserPage)).active,
+      )
+      .toBe(1);
+    const audible = (await sound(adminPage)).active
+      ? adminPage
+      : sameBrowserPage;
+    const silent = audible === adminPage ? sameBrowserPage : adminPage;
+    releaseLogout = await delayLogout(silent);
+    await silent.getByRole("button", { name: "Выйти", exact: true }).click();
+    await expect(silent).toHaveURL(/adminLogin/);
+    await expect.poll(async () => (await sound(audible)).active).toBe(0);
+    await expect(
+      audible.getByRole("alert", { name: "Новое сообщение" }),
+    ).toContainText("Выйти из тихой вкладки");
+    await expect(
+      audible.getByRole("alert", { name: "Новое сообщение" }),
+    ).toContainText("1 непрочитанных");
+  } finally {
+    releaseLogout();
+    await close();
+  }
+});
+
+test("logging out one tab cancels that message's pending sound in another tab", async ({
+  browser,
+}) => {
+  const { adminPage, sameBrowserPage, send, close } = await fixture(browser);
+  let releaseLogout = () => {};
+  try {
+    await Promise.all([adminPage, sameBrowserPage].map(dashboard));
+    await adminPage.evaluate(() => {
+      const admin = JSON.parse(localStorage.getItem("tayyn.admin.user")!);
+      void navigator.locks.request(
+        `tayyn.admin.chat-sound.${admin.id}`,
+        async () => {
+          await new Promise<void>((release) =>
+            Object.assign(window, { __releaseAdminSoundLock: release }),
+          );
+        },
+      );
+    });
+    await expect
+      .poll(() =>
+        adminPage.evaluate(() =>
+          Boolean(
+            (window as unknown as { __releaseAdminSoundLock?: () => void })
+              .__releaseAdminSoundLock,
+          ),
+        ),
+      )
+      .toBe(true);
+    await send("Ожидающий звук после выхода из другой вкладки");
+    for (const page of [adminPage, sameBrowserPage])
+      await expect(
+        page.getByRole("alert", { name: "Новое сообщение" }),
+      ).toBeVisible();
+    releaseLogout = await delayLogout(sameBrowserPage);
+    await sameBrowserPage
+      .getByRole("button", { name: "Выйти", exact: true })
+      .click();
+    await expect(sameBrowserPage).toHaveURL(/adminLogin/);
+    await adminPage.evaluate(() =>
+      (
+        window as unknown as { __releaseAdminSoundLock: () => void }
+      ).__releaseAdminSoundLock(),
+    );
+    await expect
+      .poll(() =>
+        adminPage.evaluate(
+          async () => (await navigator.locks.query()).pending?.length ?? 0,
+        ),
+      )
+      .toBe(0);
+    expect((await sound(adminPage)).plays).toHaveLength(0);
+    await expect(
+      adminPage.getByRole("alert", { name: "Новое сообщение" }),
+    ).toContainText("Ожидающий звук после выхода из другой вкладки");
+  } finally {
+    releaseLogout();
+    await close();
+  }
+});
+
+async function delayLogout(page: Page) {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  // Keep the real request pending while checking local shell teardown. The
+  // existing server-wide admin logout must not hide missing tab cleanup.
+  await page.route("**/auth/logout", async (route) => {
+    await gate;
+    await route.continue().catch(() => {});
+  });
+  return release;
+}
+
+test("unmounting a silent dashboard tab silences its preview without signing out the other tab", async ({
+  browser,
+}) => {
+  const { adminPage, sameBrowserPage, send, close } = await fixture(browser);
+  try {
+    await Promise.all([adminPage, sameBrowserPage].map(dashboard));
+    const now = Date.now();
+    await Promise.all([
+      adminPage.clock.pauseAt(now),
+      sameBrowserPage.clock.pauseAt(now),
+    ]);
+    await send("Покинуть экран и убрать только звук");
+    await expect
+      .poll(
+        async () =>
+          (await sound(adminPage)).active +
+          (await sound(sameBrowserPage)).active,
+      )
+      .toBe(1);
+    const audible = (await sound(adminPage)).active
+      ? adminPage
+      : sameBrowserPage;
+    const silent = audible === adminPage ? sameBrowserPage : adminPage;
+    // Public browser-history navigation makes the SPA leave its dashboard
+    // shell without changing credentials or issuing a logout/read command.
+    await silent.evaluate(() => {
+      history.pushState(null, "", "/adminLogin");
+      dispatchEvent(new PopStateEvent("popstate", { state: history.state }));
+    });
+    await expect(
+      silent.getByRole("alert", { name: "Новое сообщение" }),
+    ).toHaveCount(0);
+    await expect.poll(async () => (await sound(audible)).active).toBe(0);
+    await expect(
+      audible.getByRole("alert", { name: "Новое сообщение" }),
+    ).toContainText("Покинуть экран и убрать только звук");
+    await expect(audible.getByRole("heading", { name: "Обзор" })).toBeVisible();
+    const unread = await audible.evaluate(async () => {
+      const response = await fetch("/api/admin/messages/unread", {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("openride.admin.accessToken")}`,
+        },
+      });
+      return { status: response.status, body: await response.json() };
+    });
+    expect(unread.status).toBe(200);
+    expect(unread.body.driverIds).not.toHaveLength(0);
+  } finally {
+    await close();
+  }
+});
