@@ -5,6 +5,7 @@ import { X } from "lucide-vue-next";
 import { adminApi } from "@/shared/api";
 import { adminSession } from "@/features/auth/session";
 import { Button } from "@/shared/ui/button";
+import { createAdminChatSound } from "./adminChatSound";
 
 type IncomingMessage = {
   id: string;
@@ -19,7 +20,8 @@ const router = useRouter();
 const message = ref<IncomingMessage | null>(null);
 const unreadDrivers = ref(new Set<string>());
 const seen = new Set<string>();
-let audio: HTMLAudioElement | null = null;
+const visible = ref(!document.hidden);
+const sound = createAdminChatSound(() => adminSession.state.user?.id ?? null);
 let stopMessage: (() => void) | undefined;
 let stopRead: (() => void) | undefined;
 let stopConnect: (() => void) | undefined;
@@ -32,6 +34,9 @@ const activeDriverId = computed(() => {
   return match?.[1] || null;
 });
 const unreadCount = computed(() => unreadDrivers.value.size);
+const visibleDriverId = computed(() =>
+  visible.value ? activeDriverId.value : null,
+);
 
 function isIncoming(value: unknown): value is IncomingMessage {
   if (!value || typeof value !== "object") return false;
@@ -43,28 +48,20 @@ function isIncoming(value: unknown): value is IncomingMessage {
   );
 }
 
-function playSound() {
-  try {
-    audio ??= new Audio("/notification.mp3");
-    audio.currentTime = 0;
-    void audio.play().catch(() => {
-      // Browsers may block an unsolicited sound until the dispatcher interacts.
-    });
-  } catch {
-    /* Audio is an enhancement; the visible alert remains authoritative. */
-  }
-}
-
 function showIncoming(payload: unknown) {
   if (!isIncoming(payload) || seen.has(payload.id)) return;
   seen.add(payload.id);
   // Bound this tab-local deduplication set during long-running shifts.
   if (seen.size > 500) seen.delete(seen.values().next().value as string);
-  if (activeDriverId.value === payload.driverId) return;
+  if (visibleDriverId.value === payload.driverId) return;
   activityRevision++;
   unreadDrivers.value = new Set(unreadDrivers.value).add(payload.driverId);
+  if (message.value) sound.cancel(message.value.id);
   message.value = payload;
-  playSound();
+  void sound.play(
+    payload.id,
+    () => mounted && message.value?.id === payload.id,
+  );
   void refreshUnread();
 }
 
@@ -79,31 +76,38 @@ async function refreshUnread() {
       return;
     unreadDrivers.value = new Set(response.data.driverIds);
     if (message.value && !unreadDrivers.value.has(message.value.driverId))
-      message.value = null;
+      dismiss();
   } catch {
     // Keep live alerts if the canonical unread snapshot is unavailable.
   }
 }
 
 function dismiss() {
+  if (message.value) sound.cancel(message.value.id);
   message.value = null;
 }
 
 function openConversation() {
   const driverId = message.value?.driverId;
   if (!driverId) return;
-  message.value = null;
+  dismiss();
   void router.push(`/adminChat/${driverId}`);
+}
+
+function visibilityChanged() {
+  visible.value = !document.hidden;
 }
 
 onMounted(() => {
   mounted = true;
+  document.addEventListener("visibilitychange", visibilityChanged);
   stopMessage = adminSession.on("driver:message", showIncoming);
   stopRead = adminSession.on(
     "admin:messages-read",
-    (payload: { driverId?: string }) => {
+    (payload: { driverId?: string; throughMessageId?: string }) => {
       if (!payload?.driverId) return;
       activityRevision++;
+      if (payload.throughMessageId) sound.cancel(payload.throughMessageId);
       // A read cursor may cover only older messages in this conversation.
       // Reconcile with the server instead of clearing newer unread alerts.
       void refreshUnread();
@@ -113,8 +117,8 @@ onMounted(() => {
   void refreshUnread();
 });
 
-watch(activeDriverId, (driverId) => {
-  if (driverId && message.value?.driverId === driverId) message.value = null;
+watch(visibleDriverId, (driverId) => {
+  if (driverId && message.value?.driverId === driverId) dismiss();
 });
 
 onUnmounted(() => {
@@ -123,14 +127,14 @@ onUnmounted(() => {
   stopMessage?.();
   stopRead?.();
   stopConnect?.();
-  audio?.pause();
-  audio = null;
+  document.removeEventListener("visibilitychange", visibilityChanged);
+  sound.dispose();
 });
 </script>
 
 <template>
   <div
-    v-if="message && activeDriverId !== message.driverId"
+    v-if="message && visibleDriverId !== message.driverId"
     class="fixed inset-x-3 top-3 z-[70] mx-auto w-[calc(100%-1.5rem)] max-w-md"
   >
     <div
