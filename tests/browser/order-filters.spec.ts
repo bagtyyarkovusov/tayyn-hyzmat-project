@@ -1,10 +1,10 @@
 import { test, expect } from "@playwright/test";
 import { createRequire } from "node:module";
+import { loginFixture, installFixtureSession } from "./helpers/device-session";
 const require = createRequire(
   new URL("../../backend/package.json", import.meta.url),
 );
 const { PrismaClient } = require("@prisma/client");
-const jwt = require("jsonwebtoken");
 if (process.env.DISPOSABLE_BROWSER_TEST !== "true")
   throw new Error("Use disposable browser runner");
 
@@ -13,19 +13,28 @@ test("dispatcher order lifecycle lists are exclusive and default to unclaimed wa
 }) => {
   const prisma = new PrismaClient();
   const orderIds: string[] = [];
+  let adminUserId: string | undefined;
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 },
   });
   try {
-    const admin = await prisma.user.findUniqueOrThrow({
+    const seededAdmin = await prisma.user.findUniqueOrThrow({
       where: { phone: "+99360000000" },
-      include: { admin: true },
     });
-    const token = jwt.sign(
-      { sub: admin.id, role: "ADMIN", adminId: admin.admin.id },
-      process.env.JWT_ACCESS_SECRET,
-      { expiresIn: "5m" },
-    );
+    const admin = await prisma.user.create({
+      data: {
+        phone: "+99360888881",
+        fullName: "Диспетчер фильтра заказов",
+        role: "ADMIN",
+        passwordHash: seededAdmin.passwordHash,
+        // A real account can already have signed out or changed credentials.
+        credentialVersion: 1,
+        admin: { create: { permissionLevel: "SUPER" } },
+      },
+    });
+    adminUserId = admin.id;
+    const session = await loginFixture(context.request, admin.phone);
+    await installFixtureSession(context, "admin", session);
     const statuses = [
       "NEW",
       "ACCEPTED",
@@ -78,16 +87,6 @@ test("dispatcher order lifecycle lists are exclusive and default to unclaimed wa
       },
     });
     orderIds.push(phoneFiltered.id, driverFiltered.id);
-    await context.addInitScript(
-      ({ token, id }) => {
-        localStorage.setItem("openride.admin.accessToken", token);
-        localStorage.setItem(
-          "tayyn.admin.user",
-          JSON.stringify({ id, role: "ADMIN", fullName: "Диспетчер" }),
-        );
-      },
-      { token, id: admin.id },
-    );
     const page = await context.newPage();
     await page.goto("/adminOrders");
     const groups = [
@@ -149,6 +148,7 @@ test("dispatcher order lifecycle lists are exclusive and default to unclaimed wa
   } finally {
     await context.close();
     await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+    if (adminUserId) await prisma.user.delete({ where: { id: adminUserId } });
     await prisma.$disconnect();
   }
 });
