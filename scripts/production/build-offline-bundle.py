@@ -18,6 +18,7 @@ FILES = [
     "scripts/production/setup-wizard.sh", "scripts/production/operations.py",
     "scripts/production-readiness.py", "docs/offline-production-bundle.md",
     "docs/production-handoff.md", "docs/production-operations.md",
+    "docs/production-update-runbook.md",
 ]
 
 
@@ -123,7 +124,7 @@ def main():
     monitor_output.mkdir(parents=True, mode=0o700)
     monitor_files = ["scripts/production/install-offline-packages.sh", "scripts/production/operations.py",
                      "scripts/production/setup-wizard.sh", "scripts/production-readiness.py",
-                     "docs/production-handoff.md", "docs/production-operations.md", "docs/offline-production-bundle.md"]
+                     "docs/production-handoff.md", "docs/production-operations.md", "docs/production-update-runbook.md", "docs/offline-production-bundle.md"]
     for relative in monitor_files:
         target = monitor_output / relative
         target.parent.mkdir(parents=True, exist_ok=True)

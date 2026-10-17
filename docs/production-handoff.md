@@ -1,6 +1,6 @@
 # Production handoff and operations
 
-This is the operational handoff for the first VPS release. Exact installation/update commands are in [offline production bundle](offline-production-bundle.md); backup, relay, timer and restore commands are in [production operations](production-operations.md). Read it together with [product scope](product.md), [development environments](development.md), [deployment readiness](deployment-readiness.md), [architecture](architecture.md), [Yandex setup](research/yandex-geocoder-setup.md), and [Firebase setup](research/firebase-notification-setup.md).
+This is the operational handoff for the first VPS release. Start with the [setup and update runbook](production-update-runbook.md) for the verified access path, persistent settings and later release flow. Exact installation/update commands are in [offline production bundle](offline-production-bundle.md); backup, relay, timer and restore commands are in [production operations](production-operations.md). Read it together with [product scope](product.md), [development environments](development.md), [deployment readiness](deployment-readiness.md), [architecture](architecture.md), [Yandex setup](research/yandex-geocoder-setup.md), and [Firebase setup](research/firebase-notification-setup.md).
 
 ## Current status
 
