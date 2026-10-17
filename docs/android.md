@@ -37,6 +37,26 @@ Both build URLs must be explicit HTTPS URLs; a packaged WebView cannot use a rel
 
 The artifact is `android/app/build/outputs/apk/debug/TayynHyzmat-debug.apk`. A debug signature is for testing. Release signing secrets remain ignored. The native-lease migration only adds an empty table; rollback the application first and leave that table until a later forward migration removes it. It never changes region geometry or existing order/balance records.
 
+### Production package and first installation
+
+The production APK uses application ID `tayyn.hyzmat.production`, registered in the existing Firebase project `tayyn-hyzmat`. The debug APK keeps `io.openride.driver.test`. Java classes and the Android namespace remain `io.openride.driver`; these internal names do not determine which app Android installs. Capacitor's app ID matches the production application ID, and the manifest's FileProvider authority follows the selected variant automatically.
+
+Place the matching Firebase Android configuration in ignored `android/app/src/release/google-services.json`, mode `0600`. Keep the compatible test configuration in `android/app/src/debug/google-services.json`. These client files configure the APK; the separate Firebase Admin service-account credential belongs only on the production backend and must never enter Android assets or an APK. The current candidate version is `1.18`, code `19`.
+
+This new production package has a newly generated production signing identity, separate from earlier test/legacy keys. The ignored `android/keystore/tayyn-hyzmat-production.jks` and `android/keystore/keystore.properties` are local build secrets. The keystore uses independent strong store and key passwords. Both files have mode `0600`, inside a `0700` directory. A protected local duplicate and owner instructions are under ignored `.local/vps-bootstrap/keys/android-production/`. The owner must copy both files to encrypted offline storage; two copies on the same Mac do not protect against loss of that machine. Never put these signing files on either VPS, in Git or in an APK. Preserve this key for every future production update. Losing it prevents in-place updates to already installed production APKs.
+
+Build the production candidate only after its backend certificate, API and migrations are verified:
+
+```sh
+export VITE_API_URL=https://tayynhyzmat.bagtyyar.dev/api
+export VITE_SOCKET_URL=https://tayynhyzmat.bagtyyar.dev
+pnpm android:assembleRelease
+```
+
+The production API uses the dashboard proxy's `/api` prefix; Socket.IO uses the host origin. The resulting file is `android/app/build/outputs/apk/release/TayynHyzmat-release.apk`. Record its SHA-256, source commit, signing certificate and application ID before sharing it.
+
+This package identity installs as a separate app from both the old `io.openride.driver` release and the test APK. It cannot update either in place. Drivers sign in and grant permissions again; local sessions, notification tokens and permissions do not transfer. The first production install registers its own FCM token with the production backend. End any old test shift before testing the new app. Future production updates can install over this APK when the package ID and signing key stay unchanged and the version code increases. Keeping the same Firebase project preserves the provider setup, but does not migrate Android app storage or sessions.
+
 ## Verification and remaining release gates
 
 The isolated baseline passed its recorded HTTP/Socket.IO, backend, browser and Android checks. The current Java notification-policy tests cover deduplication, canonical removal/expiry, channel-specific clearing and conservative server-expiry conversion. Run the final repository checks before release. These checks establish code behavior, not Firebase delivery or native-phone survival. Match the final APK hash, source commit and backend deployment to its new build record.
@@ -86,7 +106,7 @@ it cannot certify an installed third-party application's routing behavior.
 
 ## Firebase setup and rollout
 
-See [Firebase setup and integration](research/firebase-notification-setup.md) and [issue #112](https://github.com/bagtyyarkovusov/tayyn-hyzmat-project/issues/112). The local ignored debug configuration is present, and the sender credential is staged for the isolated Railway `apk-test` backend. This setup has not deployed the configuration or established physical-phone delivery. The API must run the additive notification-installation migration before the matching APK is tested. Production still requires its own Firebase app registration, ignored release configuration and signed build.
+See [Firebase setup and integration](research/firebase-notification-setup.md) and [issue #112](https://github.com/bagtyyarkovusov/tayyn-hyzmat-project/issues/112). The local ignored debug configuration is present, and the sender credential is staged for the isolated Railway `apk-test` backend. The supplied production Android configuration registers `tayyn.hyzmat.production` in that same Firebase project and is staged in the ignored release path. A separate production Admin credential is configured only on the new backend. These files do not establish physical-phone delivery. The API must run the additive notification-installation migration before the matching APK is tested, and production requires a signed build and a real delivery check.
 
 Chat delivery is independent of the shift. Every approved signed-in device can alert with GPS and shift off; the foreground chat is silent, while other screens can display a preview. The Profile notification control mutes all app alerts without blocking a shift. Public orders immediately update every eligible driver's queue through Socket.IO, with the initial popup limited to the order's region. FCM is the background alert fallback and never decides claim eligibility or acceptance.
 

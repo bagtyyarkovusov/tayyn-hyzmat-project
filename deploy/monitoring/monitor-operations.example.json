@@ -1,0 +1,12 @@
+{
+  "role": "monitor",
+  "public_url": "https://REPLACE_WITH_PRODUCTION_DOMAIN",
+  "app_ssh_target": "tayyn-backup@REPLACE_WITH_APP_IPV4",
+  "ssh_key": "/etc/tayyn/app-backup-key",
+  "ssh_known_hosts": "/etc/tayyn/known_hosts",
+  "backup_dir": "/var/lib/tayyn/backups",
+  "state_dir": "/var/lib/tayyn/operations",
+  "disk_path": "/",
+  "secrets_file": "/etc/tayyn/monitor-secrets.json",
+  "daily_hour": 9
+}

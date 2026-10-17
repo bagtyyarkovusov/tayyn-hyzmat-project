@@ -26,7 +26,9 @@ Configure secrets in Railway variables and ignored local environment files. The 
 
 ## Mobile and production
 
-Start with the driver app in a mobile browser. Loopback port 8081 is only reachable on this computer. Physical-phone GPS testing needs an isolated HTTPS URL and API proxy, which has not yet been provisioned.
+See [production handoff and operations](production-handoff.md) for the VPS topology, offline bundle, Namecheap DNS/TLS, credential boundaries, updates, backups, monitoring and release gates. It is the source of operational guidance for future agents; it does not grant production access.
+
+Start with the driver app in a mobile browser. Loopback port 8081 is only reachable on this computer. Physical-phone GPS testing uses the isolated HTTPS API and APK-test endpoints documented in [Android testing](android.md); they are separate from shared Railway development and future VPS production.
 
 Production will use Docker images on a VPS. The existing `container-images.yml` workflow publishes web and API images to GHCR on version tags or manual dispatch. Production secrets, TLS, backups, restoration and a verified VPS rollout remain deployment work. Railway development is not production readiness evidence.
 

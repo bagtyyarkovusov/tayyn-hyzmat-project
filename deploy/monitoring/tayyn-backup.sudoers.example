@@ -1,0 +1,4 @@
+# Install as /etc/sudoers.d/tayyn-backup, root:root 0440; validate with visudo -cf.
+# Do NOT add this account to the docker group. Keep operations.py and config root-owned.
+Defaults:tayyn-backup env_keep += "SSH_ORIGINAL_COMMAND"
+tayyn-backup ALL=(root) NOPASSWD: /usr/bin/python3 /opt/tayyn/operations.py --config /etc/tayyn/operations.json serve

@@ -11,6 +11,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Check deployment diagnostic behavior
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+      - name: Check production shell syntax
+        run: for script in scripts/production/*.sh; do bash -n "$script"; done
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -55,6 +59,21 @@ jobs:
           node-version: 22
       - run: node scripts/test-container-startup.mjs
 
+  production-backup-drill:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare isolated restore tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes age
+          docker pull postgres:17-bookworm
+      - name: Verify encrypted backup, restore and tamper rejection
+        run: python3 -m unittest discover -s scripts/tests -p 'test_production_backup_integration.py' -v
+        env:
+          TAYYN_PRODUCTION_BACKUP_DRILL: "1"
+
   android:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -76,3 +95,15 @@ jobs:
           VITE_API_URL: https://api.example.invalid/api
           VITE_SOCKET_URL: https://api.example.invalid
       - run: cd android && sh ./gradlew :app:assembleDebug :app:testDebugUnitTest
+
+  production-offline-packages:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare disposable Ubuntu resolver fixture
+        run: docker pull --platform linux/amd64 ubuntu:24.04
+      - name: Verify offline package installation preserves provider SSH and init
+        run: python3 -m unittest discover -s scripts/tests -p 'test_offline_packages_integration.py' -v
+        env:
+          TAYYN_OFFLINE_APT_INTEGRATION: "1"
