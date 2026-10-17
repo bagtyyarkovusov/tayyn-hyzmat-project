@@ -20,7 +20,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/shared/ui/dialog";
-import { useDriver } from "./useDriver";
+import { useDriver, canControlShift } from "./useDriver";
 import { useDriverAddress } from "./useDriverAddress";
 import { alertState, enableOrderAlerts, syncAlertPermission } from "./alerts";
 import { nativeAndroid } from "./nativeShift";
@@ -70,17 +70,20 @@ const locationState = computed(() => {
   if (state.gpsFixReady || state.locationSyncPending) return "connecting";
   return "inactive";
 });
+const shiftElsewhere = computed(() => state.profile?.canControlShift === false);
 const liveOnline = computed(
-  () => !!state.profile?.isOnline && locationReady.value,
+  () => canControlShift() && !!state.profile?.isOnline && locationReady.value,
 );
 const availabilityDescription = computed(() =>
-  !state.profile?.isOnline
-    ? "Не на линии."
-    : !connectionReady.value
-      ? "Нет связи с диспетчером. Переподключаемся."
-      : !state.gpsReady
-        ? "Нет актуального GPS."
-        : "На линии. Связь с диспетчером установлена.",
+  shiftElsewhere.value
+    ? "Смена активна на другом устройстве."
+    : !state.profile?.isOnline
+      ? "Не на линии."
+      : !connectionReady.value
+        ? "Нет связи с диспетчером. Переподключаемся."
+        : !state.gpsReady
+          ? "Нет актуального GPS."
+          : "На линии. Связь с диспетчером установлена.",
 );
 const alertsReady = computed(
   () => alertState.permission === "granted" && alertState.soundReady,
@@ -173,6 +176,10 @@ const ownRegion = computed(
 );
 const blockers = computed(() => {
   const messages: string[] = [];
+  if (shiftElsewhere.value)
+    return [
+      "Смена активна на другом устройстве. Завершите её там, чтобы выйти на линию здесь.",
+    ];
   if (!state.gpsFixReady)
     messages.push(
       state.gpsError ||
@@ -238,7 +245,7 @@ watch(
               :data-state="locationState"
               :aria-description="gpsDescription"
               :title="gpsDescription"
-              :disabled="state.gpsPending"
+              :disabled="!state.profile || state.gpsPending || shiftElsewhere"
               aria-label="Включить GPS"
               @click="enableGps"
             >
@@ -317,23 +324,26 @@ watch(
             variant="outline"
             class="relative size-11 shrink-0 overflow-visible rounded-full border shadow-none [&_svg]:size-5 motion-safe:transition-[background-color,border-color,color,transform] motion-safe:duration-200 active:scale-95"
             :class="
-              state.profile?.isOnline
+              !shiftElsewhere && state.profile?.isOnline
                 ? liveOnline
                   ? 'border-emerald-300 bg-emerald-300 text-emerald-950 hover:bg-emerald-200 dark:border-emerald-400 dark:bg-emerald-400 dark:hover:bg-emerald-300'
                   : 'border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200'
                 : 'border-red-200 bg-red-100 text-red-700 hover:bg-red-200 dark:border-red-800 dark:bg-red-950 dark:text-red-300 dark:hover:bg-red-900'
             "
             :aria-label="
-              state.profile?.isOnline ? 'Уйти с линии' : 'Выйти на линию'
+              !shiftElsewhere && state.profile?.isOnline
+                ? 'Уйти с линии'
+                : 'Выйти на линию'
             "
             :aria-description="availabilityDescription"
             :title="availabilityDescription"
-            :aria-pressed="!!state.profile?.isOnline"
+            :aria-pressed="!shiftElsewhere && !!state.profile?.isOnline"
             :aria-describedby="
               !state.gpsFixReady ? 'driver-gps-blocker' : undefined
             "
             :aria-busy="state.busy"
             :disabled="
+              shiftElsewhere ||
               state.busy ||
               state.locationSyncPending ||
               !state.profile ||
@@ -398,18 +408,18 @@ watch(
         </div>
       </div>
       <DriverFeedback
-        :blockers="state.active ? [] : blockers"
+        :blockers="state.active && !shiftElsewhere ? [] : blockers"
         :error="incomingOpen || tripOpen ? '' : state.error"
         :notice="state.notice"
         :attempt="state.actionAttempt"
       />
     </div>
-    <ActiveTripFeed @details="tripOpen = true" />
+    <ActiveTripFeed v-if="!shiftElsewhere" @details="tripOpen = true" />
     <p v-if="state.position && locationReady" class="sr-only" role="status">
       GPS · точность {{ Math.round(state.position.accuracy) }} м
     </p>
     <p
-      v-if="state.profile?.isOnline && !connectionReady"
+      v-if="!shiftElsewhere && state.profile?.isOnline && !connectionReady"
       role="status"
       class="shrink-0 text-xs text-amber-700 dark:text-amber-300"
     >
@@ -446,7 +456,7 @@ watch(
             : 'bg-card hover:bg-secondary/50',
           d.id === state.profile?.districtId ? 'ring-1 ring-primary' : '',
         ]"
-        :disabled="!locationReady || !state.profile?.isOnline"
+        :disabled="shiftElsewhere || !locationReady || !state.profile?.isOnline"
         @click="selected = d.id"
       >
         <span
@@ -477,7 +487,7 @@ watch(
           ></DialogHeader
         >
         <AvailableOrders
-          v-if="selectedDistrict && state.profile?.isOnline"
+          v-if="!shiftElsewhere && selectedDistrict && state.profile?.isOnline"
           v-show="locationReady"
           :district-id="selectedDistrict.id"
           :district-name="selectedDistrict.name"
@@ -507,7 +517,7 @@ watch(
           ><DialogDescription
             >Свяжитесь с клиентом и отмечайте этапы поездки.</DialogDescription
           ></DialogHeader
-        ><ActiveTrip embedded />
+        ><ActiveTrip v-if="!shiftElsewhere" embedded />
         <p v-if="state.error" role="alert" class="text-sm text-destructive">
           {{ state.error }}
         </p></DialogContent

@@ -4,7 +4,7 @@ const require = createRequire(
   new URL("../../backend/package.json", import.meta.url),
 );
 const { PrismaClient } = require("@prisma/client");
-const jwt = require("jsonwebtoken");
+import { loginFixture, installFixtureSession } from "./helpers/device-session";
 if (process.env.DISPOSABLE_BROWSER_TEST !== "true")
   throw new Error("Use pnpm test:e2e with its disposable database");
 
@@ -14,8 +14,7 @@ test("monitoring shows driver information on map hover, tap and keyboard selecti
   page,
   request,
 }) => {
-  // Authenticated fixtures avoid spending the shared auth rate-limit budget.
-  // All behavior below still uses real HTTP/Socket.IO and the disposable DB.
+  // Authentication and monitored driver behavior use the real public API.
   const prisma = new PrismaClient();
   const admin = await prisma.user.findUniqueOrThrow({
     where: { phone: "+99360000000" },
@@ -26,26 +25,10 @@ test("monitoring shows driver information on map hover, tap and keyboard selecti
     include: { driver: true },
   });
   await prisma.$disconnect();
-  const accessToken = jwt.sign(
-    { sub: driver.id, role: "DRIVER", driverId: driver.driver.id },
-    process.env.JWT_ACCESS_SECRET,
-    { expiresIn: "5m" },
-  );
-  const adminToken = jwt.sign(
-    { sub: admin.id, role: "ADMIN", adminId: admin.admin.id },
-    process.env.JWT_ACCESS_SECRET,
-    { expiresIn: "5m" },
-  );
-  await page.addInitScript(
-    ({ token, user }) => {
-      localStorage.setItem("openride.admin.accessToken", token);
-      localStorage.setItem("tayyn.admin.user", JSON.stringify(user));
-    },
-    {
-      token: adminToken,
-      user: { id: admin.id, fullName: admin.fullName, role: "ADMIN" },
-    },
-  );
+  const driverSession = await loginFixture(request, driver.phone);
+  const adminSession = await loginFixture(request, admin.phone);
+  const accessToken = driverSession.accessToken;
+  await installFixtureSession(page.context(), "admin", adminSession);
   const location = await request.post(
     `${process.env.TEST_API_URL}/driver/location`,
     {

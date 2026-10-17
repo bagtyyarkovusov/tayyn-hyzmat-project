@@ -232,6 +232,7 @@ test("a driver must explicitly accept after five minutes, then completes a quote
   const dispatcher = await dispatchContext.newPage();
   const driver = await driverContext.newPage();
   try {
+    await driver.clock.install();
     await login(dispatcher, "admin");
     await login(driver, "driver");
     await startGps(driver);
@@ -241,7 +242,6 @@ test("a driver must explicitly accept after five minutes, then completes a quote
     await expect(
       driver.getByRole("button", { name: "Уйти с линии", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
-    await driver.clock.install();
     let claimRequests = 0;
     driver.on("request", (request) => {
       if (new URL(request.url()).pathname.endsWith("/orders/accept"))
@@ -3239,3 +3239,139 @@ test("driver cancellation is visible only while waiting for the passenger", asyn
     await driverContext.close();
   }
 });
+
+for (const stage of ["pickup", "dropoff", "missing-destination"] as const) {
+  test(`trip navigation uses ${stage} and preserves the active shift`, async ({
+    browser,
+  }) => {
+    const adminContext = await browser.newContext();
+    const driverContext = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+    });
+    const admin = await adminContext.newPage(),
+      driver = await driverContext.newPage();
+    let driverToken = "",
+      orderId = "";
+    try {
+      await login(admin, "admin");
+      await login(driver, "driver");
+      await startGps(driver);
+      await driver
+        .getByRole("button", { name: "Выйти на линию", exact: true })
+        .click();
+      const adminToken = await admin.evaluate(() =>
+        localStorage.getItem("openride.admin.accessToken"),
+      );
+      driverToken = (await driver.evaluate(() =>
+        localStorage.getItem("openride.driver.accessToken"),
+      ))!;
+      const created = await admin.request.post(
+        `${process.env.TEST_API_URL}/admin/orders`,
+        {
+          headers: { Authorization: `Bearer ${adminToken}` },
+          data: {
+            districtId: process.env.TEST_REGION_ID,
+            clientPhone: "+99365000000",
+            priceEstimated: 10,
+            pickupLat: 37.961,
+            pickupLng: 58.321,
+            ...(stage !== "missing-destination"
+              ? { dropoffLat: 37.972, dropoffLng: 58.332 }
+              : {}),
+          },
+        },
+      );
+      expect(created.ok()).toBe(true);
+      orderId = (await created.json()).id;
+      const action = (name: string) =>
+        driver.request.post(`${process.env.TEST_API_URL}/orders/${name}`, {
+          headers: { Authorization: `Bearer ${driverToken}` },
+          data: { orderId },
+        });
+      expect((await action("accept")).ok()).toBe(true);
+      const trip = driver.getByRole("dialog", {
+        name: "Управление поездкой",
+        exact: true,
+      });
+      await expect(trip).toBeVisible();
+      if (stage !== "pickup") {
+        await trip
+          .getByRole("button", { name: "Я на месте", exact: true })
+          .click();
+        await trip
+          .getByRole("button", { name: "Начать поездку", exact: true })
+          .click();
+        await expect(
+          trip.getByRole("button", { name: "Завершить поездку", exact: true }),
+        ).toBeVisible();
+      }
+      const routeName =
+        stage === "pickup" ? "Маршрут до подачи" : "Маршрут до назначения";
+      if (stage === "missing-destination") {
+        await expect(
+          trip.getByRole("button", { name: /Маршрут до/ }),
+        ).toHaveCount(0);
+      } else {
+        await expect(
+          trip.getByRole("button", { name: routeName, exact: true }),
+        ).toBeVisible();
+      }
+      await trip.getByRole("button", { name: "Close", exact: true }).click();
+      const feed = driver.getByRole("region", {
+        name: "Текущая поездка",
+        exact: true,
+      });
+      if (stage === "missing-destination") {
+        await expect(
+          feed.getByRole("button", { name: /Маршрут до/ }),
+        ).toHaveCount(0);
+      } else {
+        // The installed-map handler is an external platform boundary. In a
+        // browser without that handler, observe the real public web fallback.
+        await driver.route("https://yandex.ru/maps/**", (route) =>
+          route.abort(),
+        );
+        const requested = driver.waitForRequest("https://yandex.ru/maps/**");
+        await feed
+          .getByRole("button", { name: routeName, exact: true })
+          .click();
+        const url = new URL((await requested).url());
+        expect(url.searchParams.get("rtext")).toBe(
+          stage === "pickup" ? "~37.961,58.321" : "~37.972,58.332",
+        );
+        expect(url.searchParams.get("rtt")).toBe("auto");
+      }
+      const profile = await driver.request.get(
+        `${process.env.TEST_API_URL}/driver/profile`,
+        {
+          headers: { Authorization: `Bearer ${driverToken}` },
+        },
+      );
+      expect((await profile.json()).isOnline).toBe(true);
+      const currentOrder = await driver.request.get(
+        `${process.env.TEST_API_URL}/orders/current`,
+        { headers: { Authorization: `Bearer ${driverToken}` } },
+      );
+      expect(currentOrder.ok()).toBe(true);
+      expect(await currentOrder.json()).toMatchObject({ id: orderId });
+    } finally {
+      if (driverToken && orderId) {
+        for (const name of ["waiting", "start", "complete"]) {
+          await driver.request.post(
+            `${process.env.TEST_API_URL}/orders/${name}`,
+            {
+              headers: { Authorization: `Bearer ${driverToken}` },
+              data: { orderId },
+            },
+          );
+        }
+        await driver.request.post(`${process.env.TEST_API_URL}/driver/status`, {
+          headers: { Authorization: `Bearer ${driverToken}` },
+          data: { isOnline: false },
+        });
+      }
+      await adminContext.close();
+      await driverContext.close();
+    }
+  });
+}

@@ -37,6 +37,9 @@ export interface DriverProfile {
   district?: District | null;
   isOnline: boolean;
   isAvailable: boolean;
+  canControlShift?: boolean;
+  activeShiftDeviceLabel?: string | null;
+  shiftDeviceId?: string | null;
   lastLat?: Money | null;
   lastLng?: Money | null;
   user: { id: string; fullName: string; phone: string };

@@ -2,7 +2,7 @@ const asyncHandler = require('../../utils/asyncHandler');
 const service = require('./driver.service');
 
 const profile = asyncHandler(async (req, res) => {
-  const driver = await service.getProfile(req.driver.id);
+  const driver = await service.getProfile(req.driver.id, req.user.deviceId);
   res.json(driver);
 });
 

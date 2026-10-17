@@ -371,8 +371,15 @@ function adjust(withdraw: boolean) {
               }}</span>
             </summary>
             <p class="mt-2 text-sm text-muted-foreground">
-              Текущее:
-              {{ driver.currentDeviceLabel || "Неизвестное устройство" }}
+              {{
+                driver.isOnline && driver.shiftDeviceId
+                  ? `На смене: ${driver.devices?.find((device) => device.deviceId === driver?.shiftDeviceId)?.label || "Устройство водителя"}`
+                  : "Смена не запущена"
+              }}
+            </p>
+            <p class="mt-2 text-sm text-muted-foreground">
+              Одобренные устройства могут оставаться в аккаунте. Смена работает
+              только на одном; разрешение входа не переносит смену.
             </p>
             <div
               v-if="driver.pendingDeviceId"
@@ -405,7 +412,9 @@ function adjust(withdraw: boolean) {
               <span
                 >{{ device.label || "Устройство" }}
                 {{
-                  device.deviceId === driver.currentDeviceId ? "· текущее" : ""
+                  driver.isOnline && device.deviceId === driver.shiftDeviceId
+                    ? "· на смене"
+                    : ""
                 }}</span
               ><span class="text-muted-foreground">{{
                 date(device.lastLoginAt)

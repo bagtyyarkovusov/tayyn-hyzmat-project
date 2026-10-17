@@ -7,6 +7,7 @@ import { Button } from "@/shared/ui/button";
 import { Badge } from "@/shared/ui/badge";
 import { driverApi, errorMessage } from "@/shared/api";
 import { useDriver } from "./useDriver";
+import { nativeAndroid } from "./nativeShift";
 import { date, money, statusLabels, type History } from "./model";
 const { state } = useDriver();
 const history = ref<History | null>(null),
@@ -222,7 +223,25 @@ onMounted(() => void load());
       <summary class="cursor-pointer text-sm font-medium">
         Устройство и сеанс
       </summary>
-      <p class="muted mt-3 text-sm">
+      <p
+        v-if="state.profile?.canControlShift === false"
+        role="status"
+        class="mt-3 text-sm"
+      >
+        Смена работает на другом устройстве<span
+          v-if="state.profile.activeShiftDeviceLabel"
+          >: {{ state.profile.activeShiftDeviceLabel }}</span
+        >. Здесь доступны просмотр и чат. Чтобы работать с этого устройства,
+        сначала завершите смену на другом.
+      </p>
+      <p v-if="nativeAndroid" class="muted mt-3 text-sm">
+        Вы используете приложение Android. Во время смены на этом устройстве
+        приложение передаёт местоположение и проверяет новые заказы и сообщения
+        в фоне. Для этого нужны разрешения на местоположение и уведомления;
+        энергосбережение телефона может задерживать обновления. Выход из
+        аккаунта на этом устройстве завершает его смену.
+      </p>
+      <p v-else class="muted mt-3 text-sm">
         Этот сеанс работает в мобильном или настольном браузере. Выход из
         аккаунта доступен в меню приложения. Фоновые уведомления зависят от
         разрешений браузера.

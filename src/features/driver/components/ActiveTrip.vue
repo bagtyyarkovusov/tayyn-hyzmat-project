@@ -14,21 +14,22 @@ import {
 import { Textarea } from "@/shared/ui/textarea";
 import { useDriver } from "../useDriver";
 import { money, statusLabels } from "../model";
+import { tripNavigation, openTripNavigation } from "../navigation";
 defineProps<{ embedded?: boolean }>();
 const { state, transition } = useDriver();
 const cancelOpen = ref(false);
 const reason = ref("");
-const navigation = computed(() => {
-  const o = state.active;
-  if (!o) return "";
-  const drop =
-    o.status === "STARTED" && o.dropoffLat != null && o.dropoffLng != null;
-  const lat = drop ? o.dropoffLat : o.pickupLat;
-  const lng = drop ? o.dropoffLng : o.pickupLng;
-  return lat != null && lng != null
-    ? `https://yandex.ru/maps/?rtext=~${lat},${lng}&rtt=auto`
-    : "";
-});
+const navigation = computed(() => tripNavigation(state.active));
+const navigationError = ref("");
+async function openNavigation() {
+  if (!navigation.value) return;
+  navigationError.value = "";
+  try {
+    await openTripNavigation(navigation.value);
+  } catch {
+    navigationError.value = "Не удалось открыть карту. Повторите попытку.";
+  }
+}
 async function cancel() {
   await transition("cancel", reason.value.trim() || "Отменено водителем");
   if (!state.active) cancelOpen.value = false;
@@ -82,18 +83,19 @@ async function cancel() {
       Прибытие: {{ state.active.etaMinutes }} мин
     </p>
     <div class="flex flex-wrap gap-2">
-      <Button v-if="state.active.clientPhone" as-child variant="outline"
+      <Button v-if="state.active.clientPhone" as-child variant="secondary"
         ><a :href="`tel:${state.active.clientPhone}`"
           ><Phone class="size-4" />{{
             formatPhone(state.active.clientPhone)
           }}</a
         ></Button
-      ><Button v-if="navigation" as-child variant="outline"
-        ><a :href="navigation" target="_blank" rel="noopener"
-          ><Navigation class="size-4" />Ориентир на карте</a
-        ></Button
+      ><Button v-if="navigation" variant="secondary" @click="openNavigation"
+        ><Navigation class="size-4" />{{ navigation.label }}</Button
       >
     </div>
+    <p v-if="navigationError" role="alert" class="text-sm text-destructive">
+      {{ navigationError }}
+    </p>
     <p class="muted text-xs">
       Позвоните клиенту и уточните подачу. Точка на карте может быть центром
       района, а не точным местом клиента.

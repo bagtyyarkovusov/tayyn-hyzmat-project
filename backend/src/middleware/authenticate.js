@@ -21,6 +21,8 @@ const authenticate = asyncHandler(async (req, res, next) => {
       credentialVersion: payload.credentialVersion ?? 0,
       role: payload.role,
       driverId: payload.driverId,
+      deviceId: payload.deviceId,
+      deviceVersion: payload.deviceVersion,
       adminId: payload.adminId
     };
     next();

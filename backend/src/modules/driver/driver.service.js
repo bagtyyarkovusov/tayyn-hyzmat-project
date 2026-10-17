@@ -9,7 +9,7 @@ const districtsService = require('../districts/districts.service');
 const { syncDriverDistrictRoom } = require('../../sockets/roomSync');
 const { assertFreshGps } = require('./gps-eligibility');
 
-async function getProfile(driverId) {
+async function getProfile(driverId, deviceId) {
   const driver = await prisma.driver.findUnique({
     where: { id: driverId },
     include: {
@@ -24,7 +24,8 @@ async function getProfile(driverId) {
   // something the profile endpoint's consumers need echoed back.
   const { pushToken, ...rest } = driver;
   void pushToken;
-  return rest;
+  const owner = driver.shiftDeviceId && await prisma.driverDevice.findUnique({ where: { driverId_deviceId: { driverId, deviceId: driver.shiftDeviceId } } });
+  return { ...rest, canControlShift: !driver.isOnline || driver.shiftDeviceId === deviceId, activeShiftDeviceLabel: driver.isOnline ? owner?.label ?? null : null };
 }
 
 async function getBalance(userId) {
@@ -68,22 +69,18 @@ async function updateLocation(driver, data) {
   const newDistrictId = nearest?.id ?? null;
   const districtChanged = newDistrictId !== driver.districtId;
 
-  const [updatedDriver] = await prisma.$transaction([
-    prisma.driver.update({
-      where: { id: driver.id },
-      data: {
-        lastLat: lat,
-        lastLng: lng,
-        lastHeading: heading,
-        lastSpeed: speed,
-        lastLocationAt: recordedAt,
-        ...(districtChanged ? { districtId: newDistrictId } : {})
-      }
-    }),
-    prisma.driverLocation.create({
-      data: { driverId: driver.id, lat, lng, heading, speed, accuracy, recordedAt }
-    })
-  ]);
+  const updatedDriver = await prisma.$transaction(async tx => {
+    await require('./shift-ownership').lockDeviceSession(tx, driver);
+    await tx.$queryRaw`SELECT id FROM drivers WHERE id = ${driver.id} FOR UPDATE`;
+    const current = await tx.driver.findUniqueOrThrow({ where: { id: driver.id } });
+    require('./shift-ownership').assertShiftControl(current, driver.sessionDeviceId);
+    const updated = await tx.driver.update({ where: { id: driver.id }, data: {
+      lastLat: lat, lastLng: lng, lastHeading: heading, lastSpeed: speed,
+      lastLocationAt: recordedAt, districtId: newDistrictId
+    } });
+    await tx.driverLocation.create({ data: { driverId: driver.id, lat, lng, heading, speed, accuracy, recordedAt } });
+    return updated;
+  });
 
   try {
     emitToInterestedRooms(updatedDriver, 'driver:location', {
@@ -108,7 +105,7 @@ async function updateLocation(driver, data) {
 
 async function setStatus(driver, data, credentialVersion) {
   const { updateCredentialedStatus } = require('./credentialed-status');
-  const updated = await updateCredentialedStatus(driver.id, driver.userId, credentialVersion, data);
+  const updated = await updateCredentialedStatus(driver.id, driver.userId, credentialVersion, data, driver.sessionDeviceId, driver.sessionDeviceVersion);
 
   try {
     emitToInterestedRooms(updated, 'driver:status', {
@@ -202,7 +199,12 @@ async function setDistrict(driver, districtId) {
   const district = await prisma.district.findUnique({ where: { id: districtId } });
   if (!district) throw ApiError.badRequest('Район не найден');
 
-  const updated = await prisma.driver.update({ where: { id: driver.id }, data: { districtId }, include: { district: true } });
+  const updated = await prisma.$transaction(async tx => {
+    await require('./shift-ownership').lockDeviceSession(tx, driver);
+    await tx.$queryRaw`SELECT id FROM drivers WHERE id = ${driver.id} FOR UPDATE`;
+    require('./shift-ownership').assertShiftControl(await tx.driver.findUniqueOrThrow({ where: { id: driver.id } }), driver.sessionDeviceId);
+    return tx.driver.update({ where: { id: driver.id }, data: { districtId }, include: { district: true } });
+  });
 
   await syncDriverDistrictRoom(driver.id);
   await districtsService.broadcastDistrictStats();

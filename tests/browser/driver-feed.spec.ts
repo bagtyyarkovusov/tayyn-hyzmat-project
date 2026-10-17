@@ -4,7 +4,7 @@ const require = createRequire(
   new URL("../../backend/package.json", import.meta.url),
 );
 const { PrismaClient } = require("@prisma/client");
-const jwt = require("jsonwebtoken");
+import { loginFixture, installFixtureSession } from "./helpers/device-session";
 if (process.env.DISPOSABLE_BROWSER_TEST !== "true")
   throw new Error("Use disposable browser runner");
 
@@ -29,35 +29,21 @@ async function fixture(
       },
       include: { driver: true },
     });
-    const token = jwt.sign(
-      { sub: user.id, role: "DRIVER", driverId: user.driver.id },
-      process.env.JWT_ACCESS_SECRET,
-      { expiresIn: "5m" },
-    );
-    const adminToken = jwt.sign(
-      { sub: admin.id, role: "ADMIN", adminId: admin.admin.id },
-      process.env.JWT_ACCESS_SECRET,
-      { expiresIn: "5m" },
-    );
     const context = await browser.newContext({
       viewport,
       permissions: ["geolocation"],
       geolocation: { latitude: 37.96, longitude: 58.32, accuracy: 10 },
     });
-    await context.addInitScript(
-      ({ token, id }) => {
-        localStorage.setItem("openride.driver.accessToken", token);
-        localStorage.setItem(
-          "tayyn.driver.user",
-          JSON.stringify({
-            id,
-            role: "DRIVER",
-            fullName: "Водитель экрана поездки",
-          }),
-        );
-      },
-      { token, id: user.id },
+    const deviceId = `feed-${user.id}`;
+    const driverSession = await loginFixture(
+      context.request,
+      user.phone,
+      deviceId,
     );
+    const adminSession = await loginFixture(context.request, admin.phone);
+    const token = driverSession.accessToken;
+    const adminToken = adminSession.accessToken;
+    await installFixtureSession(context, "driver", driverSession, deviceId);
     const page = await context.newPage();
     await page.goto("/driverDashboard");
     await page

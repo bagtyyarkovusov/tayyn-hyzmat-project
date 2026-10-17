@@ -1,13 +1,31 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import { Phone, ArrowRight, Check, Ellipsis } from "lucide-vue-next";
+import { computed, ref } from "vue";
+import {
+  Phone,
+  ArrowRight,
+  Check,
+  Ellipsis,
+  Navigation,
+} from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
 import { formatPhone } from "@/shared/phone";
 import { useDriver } from "../useDriver";
 import { money } from "../model";
+import { tripNavigation, openTripNavigation } from "../navigation";
 
 defineEmits<{ details: [] }>();
 const { state, transition } = useDriver();
+const navigation = computed(() => tripNavigation(state.active));
+const navigationError = ref("");
+async function navigate() {
+  if (!navigation.value) return;
+  navigationError.value = "";
+  try {
+    await openTripNavigation(navigation.value);
+  } catch {
+    navigationError.value = "Не удалось открыть карту. Повторите попытку.";
+  }
+}
 const stages = ["Подача", "Ожидание", "В пути"];
 const step = computed(() =>
   state.active?.status === "STARTED"
@@ -56,7 +74,7 @@ const action = computed(() =>
       <Button
         variant="ghost"
         size="icon"
-        class="-my-2 -mr-2 size-11 shrink-0"
+        class="-my-2 -mr-2 size-11 shrink-0 border-0 shadow-none focus-visible:ring-inset"
         aria-label="Поездка"
         title="Подробности поездки"
         @click="$emit('details')"
@@ -83,7 +101,7 @@ const action = computed(() =>
     <div class="trip-actions flex gap-2">
       <Button
         v-if="state.active.clientPhone"
-        variant="outline"
+        variant="ghost"
         as-child
         class="min-h-11 shrink-0 px-3"
       >
@@ -96,7 +114,18 @@ const action = computed(() =>
         </a>
       </Button>
       <Button
-        class="min-h-11 min-w-0 flex-1"
+        v-if="navigation"
+        variant="ghost"
+        size="icon"
+        class="size-11 shrink-0 border-0 shadow-none focus-visible:ring-inset"
+        :aria-label="navigation.label"
+        :title="navigation.label"
+        @click="navigate"
+      >
+        <Navigation class="size-5" aria-hidden="true" />
+      </Button>
+      <Button
+        class="min-h-11 min-w-0 flex-1 whitespace-normal px-2 text-center leading-tight"
         :disabled="state.busy"
         :aria-busy="state.busy"
         @click="transition(action.transition)"
@@ -104,6 +133,9 @@ const action = computed(() =>
         {{ state.busy ? "Сохраняем…" : action.label }}
       </Button>
     </div>
+    <p v-if="navigationError" role="alert" class="text-xs text-destructive">
+      {{ navigationError }}
+    </p>
   </section>
 </template>
 
