@@ -1,7 +1,12 @@
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
+import { createRequire } from "node:module";
 if (process.env.DISPOSABLE_BROWSER_TEST !== "true")
   throw new Error("Use pnpm test:e2e with its disposable database");
 const password = process.env.TEST_ACCOUNT_PASSWORD!;
+const require = createRequire(
+  new URL("../../backend/package.json", import.meta.url),
+);
+const { PrismaClient } = require("@prisma/client");
 const browserClients = new WeakMap<BrowserContext, string>();
 let nextBrowserClient = 1;
 async function isolateBrowserClient(page: Page) {
@@ -36,11 +41,12 @@ async function login(
     role === "admin" ? /adminDashboard/ : /driverDashboard/,
   );
 }
-async function startGps(page: Page) {
+async function startGps(
+  page: Page,
+  point = { latitude: 37.96, longitude: 58.32, accuracy: 10 },
+) {
   await page.context().grantPermissions(["geolocation"]);
-  await page
-    .context()
-    .setGeolocation({ latitude: 37.96, longitude: 58.32, accuracy: 10 });
+  await page.context().setGeolocation(point);
   const gps = page.getByRole("button", { name: "Включить GPS", exact: true });
   await gps.click();
   await expect(gps).toHaveAttribute("data-state", "ready");
@@ -1257,6 +1263,26 @@ test("all nine driver regions fit on the home screen without page scrolling", as
 test("regional queues and counts recover through updates, reconnect and reload", async ({
   browser,
 }) => {
+  const prisma = new PrismaClient();
+  // This test needs exact counts. Other workflows deliberately leave live
+  // drivers/orders in the default region, so use our own disposable polygon.
+  const region = await prisma.district.create({
+    data: {
+      name: "ТЕСТ — Очередь восстановления",
+      centerLat: 22,
+      centerLng: 22,
+      boundary: [
+        [
+          [21.9, 21.9],
+          [21.9, 22.1],
+          [22.1, 22.1],
+          [22.1, 21.9],
+          [21.9, 21.9],
+        ],
+      ],
+    },
+  });
+  const point = { latitude: 22, longitude: 22, accuracy: 10 };
   const a = await browser.newContext();
   const b = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const dispatcher = await a.newPage();
@@ -1265,7 +1291,7 @@ test("regional queues and counts recover through updates, reconnect and reload",
     await login(dispatcher, "admin");
     await login(driver, "driver", "+99360000103");
     await test.step("acquire local GPS before opening the shift", () =>
-      startGps(driver));
+      startGps(driver, point));
     await driver
       .getByRole("button", { name: "Выйти на линию", exact: true })
       .click();
@@ -1297,7 +1323,7 @@ test("regional queues and counts recover through updates, reconnect and reload",
     const other = regions.find(
       // This recovery test uses the driver's initial regional window.
       // Cross-region deadline/claim behavior has dedicated API/socket coverage.
-      (r: { id: string }) => r.id === process.env.TEST_REGION_ID,
+      (r: { id: string }) => r.id === region.id,
     );
     const card = driver
       .getByRole("group", { name: "Регионы", exact: true })
@@ -1402,7 +1428,7 @@ test("regional queues and counts recover through updates, reconnect and reload",
       await driver.getByRole("button", { name, exact: true }).click();
     await expect(driver.getByLabel("Баланс")).toHaveText("488 TMT");
     await test.step("refresh GPS without losing readiness after completing the recovered trip", () =>
-      startGps(driver));
+      startGps(driver, point));
     await expect(
       driver.getByRole("button", { name: "Уйти с линии", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
@@ -1485,6 +1511,20 @@ test("regional queues and counts recover through updates, reconnect and reload",
   } finally {
     await a.close();
     await b.close();
+    try {
+      // Fixture cleanup only. No behavior assertions bypass the public API.
+      await prisma.transaction.deleteMany({
+        where: { order: { districtId: region.id } },
+      });
+      await prisma.order.deleteMany({ where: { districtId: region.id } });
+      await prisma.driver.updateMany({
+        where: { districtId: region.id },
+        data: { districtId: null, isOnline: false, shiftDeviceId: null },
+      });
+      await prisma.district.delete({ where: { id: region.id } });
+    } finally {
+      await prisma.$disconnect();
+    }
   }
 });
 
