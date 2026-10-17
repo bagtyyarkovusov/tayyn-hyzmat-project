@@ -79,7 +79,7 @@ Device identity is bound to authenticated credentials. A missing identity is a 4
 
 When no shift is active, a signed-in installation of an approved account may recover the assigned trip without GPS or Online solely to finish it. Starting a shift makes its device the exclusive controller again. Logging out revokes every session from the same installation; an already-revoked logout token cannot end a subsequent login. Legacy credentials without a signed device identity require a fresh login.
 
-A temporary network or server failure during launch preserves credentials behind a connection-retry screen. Protected workflows remain hidden until the session is verified again. A response from an older session cannot clear a replacement login or replay its mutation with the replacement driver's credentials.
+Launch renders a connection-checking shell immediately, before session verification completes. A phone reporting no internet goes straight to a connection-retry screen without a verification request. Otherwise verification, including token refresh and its retry, has one eight-second deadline. Temporary network/server failures and that deadline preserve saved credentials. Retry is single-flight with visible pending feedback; internet recovery or returning to the foreground automatically retries a failed verification. Signed-out users can open the bundled login/registration screens offline, but cannot submit without internet. Protected workflows remain hidden until the session is verified again. A response from an older session cannot clear a replacement login or replay its mutation with the replacement driver's credentials.
 
 ## Account safety and off-shift location
 

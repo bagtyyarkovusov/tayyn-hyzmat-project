@@ -54,9 +54,11 @@ export function errorMessage(error: unknown): string {
 export async function publicRequest<T>(
   path: string,
   body: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch(`${apiBase}${path}`, {
     method: "POST",
+    signal,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -76,14 +78,22 @@ async function readResponse<T>(response: Response): Promise<T> {
     );
   return data as T;
 }
-export async function refreshRole(role: Role): Promise<SessionPayload> {
+export async function refreshRole(
+  role: Role,
+  signal?: AbortSignal,
+): Promise<SessionPayload> {
   const previous = inflight.get(role);
   if (previous) return previous;
   const version = versions[role];
-  const current = publicRequest<SessionPayload>("/auth/refresh", {
-    refreshToken: tokens.refresh(role),
-  })
+  const current = publicRequest<SessionPayload>(
+    "/auth/refresh",
+    {
+      refreshToken: tokens.refresh(role),
+    },
+    signal,
+  )
     .then((data) => {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       if (version !== versions[role]) throw new Error("Сессия уже изменена.");
       tokens.set(role, data, true);
       return data;
@@ -91,6 +101,7 @@ export async function refreshRole(role: Role): Promise<SessionPayload> {
     .catch((error) => {
       if (
         version === versions[role] &&
+        !signal?.aborted &&
         error instanceof ApiError &&
         [401, 403].includes(error.status)
       )
@@ -110,9 +121,11 @@ function createClient(role: Role) {
     body?: unknown,
     params?: Record<string, unknown>,
     retry = true,
+    signal?: AbortSignal,
   ): Promise<{ data: T }> {
     const generation = versions[role];
     function assertCurrent() {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       if (generation !== versions[role])
         throw new Error("Сессия уже изменена.");
     }
@@ -124,6 +137,7 @@ function createClient(role: Role) {
       : "";
     const response = await fetch(`${apiBase}${path}${suffix}`, {
       method,
+      signal,
       headers: {
         "Content-Type": "application/json",
         ...(tokens.access(role)
@@ -134,9 +148,9 @@ function createClient(role: Role) {
     });
     assertCurrent();
     if (response.status === 401 && retry && tokens.refresh(role)) {
-      await refreshRole(role);
+      await refreshRole(role, signal);
       assertCurrent();
-      return request(method, path, body, params, false);
+      return request(method, path, body, params, false, signal);
     }
     if (response.status === 401) tokens.clear(role);
     const data = await readResponse<T>(response);
@@ -146,8 +160,16 @@ function createClient(role: Role) {
   return {
     get: <T = unknown>(
       path: string,
-      options?: { params?: Record<string, unknown> },
-    ) => request<T>("GET", path, undefined, options?.params),
+      options?: { params?: Record<string, unknown>; signal?: AbortSignal },
+    ) =>
+      request<T>(
+        "GET",
+        path,
+        undefined,
+        options?.params,
+        true,
+        options?.signal,
+      ),
     post: <T = unknown>(path: string, body?: unknown) =>
       request<T>("POST", path, body),
     patch: <T = unknown>(path: string, body?: unknown) =>

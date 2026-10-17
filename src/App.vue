@@ -36,17 +36,14 @@ import {
 import { useDriverNotifications } from "@/features/driver/notifications";
 import { useDriverPermissionOnboarding } from "@/features/driver/permissionOnboarding";
 import AdminMessageAlert from "@/features/dispatcher/AdminMessageAlert.vue";
+const props = defineProps<{ driverOnly?: boolean }>();
 const route = useRoute();
+const startup = ref(true);
 const development = import.meta.env.DEV;
 const visibility = useDocumentVisibility();
 const networkOnline = useOnline();
 const chat = computed(
   () => route.path === "/driverChat" || route.path.startsWith("/adminChat"),
-);
-useDriverNotifications(
-  computed(
-    () => route.path === "/driverChat" && visibility.value === "visible",
-  ),
 );
 const viewportHeight = ref<string>();
 const viewportTop = ref("0px");
@@ -74,17 +71,30 @@ onUnmounted(() => {
   window.visualViewport?.removeEventListener("scroll", resizeChat);
 });
 const router = useRouter();
+void router.isReady().then(() => {
+  startup.value = false;
+});
 const auth = computed(() => route.meta.layout === "auth");
-const driver = computed(() => route.path.startsWith("/driver"));
-useDriverPermissionOnboarding(
+const driver = computed(() =>
+  startup.value
+    ? props.driverOnly || window.location.pathname.startsWith("/driver")
+    : route.path.startsWith("/driver"),
+);
+const verifiedDriverView = computed(
+  () =>
+    !!driver.value &&
+    !startup.value &&
+    !auth.value &&
+    !!driverSession.state.accessToken &&
+    !driverSession.state.restoring &&
+    !driverSession.state.verificationError,
+);
+useDriverPermissionOnboarding(verifiedDriverView);
+useDriverNotifications(
   computed(
-    () =>
-      driver.value &&
-      !auth.value &&
-      !!driverSession.state.accessToken &&
-      !driverSession.state.restoring &&
-      !driverSession.state.verificationError,
+    () => route.path === "/driverChat" && visibility.value === "visible",
   ),
+  verifiedDriverView,
 );
 // Include portalled dialogs and login screens while leaving dispatcher text selectable.
 watch(
@@ -113,7 +123,7 @@ const nav = computed(() => (driver.value ? driverNav : adminNav));
 watch(
   () => session.value.state.accessToken,
   (token) => {
-    if (!token && !auth.value)
+    if (!token && !startup.value && !auth.value)
       router.replace(driver.value ? "/driverLogin" : "/adminLogin");
   },
 );
@@ -127,21 +137,25 @@ async function logout() {
 }
 </script>
 <template>
-  <RouterView v-if="auth" />
+  <RouterView v-if="!startup && auth" />
   <main
-    v-else-if="session.state.restoring || session.state.verificationError"
+    v-else-if="
+      startup || session.state.restoring || session.state.verificationError
+    "
     class="flex min-h-dvh flex-col items-center justify-center gap-4 p-6 text-center"
     aria-live="polite"
   >
     <BrandLogo />
     <p>
       {{
-        session.state.restoring
+        startup || session.state.restoring
           ? "Проверяем подключение…"
           : session.state.verificationError
       }}
     </p>
-    <Button v-if="!session.state.restoring" @click="session.restore()"
+    <Button
+      v-if="!startup && !session.state.restoring"
+      @click="session.restore()"
       >Повторить подключение</Button
     >
   </main>

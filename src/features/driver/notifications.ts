@@ -273,7 +273,10 @@ export async function toggleNotifications() {
     if (current === generation && request === operation) state.loading = false;
   }
 }
-export function useDriverNotifications(chatVisible: Ref<boolean>) {
+export function useDriverNotifications(
+  chatVisible: Ref<boolean>,
+  verifiedDriverView: Ref<boolean>,
+) {
   currentChatVisible = chatVisible;
   const onEvent = (payload: unknown) =>
     void handleNotification(payload, chatVisible, generation).catch(() => {
@@ -291,7 +294,9 @@ export function useDriverNotifications(chatVisible: Ref<boolean>) {
     offEvent();
     offRead();
   };
-  const onVisibility = () => void updatePresence(chatVisible);
+  const onVisibility = () => {
+    if (verifiedDriverView.value) void updatePresence(chatVisible);
+  };
   document.addEventListener("visibilitychange", onVisibility);
   const stop = watch(
     () => driverSession.state.user?.id,
@@ -316,21 +321,27 @@ export function useDriverNotifications(chatVisible: Ref<boolean>) {
             nativeNotifications.reset(),
           ).catch(() => {});
       }
-      if (userId) void loadNotificationSettings();
+      if (userId && verifiedDriverView.value) void loadNotificationSettings();
     },
     { immediate: true },
   );
   onMounted(() => {
     syncAlertPermission();
-    void updatePresence(chatVisible);
+    if (verifiedDriverView.value) void updatePresence(chatVisible);
   });
-  const stopChatWatch = watch(
-    chatVisible,
-    () => void updatePresence(chatVisible),
-  );
+  const stopVerifiedWatch = watch(verifiedDriverView, (verified) => {
+    if (verified && driverSession.state.user) {
+      void loadNotificationSettings();
+      void updatePresence(chatVisible);
+    }
+  });
+  const stopChatWatch = watch(chatVisible, () => {
+    if (verifiedDriverView.value) void updatePresence(chatVisible);
+  });
   onUnmounted(() => {
     stop();
     stopChatWatch();
+    stopVerifiedWatch();
     eventCleanup?.();
     eventCleanup = undefined;
     document.removeEventListener("visibilitychange", onVisibility);

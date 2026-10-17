@@ -126,7 +126,7 @@ The compact Today view uses Asia/Ashgabat time for orders created today. It keep
 
 ## Recovery and safety
 
-If the app cannot verify the session during a connection failure, it keeps the sign-in details and shows a retry screen. Restore internet and choose Повторить подключение, or return to the app after the network recovers. Do not create another account to bypass this screen. An expired or revoked session requires signing in again.
+When opening the app, a connection-checking screen appears immediately. If the phone reports no internet, it shows the retry screen straight away; if the server does not answer, checking stops after eight seconds, including any session refresh. Saved sign-in details remain on the phone. While Retry is checking, its button is hidden to prevent duplicate attempts. Restore internet and choose Повторить подключение, or return to the app after the network recovers. Do not create another account to bypass this screen. An expired or revoked session requires signing in again.
 
 Every action is server-authoritative. Reload restores the active trip and balance. Reconnect replays missed state through HTTP and Socket.IO. A response from an old screen must not overwrite newer location or order data. A driver who is offline may retain a timestamped last location, but that point cannot receive an offer or count as online.
 

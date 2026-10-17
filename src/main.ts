@@ -4,5 +4,4 @@ import { makeRouter } from "./app-router";
 import "./shared/theme.css";
 import "./shared/theme";
 const router = makeRouter();
-const app = createApp(App).use(router);
-void router.isReady().then(() => app.mount("#app"));
+createApp(App).use(router).mount("#app");
