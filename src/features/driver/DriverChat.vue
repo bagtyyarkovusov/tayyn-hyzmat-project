@@ -139,10 +139,13 @@ const off = [
   driverSession.on("admin:message", () => void load()),
   driverSession.on("connect", () => void load()),
 ];
+const onNotification = () => void load();
+window.addEventListener("driver:notification-chat", onNotification);
 useChatRecovery(() => void load());
 onMounted(() => void load());
 onUnmounted(() => {
   alive = false;
+  window.removeEventListener("driver:notification-chat", onNotification);
   off.forEach((fn) => fn());
 });
 </script>

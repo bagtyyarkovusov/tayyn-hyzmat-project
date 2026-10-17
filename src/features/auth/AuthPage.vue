@@ -166,7 +166,7 @@ async function submit() {
   grid-template-columns: 1fr 1fr;
 }
 .auth-story {
-  background: #111111;
+  background: #122d4b;
   color: #ffffff;
   display: flex;
   flex-direction: column;
@@ -184,7 +184,7 @@ async function submit() {
 .auth-story p {
   margin-top: 1.5rem;
   max-width: 36ch;
-  color: #c4c4c4;
+  color: #c1cddd;
   font-size: 1.05rem;
 }
 .auth-form-wrap {

@@ -1,4 +1,5 @@
 import { ref } from "vue";
+import "./theme.css";
 export type ThemePreference = "light" | "dark" | "system";
 const stored = localStorage.getItem("tayyn.theme");
 export const themePreference = ref<ThemePreference>(
@@ -10,9 +11,12 @@ function apply() {
     themePreference.value === "dark" ||
     (themePreference.value === "system" && system.matches);
   document.documentElement.classList.toggle("dark", dark);
+  const surface = getComputedStyle(document.documentElement)
+    .getPropertyValue("--background")
+    .trim();
   document
     .querySelector('meta[name="theme-color"]')
-    ?.setAttribute("content", dark ? "#111111" : "#ffffff");
+    ?.setAttribute("content", surface);
 }
 export function setTheme(value: ThemePreference) {
   themePreference.value = value;

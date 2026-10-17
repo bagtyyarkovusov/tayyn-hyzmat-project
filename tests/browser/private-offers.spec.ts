@@ -52,15 +52,12 @@ async function actors(browser: Browser) {
     const dispatcher = await adminContext.newPage(),
       page = await driverContext.newPage();
     await page.goto("/driverDashboard");
-    const report = page.waitForResponse(
-      (response) =>
-        response.url().endsWith("/driver/location") &&
-        response.request().method() === "POST",
-    );
     await page
       .getByRole("button", { name: "Включить GPS", exact: true })
       .click();
-    expect((await report).ok()).toBe(true);
+    await expect(
+      page.getByRole("button", { name: "Включить GPS", exact: true }),
+    ).toHaveAttribute("data-state", "ready");
     await page
       .getByRole("button", { name: "Выйти на линию", exact: true })
       .click();

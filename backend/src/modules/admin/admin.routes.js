@@ -7,6 +7,7 @@ const {
   orderIdParamSchema,
   listDriversQuerySchema,
   blockSchema,
+  blockDriverSchema,
   resolveOrderSchema,
   balanceAdjustSchema,
   historyQuerySchema,
@@ -41,13 +42,11 @@ router.get('/drivers/:id', validate({ params: driverIdParamSchema }), controller
 router.post('/drivers/:id/approve', validate({ params: driverIdParamSchema }), controller.approveDriver);
 router.post(
   '/drivers/:id/block',
-  validate({ params: driverIdParamSchema, body: blockSchema }),
+  validate({ params: driverIdParamSchema, body: blockDriverSchema }),
   controller.blockDriver
 );
 router.post('/drivers/:id/unblock', validate({ params: driverIdParamSchema }), controller.unblockDriver);
-// Additional-device approval - see admin.service.js#approveDevice.
-router.post('/drivers/:id/approve-device', validate({ params: driverIdParamSchema }), controller.approveDevice);
-router.post('/drivers/:id/reject-device', validate({ params: driverIdParamSchema }), controller.rejectDevice);
+router.post('/drivers/:id/sign-out-everywhere', validate({ params: driverIdParamSchema, body: z.object({}).strict() }), controller.signOutEverywhere);
 router.post(
   '/drivers/:id/balance',
   validate({ params: driverIdParamSchema, body: balanceAdjustSchema }),
@@ -61,8 +60,8 @@ router.post(
   validate({ params: driverIdParamSchema, body: vehicleSchema }),
   controller.updateVehicle
 );
-// Hard delete - see admin.service.js#deleteDriver for exactly what goes
-// (everything personal) and what stays (their orders, with driverId nulled).
+// Permanently remove account access and release its login phone. Historical
+// driver identity, orders and financial attribution remain archived.
 router.delete('/drivers/:id', validate({ params: driverIdParamSchema }), controller.deleteDriver);
 
 router.get(

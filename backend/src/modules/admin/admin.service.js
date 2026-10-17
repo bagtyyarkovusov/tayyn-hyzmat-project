@@ -36,9 +36,8 @@ async function findDriverOrThrow(driverId) {
 // they're stripped rather than echoed into list/detail responses.
 function omitPushToken(driver) {
   if (!driver) return driver;
-  const { pushToken, orders, ...rest } = driver;
-  void pushToken;
-  return { ...rest, isAvailable: rest.isAvailable && !orders?.length };
+  const { orders, ...rest } = require('../driver/public-profile').publicDriverProfile(driver);
+  return { ...rest, accountDeleted: Boolean(rest.user?.deletedAt || rest.user?.status === 'BLOCKED'), hasActiveTrip: Boolean(orders?.length), isAvailable: rest.isAvailable && !orders?.length };
 }
 
 async function createDriver({ phone, fullName, password }, actorId) {
@@ -70,6 +69,8 @@ async function listDrivers({ status, page, limit }) {
           select: {
             id: true,
             phone: true,
+            archivedPhone: true,
+            deletedAt: true,
             fullName: true,
             status: true,
             createdAt: true,
@@ -129,6 +130,11 @@ async function listUnreadDriverIds() {
 async function markMessagesRead(driverId, throughMessageId) {
   const driver = await findDriverOrThrow(driverId);
   await markRead(driverId, { senderId: driver.userId, isBroadcast: false }, throughMessageId, 'lastReadByAdminAt', 'lastReadByAdminMessageId');
+  try {
+    getIO().to(rooms.admins()).emit('admin:messages-read', { driverId, throughMessageId });
+  } catch (err) {
+    logger.debug({ err }, 'Admin read cursor broadcast skipped');
+  }
 }
 
 // Single-driver detail - not just "find it in the already-fetched list" on
@@ -143,6 +149,8 @@ async function getDriver(driverId) {
         select: {
           id: true,
           phone: true,
+          archivedPhone: true,
+          deletedAt: true,
           fullName: true,
           status: true,
           createdAt: true,
@@ -152,8 +160,7 @@ async function getDriver(driverId) {
       },
       district: true,
       currentVehicle: true,
-      vehicles: true,
-      devices: { orderBy: { lastLoginAt: 'desc' } }
+      vehicles: true
     }
   });
   if (!driver) throw ApiError.notFound('Водитель не найден');
@@ -162,10 +169,14 @@ async function getDriver(driverId) {
 
 async function approveDriver(driverId, actorId) {
   const driver = await findDriverOrThrow(driverId);
-
-  const updated = await prisma.driver.update({
-    where: { id: driverId },
-    data: { status: 'APPROVED', approvedAt: new Date(), approvedBy: actorId, blockedAt: null, blockReason: null }
+  const updated = await prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM users WHERE id = ${driver.userId} FOR UPDATE`;
+    const user = await tx.user.findUniqueOrThrow({ where: { id: driver.userId } });
+    if (user.status === 'BLOCKED') throw ApiError.conflict('Аккаунт удалён. Восстановление недоступно', { code: 'ACCOUNT_DELETED' });
+    return tx.driver.update({
+      where: { id: driverId },
+      data: { status: 'APPROVED', approvedAt: new Date(), approvedBy: actorId, blockedAt: null, blockReason: null }
+    });
   });
 
   safeEmit((io) => {
@@ -211,10 +222,15 @@ async function blockDriver(driverId, actorId, reason) {
 }
 
 async function unblockDriver(driverId, actorId) {
-  await findDriverOrThrow(driverId);
-  const updated = await prisma.driver.update({
-    where: { id: driverId },
-    data: { status: 'APPROVED', blockedAt: null, blockReason: null, blockedBy: null, approvedAt: new Date(), approvedBy: actorId }
+  const driver = await findDriverOrThrow(driverId);
+  const updated = await prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM users WHERE id = ${driver.userId} FOR UPDATE`;
+    const user = await tx.user.findUniqueOrThrow({ where: { id: driver.userId } });
+    if (user.status === 'BLOCKED') throw ApiError.conflict('Аккаунт удалён. Восстановление недоступно', { code: 'ACCOUNT_DELETED' });
+    return tx.driver.update({
+      where: { id: driverId },
+      data: { status: 'APPROVED', blockedAt: null, blockReason: null, blockedBy: null, approvedAt: new Date(), approvedBy: actorId }
+    });
   });
 
   safeEmit((io) => io.to(rooms.driver(driverId)).emit('driver:approved', { driverId }));
@@ -223,53 +239,16 @@ async function unblockDriver(driverId, actorId) {
   return updated;
 }
 
-// Approval remembers another installation without changing any active session
-// or shift owner. A new device must retry login after dispatcher approval.
-async function approveDevice(driverId, actorId) {
+// End access on lost installations without altering the account or its trip.
+async function signOutEverywhere(driverId, actorId) {
   const driver = await findDriverOrThrow(driverId);
-  if (!driver.pendingDeviceId) {
-    throw ApiError.badRequest('Нет заявки на смену устройства');
-  }
-
-  const updated = await prisma.$transaction(async (tx) => {
-    const result = await tx.driver.update({
-      where: { id: driverId },
-      data: {
-        currentDeviceId: driver.pendingDeviceId,
-        currentDeviceLabel: driver.pendingDeviceLabel,
-        pendingDeviceId: null,
-        pendingDeviceLabel: null,
-        pendingDeviceRequestedAt: null
-      }
-    });
-    await tx.driverDevice.upsert({
-      where: { driverId_deviceId: { driverId, deviceId: driver.pendingDeviceId } },
-      update: { lastLoginAt: new Date(), ...(driver.pendingDeviceLabel ? { label: driver.pendingDeviceLabel } : {}) },
-      create: { driverId, deviceId: driver.pendingDeviceId, label: driver.pendingDeviceLabel }
-    });
-    return result;
-  });
-
-  logger.info({ driverId, actorId }, 'Driver device change approved');
-  return updated;
+  await authService.revokeAllRefreshTokens(driver.userId);
+  safeEmit(io => io.to(rooms.admins()).emit('driver:updated', { driverId }));
+  logger.info({ driverId, actorId }, 'Driver signed out on all installations');
+  return { message: 'Все сеансы водителя завершены. Для продолжения нужно войти снова' };
 }
 
-async function rejectDevice(driverId, actorId) {
-  const driver = await findDriverOrThrow(driverId);
-  if (!driver.pendingDeviceId) {
-    throw ApiError.badRequest('Нет заявки на смену устройства');
-  }
-
-  const updated = await prisma.driver.update({
-    where: { id: driverId },
-    data: { pendingDeviceId: null, pendingDeviceLabel: null, pendingDeviceRequestedAt: null }
-  });
-
-  logger.info({ driverId, actorId }, 'Driver device change rejected');
-  return updated;
-}
-
-// Deactivate access while preserving the financial ledger and trip attribution.
+// Permanently end account access while retaining ledger and trip attribution.
 async function deleteDriver(driverId, actorId) {
   const driver = await findDriverOrThrow(driverId);
   await prisma.$transaction(async (tx) => {
@@ -280,23 +259,25 @@ async function deleteDriver(driverId, actorId) {
       where: { driverId, status: { in: ['ACCEPTED', 'WAITING', 'STARTED'] } }, select: { id: true }
     });
     if (activeTrip) throw ApiError.conflict('Сначала завершите или отмените активную поездку');
-    await tx.user.update({ where: { id: driver.userId }, data: { status: 'BLOCKED', credentialVersion: { increment: 1 } } });
+    const currentUser = await tx.user.findUniqueOrThrow({ where: { id: driver.userId } });
+    if (currentUser.deletedAt) return;
+    await tx.user.update({ where: { id: driver.userId }, data: { status: 'BLOCKED',
+      archivedPhone: currentUser.phone, deletedAt: new Date(), phone: `deleted:${currentUser.id}` } });
+    await authService.revokeSessionGeneration(tx, driver.userId);
     await tx.driver.update({ where: { id: driverId }, data: {
       status: 'BLOCKED', blockedAt: new Date(), blockedBy: actorId,
-      blockReason: 'Аккаунт деактивирован', isOnline: false, isAvailable: false,
+      blockReason: 'Аккаунт удалён', isOnline: false, isAvailable: false,
       pendingDeviceId: null, pendingDeviceLabel: null, pendingDeviceRequestedAt: null
     } });
-    await tx.refreshToken.updateMany({ where: { userId: driver.userId }, data: { revokedAt: new Date() } });
-    await tx.nativeShiftLease.updateMany({ where: { driverId }, data: { revokedAt: new Date() } });
   });
   safeEmit(io => {
-    io.to(rooms.driver(driverId)).emit('session:revoked', { message: 'Аккаунт деактивирован' });
+    io.to(rooms.driver(driverId)).emit('session:revoked', { message: 'Аккаунт удалён' });
     io.in(rooms.driver(driverId)).disconnectSockets(true);
     io.to(rooms.admins()).emit('driver:updated', { driverId });
   });
   try { await districtsService.broadcastDistrictStats(); }
-  catch (err) { logger.warn({ err, driverId }, 'Failed to broadcast driver deactivation'); }
-  logger.info({ driverId, actorId }, 'Driver deactivated; financial history retained');
+  catch (err) { logger.warn({ err, driverId }, 'Failed to broadcast driver deletion'); }
+  logger.info({ driverId, actorId }, 'Driver account deleted; financial history retained');
   return { id: driverId };
 }
 
@@ -405,7 +386,7 @@ async function getHistory(driverId, { page, limit }) {
   ]);
 
   return {
-    driver: { id: driver.id, fullName: driver.user.fullName, phone: driver.user.phone, status: driver.status },
+    driver: { id: driver.id, fullName: driver.user.fullName, phone: driver.user.archivedPhone || driver.user.phone, status: driver.status },
     balance,
     transactions: { items: transactions, total: transactionsTotal, page, limit },
     orders: { items: orders, total: ordersTotal, page, limit }
@@ -416,6 +397,7 @@ async function sendMessage({ driverId, broadcast, title, body, clientMessageId }
   if (broadcast) {
     const { message, created } = await persistMessage({ senderId: actorId, body, isBroadcast: true, clientMessageId });
     if (!created) return message;
+    require('../notifications/notifications').wake();
     safeEmit((io) => {
       const payload = { id: message.id, senderId: actorId, title, body, sentAt: message.sentAt, broadcast: true };
       io.to(rooms.drivers()).emit('admin:message', payload);
@@ -427,6 +409,7 @@ async function sendMessage({ driverId, broadcast, title, body, clientMessageId }
   const driver = await findDriverOrThrow(driverId);
   const { message, created } = await persistMessage({ senderId: actorId, receiverId: driver.userId, body, isBroadcast: false, clientMessageId });
   if (!created) return message;
+  require('../notifications/notifications').wake();
 
   safeEmit((io) => {
     const payload = { id: message.id, senderId: actorId, driverId, title, body, sentAt: message.sentAt, broadcast: false };
@@ -480,7 +463,7 @@ async function listOrders({ status, page, limit }) {
       skip: (page - 1) * limit,
       take: limit,
       include: {
-        driver: { include: { user: { select: { fullName: true, phone: true } } } },
+        driver: { include: { user: { select: { fullName: true, phone: true, archivedPhone: true } } } },
         district: true,
         resolutionAudits: { orderBy: { createdAt: 'desc' }, take: 1, include: { actor: { select: { fullName: true } } } }
       }
@@ -492,6 +475,7 @@ async function listOrders({ status, page, limit }) {
   return {
     items: items.map((order) => ({
       ...order,
+      driver: require('../driver/public-profile').publicDriverProfile(order.driver),
       startedAgeSeconds: order.status === 'STARTED' && order.startedAt
         ? Math.max(0, Math.floor((now - order.startedAt.getTime()) / 1000))
         : null,
@@ -629,8 +613,7 @@ module.exports = {
   approveDriver,
   blockDriver,
   unblockDriver,
-  approveDevice,
-  rejectDevice,
+  signOutEverywhere,
   deleteDriver,
   adjustBalance,
   getHistory,

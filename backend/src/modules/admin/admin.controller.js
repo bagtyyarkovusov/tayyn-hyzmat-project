@@ -13,7 +13,7 @@ const listDrivers = asyncHandler(async (req, res) => {
 
 const getDriver = asyncHandler(async (req, res) => {
   const driver = await service.getDriver(req.params.id);
-  res.json(driver);
+  res.json(require('../driver/public-profile').publicDriverProfile(driver));
 });
 
 // NOTE: we pass req.user.id (the User row id) as the "actor" identity, not
@@ -24,27 +24,21 @@ const getDriver = asyncHandler(async (req, res) => {
 // everywhere keeps "who did this" unambiguous across the whole API.
 const approveDriver = asyncHandler(async (req, res) => {
   const driver = await service.approveDriver(req.params.id, req.user.id);
-  res.json(driver);
+  res.json(require('../driver/public-profile').publicDriverProfile(driver));
 });
 
 const blockDriver = asyncHandler(async (req, res) => {
   const driver = await service.blockDriver(req.params.id, req.user.id, req.body.reason);
-  res.json(driver);
+  res.json(require('../driver/public-profile').publicDriverProfile(driver));
 });
 
 const unblockDriver = asyncHandler(async (req, res) => {
   const driver = await service.unblockDriver(req.params.id, req.user.id);
-  res.json(driver);
+  res.json(require('../driver/public-profile').publicDriverProfile(driver));
 });
 
-const approveDevice = asyncHandler(async (req, res) => {
-  const driver = await service.approveDevice(req.params.id, req.user.id);
-  res.json(driver);
-});
-
-const rejectDevice = asyncHandler(async (req, res) => {
-  const driver = await service.rejectDevice(req.params.id, req.user.id);
-  res.json(driver);
+const signOutEverywhere = asyncHandler(async (req, res) => {
+  res.json(await service.signOutEverywhere(req.params.id, req.user.id));
 });
 
 const adjustBalance = asyncHandler(async (req, res) => {
@@ -131,8 +125,7 @@ module.exports = {
   approveDriver,
   blockDriver,
   unblockDriver,
-  approveDevice,
-  rejectDevice,
+  signOutEverywhere,
   adjustBalance,
   history,
   sendMessage,

@@ -1,18 +1,23 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useDocumentVisibility, useOnline } from "@vueuse/core";
 import {
   MapPin,
   LocateFixed,
   Power,
-  Bell,
-  BellRing,
-  BellOff,
   Check,
   MapPinOff,
   LoaderCircle,
+  RefreshCw,
+  Wifi,
+  WifiOff,
 } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+} from "@/shared/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -20,11 +25,11 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/shared/ui/dialog";
-import { useDriver, canControlShift } from "./useDriver";
+import { useDriver, canControlShift, connectionRecovering } from "./useDriver";
 import { useDriverAddress } from "./useDriverAddress";
-import { alertState, enableOrderAlerts, syncAlertPermission } from "./alerts";
 import { nativeAndroid } from "./nativeShift";
 import { money } from "./model";
+import { localRegionAt } from "./local-region";
 import IncomingOrder from "./components/IncomingOrder.vue";
 import DriverFeedback from "./components/DriverFeedback.vue";
 import ActiveTripFeed from "./components/ActiveTripFeed.vue";
@@ -38,10 +43,29 @@ const {
   dismissIncoming,
   declinePrivateOffer,
 } = useDriver();
-const address = useDriverAddress(
+const {
+  address,
+  pending: addressPending,
+  refresh: refreshAddress,
+  refreshDisabled: addressRefreshDisabled,
+  refreshHint: addressRefreshHint,
+} = useDriverAddress(
   () => state.position,
   () => state.profile?.id,
-  () => state.gpsReady,
+  () =>
+    state.gpsFixReady &&
+    state.clock - state.locationUpdatedAt < 60_000 &&
+    (!state.profile?.isOnline || canControlShift()),
+  {
+    online: () => !!state.profile?.isOnline && canControlShift(),
+    capturedAt: () => state.locationUpdatedAt,
+    onlineRequest: () => state.addressLookupRequest,
+    transitionPending: () => state.busy,
+    connected: () =>
+      nativeAndroid && state.profile?.isOnline && canControlShift()
+        ? state.nativeConnected
+        : session.state.connected,
+  },
 );
 function closeIncoming() {
   if (state.incoming?.privateOfferExpiresAt) void declinePrivateOffer();
@@ -53,20 +77,40 @@ const networkOnline = useOnline();
 const connectionReady = computed(
   () =>
     networkOnline.value &&
-    (nativeAndroid && state.profile?.isOnline
+    (nativeAndroid && state.profile?.isOnline && canControlShift()
       ? state.nativeConnected
       : session.state.connected),
+);
+const connectionState = computed(() =>
+  connectionReady.value
+    ? "ready"
+    : connectionRecovering()
+      ? "reconnecting"
+      : "disconnected",
+);
+const connectionDescription = computed(() =>
+  connectionState.value === "ready"
+    ? "Связь с диспетчером установлена. GPS и смена показаны отдельно."
+    : connectionState.value === "reconnecting"
+      ? "Переподключаемся к диспетчеру. Смена сохраняется до 60 секунд. Принятая поездка остаётся за вами."
+      : !networkOnline.value
+        ? "Нет интернета. После восстановления связи нажмите кнопку выхода на линию, чтобы начать смену."
+        : "Нет связи с диспетчером. Пробуем подключиться. Когда связь восстановится, нажмите кнопку выхода на линию.",
 );
 const localFixFresh = computed(
   () => state.gpsFixReady && state.clock - state.locationUpdatedAt < 60_000,
 );
+// GPS is a device capability. It stays green while the phone has a fresh
+// local fix, even when the dispatcher connection is down. Server acknowledgement
+// remains a separate requirement for starting a shift and claiming an order.
+const gpsStatusReady = computed(() => localFixFresh.value);
 const locationReady = computed(
   () => localFixFresh.value && state.gpsReady && connectionReady.value,
 );
 const locationState = computed(() => {
   if (state.gpsPending) return "pending";
   if (!state.gpsFixReady && state.gpsError) return "blocked";
-  if (locationReady.value) return "ready";
+  if (gpsStatusReady.value) return "ready";
   if (state.gpsFixReady || state.locationSyncPending) return "connecting";
   return "inactive";
 });
@@ -85,33 +129,20 @@ const availabilityDescription = computed(() =>
           ? "Нет актуального GPS."
           : "На линии. Связь с диспетчером установлена.",
 );
-const alertsReady = computed(
-  () => alertState.permission === "granted" && alertState.soundReady,
-);
-const alertDescription = computed(() => {
-  if (alertState.pending) return "Включаем уведомления и звук…";
-  if (alertState.permission === "denied")
-    return nativeAndroid
-      ? "Разрешите уведомления о заказах и сообщениях в настройках приложения."
-      : "Уведомления заблокированы. Разрешите их в настройках браузера.";
-  if (alertState.permission === "unsupported")
-    return "Системные уведомления недоступны в этом браузере.";
-  if (alertState.permission === "granted")
-    return alertState.soundReady
-      ? "Уведомления разрешены. Звук включён."
-      : "Уведомления разрешены. Нажмите, чтобы включить звук.";
-  return "Нажмите, чтобы разрешить уведомления и включить звук.";
-});
 const gpsDescription = computed(() =>
   state.gpsPending
     ? "Получаем местоположение…"
-    : locationReady.value
-      ? "GPS и связь с диспетчером подтверждены."
+    : gpsStatusReady.value
+      ? !state.profile?.isOnline || shiftElsewhere.value
+        ? "GPS работает. Координаты этого телефона не передаются вне смены."
+        : locationReady.value
+          ? "GPS и связь с диспетчером подтверждены."
+          : !networkOnline.value
+            ? "GPS работает. Нет интернета, пытаемся подключиться…"
+            : state.locationSyncError ||
+              "GPS работает. Ожидаем связь с диспетчером…"
       : state.gpsFixReady
-        ? !localFixFresh.value
-          ? "Последнее положение устарело. Нажмите GPS, чтобы обновить."
-          : state.locationSyncError ||
-            "GPS работает. Ожидаем связь с диспетчером…"
+        ? "Последнее положение устарело. Нажмите GPS, чтобы обновить."
         : state.gpsError || "GPS не включён. Нажмите, чтобы включить.",
 );
 const lastLocationDescription = computed(() =>
@@ -122,28 +153,6 @@ const lastLocationDescription = computed(() =>
       })
     : "",
 );
-let permissionStatus: PermissionStatus | undefined;
-let disposed = false;
-onMounted(async () => {
-  syncAlertPermission();
-  window.addEventListener("focus", syncAlertPermission);
-  try {
-    const status = await navigator.permissions.query({ name: "notifications" });
-    if (disposed) return;
-    permissionStatus = status;
-    status.addEventListener("change", syncAlertPermission);
-  } catch {
-    /* Some mobile browsers do not expose notification permission queries. */
-  }
-});
-onUnmounted(() => {
-  disposed = true;
-  window.removeEventListener("focus", syncAlertPermission);
-  permissionStatus?.removeEventListener("change", syncAlertPermission);
-});
-watch(visibility, () => {
-  if (visibility.value === "visible") syncAlertPermission();
-});
 const availabilityPulse = ref(false);
 watch(
   () => state.profile?.isOnline,
@@ -169,10 +178,16 @@ const tripOpen = ref(false);
 const selectedDistrict = computed(() =>
   state.districts.find((d) => d.id === selected.value),
 );
+const currentLocalRegion = computed(() =>
+  localFixFresh.value && state.position
+    ? localRegionAt(state.districts, state.position)
+    : null,
+);
 const ownRegion = computed(
-  () =>
-    state.districts.find((d) => d.id === state.profile?.districtId)?.name ||
-    "Вне районов",
+  () => currentLocalRegion.value?.name || "Вне районов",
+);
+const highlightedRegionId = computed(() =>
+  connectionReady.value ? currentLocalRegion.value?.id : undefined,
 );
 const blockers = computed(() => {
   const messages: string[] = [];
@@ -225,7 +240,7 @@ watch(
         <div class="flex shrink-0 items-center gap-3">
           <div
             role="group"
-            aria-label="Разрешения устройства"
+            aria-label="GPS и связь"
             class="flex items-center rounded-full bg-secondary/60 px-1"
           >
             <Button
@@ -245,7 +260,7 @@ watch(
               :data-state="locationState"
               :aria-description="gpsDescription"
               :title="gpsDescription"
-              :disabled="!state.profile || state.gpsPending || shiftElsewhere"
+              :disabled="!state.profile || state.gpsPending"
               aria-label="Включить GPS"
               @click="enableGps"
             >
@@ -266,59 +281,46 @@ watch(
                 aria-hidden="true"
               />
             </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              class="relative size-11 rounded-full"
-              :class="
-                alertsReady
-                  ? 'bg-success/10 text-success'
-                  : alertState.permission === 'denied' ||
-                      alertState.permission === 'unsupported'
-                    ? 'text-destructive'
-                    : 'text-muted-foreground'
-              "
-              :data-state="
-                alertState.pending
-                  ? 'pending'
-                  : alertsReady
-                    ? 'ready'
-                    : alertState.permission === 'denied' ||
-                        alertState.permission === 'unsupported'
-                      ? 'blocked'
-                      : 'inactive'
-              "
-              :disabled="alertState.pending"
-              :aria-description="alertDescription"
-              :title="alertDescription"
-              aria-label="Включить уведомления и звук"
-              @click="enableOrderAlerts"
-            >
-              <LoaderCircle
-                v-if="alertState.pending"
-                class="size-5 motion-safe:animate-spin"
-                aria-hidden="true"
-              />
-              <BellRing
-                v-else-if="alertsReady"
-                class="size-5"
-                aria-hidden="true"
-              />
-              <BellOff
-                v-else-if="
-                  alertState.permission === 'denied' ||
-                  alertState.permission === 'unsupported'
-                "
-                class="size-5"
-                aria-hidden="true"
-              />
-              <Bell v-else class="size-5" aria-hidden="true" />
-              <Check
-                v-if="alertsReady"
-                class="absolute bottom-1 right-1 size-3 rounded-full bg-background"
-                aria-hidden="true"
-              />
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger as-child>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="size-11 rounded-full"
+                  :class="
+                    connectionState === 'ready'
+                      ? 'bg-success/10 text-success'
+                      : connectionState === 'reconnecting'
+                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                        : 'text-destructive'
+                  "
+                  :data-state="connectionState"
+                  aria-label="Связь с диспетчером"
+                  :aria-description="connectionDescription"
+                  :title="connectionDescription"
+                >
+                  <LoaderCircle
+                    v-if="connectionState === 'reconnecting'"
+                    class="size-5 motion-safe:animate-spin"
+                    aria-hidden="true"
+                  />
+                  <Wifi
+                    v-else-if="connectionState === 'ready'"
+                    class="size-5"
+                    aria-hidden="true"
+                  />
+                  <WifiOff v-else class="size-5" aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                class="max-w-[min(18rem,calc(100vw-2rem))] p-3"
+              >
+                <p class="text-sm leading-relaxed">
+                  {{ connectionDescription }}
+                </p>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
           <Button
             variant="outline"
@@ -348,7 +350,9 @@ watch(
               state.locationSyncPending ||
               !state.profile ||
               (!state.profile.isOnline &&
-                (Number(state.balance?.amount ?? 0) <= 0 || !localFixFresh))
+                (Number(state.balance?.amount ?? 0) <= 0 ||
+                  !localFixFresh ||
+                  !connectionReady))
             "
             @click="setOnline"
           >
@@ -382,7 +386,7 @@ watch(
           <MapPin class="size-4 shrink-0 text-primary" />
           <span class="flex min-w-0 flex-col leading-snug">
             <span class="truncate">{{
-              locationReady
+              localFixFresh
                 ? ownRegion
                 : state.position
                   ? "Последнее положение"
@@ -406,6 +410,23 @@ watch(
             </span>
           </span>
         </div>
+        <Button
+          v-if="state.profile?.isOnline && canControlShift()"
+          variant="ghost"
+          size="icon"
+          class="size-10 shrink-0 rounded-full text-muted-foreground"
+          aria-label="Обновить адрес"
+          :title="addressRefreshHint"
+          :aria-description="addressRefreshHint"
+          :disabled="addressRefreshDisabled"
+          @click="refreshAddress"
+        >
+          <RefreshCw
+            :class="addressPending ? 'motion-safe:animate-spin' : ''"
+            class="size-4"
+            aria-hidden="true"
+          />
+        </Button>
       </div>
       <DriverFeedback
         :blockers="state.active && !shiftElsewhere ? [] : blockers"
@@ -451,27 +472,28 @@ watch(
         :key="d.id"
         class="flex min-h-0 min-w-0 flex-col items-center justify-center gap-2 rounded-xl border p-2 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         :class="[
-          d.activeOrders > 0
+          d.publicAvailableOrders > 0
             ? 'border-emerald-300 bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-900'
             : 'bg-card hover:bg-secondary/50',
-          d.id === state.profile?.districtId ? 'ring-1 ring-primary' : '',
+          d.id === highlightedRegionId ? 'ring-2 ring-blue-500' : '',
         ]"
+        :aria-current="d.id === highlightedRegionId ? 'location' : undefined"
         :disabled="shiftElsewhere || !locationReady || !state.profile?.isOnline"
         @click="selected = d.id"
       >
         <span
           class="region-name break-words text-[13px] font-medium leading-tight"
           >{{ d.name
-          }}<span v-if="d.id === state.profile?.districtId" class="sr-only">
+          }}<span v-if="d.id === highlightedRegionId" class="sr-only">
             · Мой район</span
           ></span
         >
         <strong
           class="region-score text-2xl font-semibold leading-none tabular-nums"
-          :aria-label="`Заказов: ${d.activeOrders}. Машин на линии: ${d.onlineDrivers ?? d.freeDrivers}`"
+          :aria-label="`Заказов: ${d.publicAvailableOrders}. Машин на линии: ${d.onlineDrivers ?? d.freeDrivers}`"
           >{{
             locationReady && state.profile?.isOnline
-              ? `${d.activeOrders}:${d.onlineDrivers ?? d.freeDrivers}`
+              ? `${d.publicAvailableOrders}:${d.onlineDrivers ?? d.freeDrivers}`
               : "—:—"
           }}</strong
         >

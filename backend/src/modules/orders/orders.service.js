@@ -11,6 +11,7 @@ const { lockedBalance } = require('../balance/locked-balance');
 const { assertShiftControl, lockDeviceSession } = require('../driver/shift-ownership');
 const { assertOrderEligibility } = require('../driver/gps-eligibility');
 const { refreshOrderRecipients } = require('../../sockets/roomSync');
+const notifications = require('../notifications/notifications');
 
 const D = (value) => new Prisma.Decimal(value ?? 0);
 const NEEDS_COMPLETION_AFTER_MS = 15 * 60 * 1000;
@@ -170,11 +171,18 @@ async function expirePrivateOffers() {
     const data = { privateOfferDriverId: null, privateOfferExpiresAt: null, publicRegionOnlyUntil: null,
       privateOfferStoppedAt: releasePublicly ? null : now,
       publicReleasedGloballyAt: releasePublicly ? now : null };
-    const changed = await prisma.order.updateMany({ where: { id: order.id, status: 'NEW', privateOfferStoppedAt: order.privateOfferStoppedAt,
-      privateOfferDriverId: order.privateOfferDriverId,
-      ...(order.privateOfferExpiresAt ? { privateOfferExpiresAt: { equals: order.privateOfferExpiresAt, lte: now } } : { publicRegionOnlyUntil: { equals: order.publicRegionOnlyUntil, lte: now } })
-    }, data });
-    if (changed.count) await publishPrivateRelease({ ...order, ...data, privateOfferDriverId: order.privateOfferDriverId, privateOfferExpiresAt: order.privateOfferExpiresAt }, releasePublicly ? 'global' : 'none');
+    const changed = await prisma.$transaction(async tx => {
+      const result = await tx.order.updateMany({ where: { id: order.id, status: 'NEW', privateOfferStoppedAt: order.privateOfferStoppedAt,
+        privateOfferDriverId: order.privateOfferDriverId,
+        ...(order.privateOfferExpiresAt ? { privateOfferExpiresAt: { equals: order.privateOfferExpiresAt, lte: now } } : { publicRegionOnlyUntil: { equals: order.publicRegionOnlyUntil, lte: now } })
+      }, data });
+      if (result.count) await notifications.invalidateOrder(tx, order.id);
+      return result;
+    });
+    if (changed.count) {
+      notifications.wake();
+      await publishPrivateRelease({ ...order, ...data, privateOfferDriverId: order.privateOfferDriverId, privateOfferExpiresAt: order.privateOfferExpiresAt }, releasePublicly ? 'global' : 'none');
+    }
   }
 }
 
@@ -206,8 +214,12 @@ async function offerPrivately(orderId, driverId, broadcastAfterPrivateExpiry = t
     assertOrderEligibility(driver);
     const changed = await tx.order.updateMany({ where: { id: orderId, status: 'NEW', driverId: null, privateOfferDriverId: null }, data: { privateOfferDriverId: driverId, privateOfferExpiresAt: new Date(Date.now() + 20_000), privateOfferStoppedAt: null, publicRegionOnlyUntil: null, publicReleasedGloballyAt: null, broadcastAfterPrivateExpiry } });
     if (!changed.count) throw ApiError.conflict('Заказ уже принят или предложен другому водителю');
-    return tx.order.findUnique({ where: { id: orderId }, include: { district: true } });
+    await notifications.invalidateOrder(tx, orderId);
+    const updated = await tx.order.findUnique({ where: { id: orderId }, include: { district: true } });
+    if (updated) await notifications.enqueueOrder(tx, updated);
+    return updated;
   });
+  notifications.wake();
   safeEmit(io => {
     io.to(rooms.driver(driverId)).emit('order:private-offer', safePrivateOffer(order));
     io.to(rooms.drivers()).except(rooms.driver(driverId)).emit('order:taken', { orderId });
@@ -227,6 +239,7 @@ async function declinePrivateOffer(orderId, driver, privateOfferExpiresAt) {
     if (!order || order.privateOfferDriverId !== driver.id || order.privateOfferExpiresAt?.toISOString() !== privateOfferExpiresAt) throw ApiError.conflict('Предложение больше недоступно');
     const changed = await tx.order.updateMany({ where: { id: orderId, status: 'NEW', privateOfferDriverId: driver.id, privateOfferStoppedAt: null, privateOfferExpiresAt: { equals: new Date(privateOfferExpiresAt), gt: new Date() } }, data: { privateOfferDriverId: null, privateOfferStoppedAt: new Date() } });
     if (!changed.count) throw ApiError.conflict('Предложение больше недоступно');
+    await notifications.invalidateOrder(tx, orderId);
     return tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { district: true } });
   });
   // Decline frees the driver but does not shorten the order's exclusive deadline.
@@ -306,6 +319,7 @@ async function accept(orderId, driver, etaMinutes, privateOfferExpiresAt) {
     await tx.driver.update({ where: { id: driver.id }, data: { isAvailable: false } });
 
     const acceptedOrder = await tx.order.findUnique({ where: { id: orderId }, include: { district: true } });
+    await notifications.invalidateOrder(tx, orderId);
 
     // The order's quoted price is charged to the driver's balance right
     // here, at accept - not the old model (see complete() below), which
@@ -465,6 +479,7 @@ async function cancel(orderId, driver, reason) {
       where: { id: orderId },
       data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: reason || null }
     });
+    await notifications.invalidateOrder(tx, orderId);
     await tx.driver.update({ where: { id: driver.id }, data: { isAvailable: true } });
     const balanceAfter = await recordOrderCharge(tx, order, driver.userId, 'REFUND');
     return { order: updated, balanceAfter };
@@ -513,11 +528,14 @@ async function createOrder(data) {
       await lockDriver(tx, privateOfferDriverId);
       await assertPrivateOfferDriver(tx, privateOfferDriverId, publicData.priceEstimated);
     }
-    return tx.order.create({
+    const created = await tx.order.create({
       data: { ...publicData, pickupLat, pickupLng, districtId, status: 'NEW', broadcastAfterPrivateExpiry: privateOfferDriverId ? publicData.broadcastAfterPrivateExpiry : true, publicRegionOnlyUntil: privateOfferDriverId ? null : new Date(Date.now() + 20_000), publicReleasedGloballyAt: privateOfferDriverId ? null : new Date(), ...(privateOfferDriverId ? { privateOfferDriverId, privateOfferExpiresAt: new Date(Date.now() + 20_000) } : {}) },
       include: { district: true }
     });
+    await notifications.enqueueOrder(tx, created);
+    return created;
   });
+  notifications.wake();
 
   // Same privacy rule as listAvailable: a driver who hasn't accepted yet
   // must not see the client's phone number, so the district broadcast gets
@@ -570,6 +588,7 @@ async function adminCancel(orderId, reason) {
 
       data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: reason || null }
     });
+    await notifications.invalidateOrder(tx, orderId);
     let balanceAfter = null;
     if (order.driverId) {
       const driver = await tx.driver.update({ where: { id: order.driverId }, data: { isAvailable: true } });
@@ -631,7 +650,7 @@ async function forceResolveStarted(orderId, actorId, reason) {
         completedAt,
         priceFinal: order.priceFinal ?? order.priceEstimated
       },
-      include: { driver: { include: { user: { select: { fullName: true, phone: true } } } }, district: true }
+      include: { driver: { include: { user: { select: { fullName: true, phone: true, archivedPhone: true } } } }, district: true }
     });
     if (order.driverId) {
       await tx.driver.update({ where: { id: order.driverId }, data: { isAvailable: true } });
@@ -639,7 +658,7 @@ async function forceResolveStarted(orderId, actorId, reason) {
     await tx.orderResolutionAudit.create({
       data: { orderId, actorId, action: 'FORCE_COMPLETED', reason }
     });
-    return updated;
+    return { ...updated, driver: require('../driver/public-profile').publicDriverProfile(updated.driver) };
   });
 
   safeEmit((io) => {

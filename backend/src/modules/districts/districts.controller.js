@@ -8,7 +8,7 @@ const list = asyncHandler(async (req, res) => {
   if (req.user.role === 'DRIVER') {
     const driver = await prisma.driver.findUnique({ where: { id: req.user.driverId } });
     if (!driver || driver.status !== 'APPROVED' || !driver.isOnline || !hasFreshGps(driver)) {
-      return res.json(districts.map(region => ({ ...region, activeOrders: 0, freeDrivers: 0, onlineDrivers: 0 })));
+      return res.json(districts.map(region => ({ ...region, activeOrders: 0, publicAvailableOrders: 0, freeDrivers: 0, onlineDrivers: 0 })));
     }
   }
   res.json(districts);

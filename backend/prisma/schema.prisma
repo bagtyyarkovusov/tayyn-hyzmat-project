@@ -82,6 +82,8 @@ model User {
   id           String     @id @default(uuid())
   role         Role
   phone        String     @unique
+  archivedPhone String? @map("archived_phone")
+  deletedAt DateTime? @map("deleted_at")
   email        String?    @unique
   credentialVersion Int @default(0) @map("credential_version")
   passwordHash String     @map("password_hash")
@@ -178,12 +180,13 @@ model Driver {
   locations DriverLocation[]
   devices   DriverDevice[]
   nativeShiftLease NativeShiftLease?
+  notificationInstallations NotificationInstallation[]
 
   @@index([status])
   @@map("drivers")
 }
 
-// An approved installation; sessionVersion revokes this installation's signed
+// A signed-in installation; sessionVersion revokes this installation's signed
 // sessions together without signing out another device belonging to the driver.
 model DriverDevice {
   id          String   @id @default(uuid())
@@ -194,6 +197,7 @@ model DriverDevice {
   sessionVersion Int @default(0) @map("session_version")
   firstSeenAt DateTime @default(now()) @map("first_seen_at")
   lastLoginAt DateTime @default(now()) @map("last_login_at")
+  addressConvenienceAt DateTime? @map("address_convenience_at") @db.Timestamptz
 
   @@unique([driverId, deviceId])
   @@map("driver_devices")
@@ -499,6 +503,9 @@ model DriverAddressState {
   sourceLng Decimal @map("source_lng") @db.Decimal(10, 7)
   address String?
   cacheUntil DateTime? @map("cache_until") @db.Timestamptz
+  purpose String @default("shift")
+  onlineExceptionReady Boolean @default(false) @map("online_exception_ready")
+  pendingUntil DateTime? @map("pending_until") @db.Timestamptz
 
   @@map("driver_address_state")
 }
@@ -511,4 +518,50 @@ model GeocoderBudget {
   blockedUntil DateTime? @map("blocked_until") @db.Timestamptz
 
   @@map("geocoder_budget")
+}
+
+// Installation-scoped notification preference and native verification capability.
+model NotificationInstallation {
+  id String @id @default(uuid())
+  driverId String @map("driver_id")
+  driver Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  deviceId String @map("device_id")
+  credentialVersion Int @map("credential_version")
+  deviceVersion Int @map("device_version")
+  token String? @unique
+  secretHash String? @unique @map("secret_hash")
+  enabled Boolean @default(true)
+  coordinatorEnabled Boolean @default(false) @map("coordinator_enabled")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  deliveries NotificationDelivery[]
+
+  @@unique([driverId, deviceId])
+  @@map("notification_installations")
+}
+
+// Persisted with the business event; remote transport only runs after commit.
+model NotificationDelivery {
+  id String @id @default(uuid())
+  installationId String @map("installation_id")
+  installation NotificationInstallation @relation(fields: [installationId], references: [id], onDelete: Cascade)
+  eventId String @map("event_id")
+  channel String
+  resourceId String @map("resource_id")
+  expiresAt DateTime @map("expires_at")
+  notBefore DateTime @map("not_before")
+  attempts Int @default(0)
+  claimedUntil DateTime? @map("claimed_until")
+  socketSentAt DateTime? @map("socket_sent_at")
+  sentAt DateTime? @map("sent_at")
+  acknowledgedAt DateTime? @map("acknowledged_at")
+  cancelledAt DateTime? @map("cancelled_at")
+  invalidatedAt DateTime? @map("invalidated_at")
+  invalidationSentAt DateTime? @map("invalidation_sent_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([installationId, eventId])
+  @@index([acknowledgedAt, notBefore])
+  @@index([invalidatedAt, invalidationSentAt])
+  @@map("notification_deliveries")
 }

@@ -33,13 +33,20 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
 } from "@/shared/ui/dropdown-menu";
-import { driverState } from "@/features/driver/useDriver";
+import { useDriverNotifications } from "@/features/driver/notifications";
+import { useDriverPermissionOnboarding } from "@/features/driver/permissionOnboarding";
+import AdminMessageAlert from "@/features/dispatcher/AdminMessageAlert.vue";
 const route = useRoute();
 const development = import.meta.env.DEV;
 const visibility = useDocumentVisibility();
 const networkOnline = useOnline();
 const chat = computed(
   () => route.path === "/driverChat" || route.path.startsWith("/adminChat"),
+);
+useDriverNotifications(
+  computed(
+    () => route.path === "/driverChat" && visibility.value === "visible",
+  ),
 );
 const viewportHeight = ref<string>();
 const viewportTop = ref("0px");
@@ -69,6 +76,16 @@ onUnmounted(() => {
 const router = useRouter();
 const auth = computed(() => route.meta.layout === "auth");
 const driver = computed(() => route.path.startsWith("/driver"));
+useDriverPermissionOnboarding(
+  computed(
+    () =>
+      driver.value &&
+      !auth.value &&
+      !!driverSession.state.accessToken &&
+      !driverSession.state.restoring &&
+      !driverSession.state.verificationError,
+  ),
+);
 // Include portalled dialogs and login screens while leaving dispatcher text selectable.
 watch(
   driver,
@@ -140,6 +157,7 @@ async function logout() {
       },
     ]"
   >
+    <AdminMessageAlert v-if="!driver" />
     <aside v-if="!driver" class="sidebar">
       <RouterLink to="/adminDashboard" class="brand"><BrandLogo /></RouterLink>
       <p class="mt-7 mb-3 text-xs text-muted-foreground">
@@ -178,33 +196,16 @@ async function logout() {
     <div class="min-w-0 flex-1">
       <header class="workspace-header">
         <div class="flex min-w-0 items-center gap-3">
-          <BrandLogo compact /><span class="connection"
+          <BrandLogo compact /><span v-if="!driver" class="connection"
             ><i
               :class="{
-                online: driver
-                  ? driverState.profile?.isOnline &&
-                    driverState.profile?.canControlShift !== false
-                  : session.state.connected,
+                online: session.state.connected,
                 'connection-pulse':
                   visibility === 'visible' &&
                   networkOnline &&
-                  session.state.connected &&
-                  (!driver ||
-                    (driverState.profile?.isOnline &&
-                      driverState.profile?.canControlShift !== false &&
-                      driverState.gpsReady)),
+                  session.state.connected,
               }"
-            />{{
-              driver
-                ? driverState.profile?.canControlShift === false
-                  ? "Смена на другом устройстве"
-                  : driverState.profile?.isOnline
-                    ? "На линии"
-                    : "Не на линии"
-                : session.state.connected
-                  ? "На связи"
-                  : "Подключение…"
-            }}</span
+            />{{ session.state.connected ? "На связи" : "Подключение…" }}</span
           >
         </div>
         <div class="flex shrink-0 items-center gap-2">
@@ -254,6 +255,20 @@ async function logout() {
           /></Button>
         </div>
       </header>
+      <p
+        v-if="driver && !networkOnline"
+        role="status"
+        class="border-b bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-900 dark:bg-amber-950/60 dark:text-amber-200"
+      >
+        Нет интернета. Пытаемся подключиться…
+      </p>
+      <p
+        v-else-if="driver && !session.state.connected"
+        role="status"
+        class="border-b bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-900 dark:bg-amber-950/60 dark:text-amber-200"
+      >
+        Связь с диспетчером прервана. Переподключаемся…
+      </p>
       <nav
         v-if="!driver"
         class="mobile-admin-nav"

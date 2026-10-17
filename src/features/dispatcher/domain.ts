@@ -27,24 +27,15 @@ export interface Driver {
   status: string;
   isOnline: boolean;
   isAvailable: boolean;
+  hasActiveTrip?: boolean;
+  accountDeleted?: boolean;
   lastLat?: number | string;
   lastLng?: number | string;
   lastSeenAt?: string;
   lastLocationAt?: string;
-  pendingDeviceId?: string;
-  pendingDeviceLabel?: string;
-  currentDeviceId?: string;
-  currentDeviceLabel?: string;
-  shiftDeviceId?: string | null;
   blockedReason?: string;
   district?: District;
   currentVehicle?: Vehicle;
-  devices?: {
-    id: string;
-    deviceId: string;
-    label?: string;
-    lastLoginAt: string;
-  }[];
   hasUnreadMessage?: boolean;
   user: {
     id: string;

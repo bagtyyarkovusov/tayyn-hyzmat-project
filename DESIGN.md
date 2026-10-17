@@ -1,19 +1,21 @@
 ---
 name: Tayyn Hyzmat
-description: Compact monochrome dispatch and driver interfaces
+description: Compact navy, red and white dispatch and driver interfaces
 colors:
-  ink: "#111111"
+  ink: "#122d4b"
+  brand-swoosh: "#c81022"
   paper: "#ffffff"
-  background: "#f6f6f6"
-  foreground: "#141414"
-  secondary: "#ebebeb"
-  muted-foreground: "#5c5c5c"
-  border: "#dcdcdc"
-  dark-card: "#1c1c1c"
+  story-muted: "#c1cddd"
+  background: "#f5f7fa"
+  foreground: "#13283f"
+  secondary: "#e9eef4"
+  muted-foreground: "#526174"
+  border: "#d9e1e9"
+  dark-card: "#172334"
   dark-foreground: "#f5f5f5"
-  dark-secondary: "#292929"
-  dark-muted-foreground: "#b8b8b8"
-  dark-border: "#404040"
+  dark-secondary: "#253246"
+  dark-muted-foreground: "#bac6d4"
+  dark-border: "#3a4a60"
   destructive: "#b42318"
   dark-destructive: "#ffb4ab"
   dark-destructive-foreground: "#4a0903"
@@ -44,11 +46,11 @@ spacing:
 
 Dispatcher and driver interfaces use Operate mode. Drivers need to scan regions, confirm orders and manage a trip in a compact phone viewport. Dispatchers create and assign orders, manage drivers and monitor regions. Preserve Russian operational copy, Latin `Tayyn Hyzmat`, TMT, current business rules and the existing fixed driver grid.
 
-The user requested a replacement black-and-white identity inspired by the clarity of Uber's interfaces. The user-supplied final identity preserves the original H-shaped uprights and rising swoosh: black/green on light surfaces, white/light green on dark surfaces, with a Latin Manrope wordmark. It replaces the mistaken temporary T interpretation. No Uber mark, font or artwork is used. White and near-black establish hierarchy; neutral surfaces distinguish panels without decorative cards or gradients. Primary actions reverse ink and paper between light and dark mode. Green is retained in the supplied brand swoosh and for operational readiness and regions with active orders; amber and red continue to communicate uncertainty and failure alongside icons, labels or accessible descriptions.
+The user restored the original navy H and red swoosh from recovered `logo.png`. Preserve its exact silhouette and colors. Navy primary controls and white surfaces retain the earlier compact, restrained interface; the red swoosh supplies the brand accent without coloring every action red. No Uber mark, font or artwork is used. Green remains operational readiness and active-region status; amber and destructive red retain their warning meanings alongside icons or labels.
 
 ## Colors
 
-`src/shared/theme.css` is the runtime authority. Light uses background `#f6f6f6`, card `#ffffff`, foreground `#141414`, primary `#111111`, secondary `#ebebeb`, muted text `#5c5c5c`, border `#dcdcdc`. Dark uses background `#111111`, card `#1c1c1c`, foreground/primary `#f5f5f5`, secondary `#292929`, muted text `#b8b8b8`, border `#404040`. Destructive actions use white on `#b42318` in light mode and `#4a0903` on `#ffb4ab` in dark mode; never white on a pale red background.
+`src/shared/theme.css` is the runtime authority. Light uses background `#f5f7fa`, card `#ffffff`, foreground `#13283f`, navy primary `#122d4b`, secondary `#e9eef4`, muted text `#526174`, border `#d9e1e9`. Dark uses background `#0e1724`, card `#172334`, foreground/primary `#f5f5f5`, secondary `#253246`, muted text `#bac6d4`, border `#3a4a60`. The login story uses the same navy. Interface accents use red `#c81022` in light mode and `#ff7983` in dark mode; the artwork keeps its original red. Red navigation accents do not indicate readiness. Destructive actions remain white on `#b42318` in light mode and `#4a0903` on `#ffb4ab` in dark mode. GPS/shift success remains `#137333` / `#8bd5a5`.
 
 ## Typography
 
@@ -64,7 +66,7 @@ Shared shadcn-vue primitives keep their behavior. Panels remain flat and ruled; 
 
 ## Components
 
-`src/shared/BrandLogo.vue` displays the exact user-supplied artwork using `public/brand/mark-light.png` and `mark-dark.png`, alongside the live Latin wordmark. Byte-identical uploaded sources are retained under `public/brand/source/`; the historical root `logo.png` remains unchanged. PNG preparation removes detached alpha specks and trims/centers/pads, without redrawing the H or swoosh. `scripts/generate-brand-assets.py` reproduces web and Android raster assets with source metadata; Android adaptive foregrounds retain a safe margin for system masks. The manifest, browser chrome, launcher icon and launch screen use this identity. These are build assets, not a backend or database migration.
+`src/shared/BrandLogo.vue` displays `public/brand/mark-light.png` and `mark-dark.png` alongside the live Latin wordmark. Both use the original navy/red artwork: dark mode adds a white backing to preserve contrast. Root `logo.png` remains unchanged; the later black/green uploads remain archived under `public/brand/source/`. `scripts/generate-brand-assets.py` extracts the colored artwork from the source tile/shadow, centers its alpha-weighted visible ink mass, then pads/downsamples without redrawing. Placement is calculated from the artwork geometry and kept inside the Android mask-safe circle. Android adaptive foregrounds and splash icons have transparent backgrounds, preventing nested tiles; mask-safe margins protect the swoosh. The manifest, launcher and launch screen use this identity. Modern active-navigation icons use a restrained red accent; selection fills, chat bubbles, fields, menus, tables and primary controls inherit shared navy tokens. Dialog scrims use a navy-tinted transparent layer rather than a detached black palette. Browser theme chrome derives from the current runtime background token; native location/readiness and active-order green, amber warnings and destructive colors stay semantic. These are build assets, not a database migration.
 
 Verification covers both actors, light/dark, desktop/mobile and the driver viewport. A polished visual test does not certify financial integrity, background notification delivery or production readiness; those have separate release gates.
 
