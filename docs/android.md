@@ -69,7 +69,8 @@ The trip feed and details offer navigation when the relevant coordinates exist.
 Before the passenger boards, the target is pickup. After `Начать поездку`, the
 only target is dropoff. If destination coordinates were not supplied, no route
 button is shown for a started trip. Call the customer to agree the destination;
-the application must not silently route back to pickup.
+the application must not silently route back to pickup. Missing, invalid or
+unset `0,0` target coordinates hide navigation, matching the map marker policy.
 
 Android opens the installed Yandex Maps app through an explicit external intent.
 If it is unavailable, Android opens the public Yandex web route in a browser.

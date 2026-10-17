@@ -23,6 +23,9 @@ const eta = ref(10);
             : "Новый заказ"
         }}
       </h2>
+      <p class="text-sm font-semibold text-primary">
+        Заказ #{{ state.incoming.orderNumber }}
+      </p>
       <p
         v-if="state.offerSeconds > 0"
         class="shrink-0 pt-0.5 text-sm font-semibold tabular-nums"

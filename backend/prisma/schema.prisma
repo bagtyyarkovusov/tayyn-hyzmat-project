@@ -275,6 +275,9 @@ model District {
 
 model Order {
   id         String    @id @default(uuid())
+  // Stable number for dispatch, driver support and financial references.
+  // UUID remains the internal route/socket identity.
+  orderNumber Int      @unique @default(autoincrement()) @map("order_number")
   clientId   String?   @map("client_id")
   client     User?     @relation("ClientOrders", fields: [clientId], references: [id])
   // Raw phone number for phone/manually-dispatched orders, which is the

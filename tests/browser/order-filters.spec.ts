@@ -1,10 +1,10 @@
 import { test, expect } from "@playwright/test";
 import { createRequire } from "node:module";
+import { loginFixture, installFixtureSession } from "./helpers/device-session";
 const require = createRequire(
   new URL("../../backend/package.json", import.meta.url),
 );
 const { PrismaClient } = require("@prisma/client");
-const jwt = require("jsonwebtoken");
 if (process.env.DISPOSABLE_BROWSER_TEST !== "true")
   throw new Error("Use disposable browser runner");
 
@@ -13,19 +13,28 @@ test("dispatcher order lifecycle lists are exclusive and default to unclaimed wa
 }) => {
   const prisma = new PrismaClient();
   const orderIds: string[] = [];
+  let adminUserId: string | undefined;
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 },
   });
   try {
-    const admin = await prisma.user.findUniqueOrThrow({
+    const seededAdmin = await prisma.user.findUniqueOrThrow({
       where: { phone: "+99360000000" },
-      include: { admin: true },
     });
-    const token = jwt.sign(
-      { sub: admin.id, role: "ADMIN", adminId: admin.admin.id },
-      process.env.JWT_ACCESS_SECRET,
-      { expiresIn: "5m" },
-    );
+    const admin = await prisma.user.create({
+      data: {
+        phone: "+99360888881",
+        fullName: "Диспетчер фильтра заказов",
+        role: "ADMIN",
+        passwordHash: seededAdmin.passwordHash,
+        // A real account can already have signed out or changed credentials.
+        credentialVersion: 1,
+        admin: { create: { permissionLevel: "SUPER" } },
+      },
+    });
+    adminUserId = admin.id;
+    const session = await loginFixture(context.request, admin.phone);
+    await installFixtureSession(context, "admin", session);
     const statuses = [
       "NEW",
       "ACCEPTED",
@@ -48,16 +57,36 @@ test("dispatcher order lifecycle lists are exclusive and default to unclaimed wa
       });
       orderIds.push(order.id);
     }
-    await context.addInitScript(
-      ({ token, id }) => {
-        localStorage.setItem("openride.admin.accessToken", token);
-        localStorage.setItem(
-          "tayyn.admin.user",
-          JSON.stringify({ id, role: "ADMIN", fullName: "Диспетчер" }),
-        );
+    const driver = await prisma.driver.findFirstOrThrow({
+      include: { user: true },
+    });
+    const driverLocalPhone = driver.user.phone.slice(4);
+    const driverPhoneLabel =
+      driverLocalPhone.match(/\d{1,2}/g)?.join(" ") ?? driverLocalPhone;
+    const phoneFiltered = await prisma.order.create({
+      data: {
+        districtId: process.env.TEST_REGION_ID,
+        status: "NEW",
+        pickupLat: 37.96,
+        pickupLng: 58.32,
+        clientPhone: "+99365111111",
+        priceEstimated: 25,
+        pickupAddress: "Клиентский телефон 65111111",
       },
-      { token, id: admin.id },
-    );
+    });
+    const driverFiltered = await prisma.order.create({
+      data: {
+        districtId: process.env.TEST_REGION_ID,
+        status: "ACCEPTED",
+        driverId: driver.id,
+        pickupLat: 37.96,
+        pickupLng: 58.32,
+        clientPhone: "+99365222222",
+        priceEstimated: 25,
+        pickupAddress: `Телефон водителя ${driverLocalPhone}`,
+      },
+    });
+    orderIds.push(phoneFiltered.id, driverFiltered.id);
     const page = await context.newPage();
     await page.goto("/adminOrders");
     const groups = [
@@ -86,6 +115,32 @@ test("dispatcher order lifecycle lists are exclusive and default to unclaimed wa
     await expect(
       page.getByText("Проверка фильтра NEW", { exact: true }),
     ).toBeVisible();
+    await page.getByRole("button", { name: "Все", exact: true }).click();
+    await page
+      .locator("#orders-number")
+      .fill(String(phoneFiltered.orderNumber));
+    await expect(
+      page.getByText("Клиентский телефон 65111111", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Проверка фильтра NEW", { exact: true }),
+    ).toHaveCount(0);
+    await page.locator("#orders-number").fill("");
+    await page.locator("#orders-customer-phone").fill("65 11 11 11");
+    await expect(
+      page.getByText("Клиентский телефон 65111111", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Телефон водителя 60000101", { exact: true }),
+    ).toHaveCount(0);
+    await page.locator("#orders-customer-phone").fill("");
+    await page.locator("#orders-driver-phone").fill(driverPhoneLabel);
+    await expect(
+      page.getByText(`Телефон водителя ${driverLocalPhone}`, { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Клиентский телефон 65111111", { exact: true }),
+    ).toHaveCount(0);
     await page.screenshot({
       path: test.info().outputPath("waiting-orders-mobile.png"),
       fullPage: true,
@@ -93,6 +148,7 @@ test("dispatcher order lifecycle lists are exclusive and default to unclaimed wa
   } finally {
     await context.close();
     await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+    if (adminUserId) await prisma.user.delete({ where: { id: adminUserId } });
     await prisma.$disconnect();
   }
 });

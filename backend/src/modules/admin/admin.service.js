@@ -453,39 +453,74 @@ const ORDER_STATUS_GROUPS = {
   cancelled: 'CANCELLED'
 };
 
-async function listOrders({ status, page, limit }) {
-  const where = status && status !== 'all' ? { status: ORDER_STATUS_GROUPS[status] } : {};
+async function listOrders({ status, page, limit, customerPhone, driverPhone, orderNumber }) {
+  const where = {
+    ...(status && status !== "all"
+      ? { status: ORDER_STATUS_GROUPS[status] }
+      : {}),
+    ...(customerPhone ? { clientPhone: customerPhone } : {}),
+    ...(orderNumber ? { orderNumber } : {}),
+  };
+  if (driverPhone) {
+    // Resolve current and archived driver phones first so historical orders
+    // remain searchable after deletion. Earlier credential phone values are
+    // not retained when a driver's phone is edited.
+    const users = await prisma.user.findMany({
+      where: {
+        role: "DRIVER",
+        OR: [{ phone: driverPhone }, { archivedPhone: driverPhone }],
+      },
+      select: { driver: { select: { id: true } } },
+    });
+    where.driverId = {
+      in: users.flatMap(({ driver }) => (driver ? [driver.id] : [])),
+    };
+  }
 
   const [items, total] = await Promise.all([
     prisma.order.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
       skip: (page - 1) * limit,
       take: limit,
       include: {
-        driver: { include: { user: { select: { fullName: true, phone: true, archivedPhone: true } } } },
+        driver: {
+          include: {
+            user: {
+              select: { fullName: true, phone: true, archivedPhone: true },
+            },
+          },
+        },
         district: true,
-        resolutionAudits: { orderBy: { createdAt: 'desc' }, take: 1, include: { actor: { select: { fullName: true } } } }
-      }
+        resolutionAudits: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          include: { actor: { select: { fullName: true } } },
+        },
+      },
     }),
-    prisma.order.count({ where })
+    prisma.order.count({ where }),
   ]);
 
   const now = Date.now();
   return {
     items: items.map((order) => ({
       ...order,
-      driver: require('../driver/public-profile').publicDriverProfile(order.driver),
-      startedAgeSeconds: order.status === 'STARTED' && order.startedAt
-        ? Math.max(0, Math.floor((now - order.startedAt.getTime()) / 1000))
-        : null,
-      needsCompletion: order.status === 'STARTED' && order.startedAt
-        ? now - order.startedAt.getTime() >= 15 * 60 * 1000
-        : false
+      driver: require("../driver/public-profile").publicDriverProfile(
+        order.driver,
+      ),
+      startedAgeSeconds:
+        order.status === "STARTED" && order.startedAt
+          ? Math.max(0, Math.floor((now - order.startedAt.getTime()) / 1000))
+          : null,
+      needsCompletion:
+        order.status === "STARTED" && order.startedAt
+          ? now - order.startedAt.getTime() >= 15 * 60 * 1000
+          : false,
     })),
     total,
     page,
-    limit
+    limit,
   };
 }
 

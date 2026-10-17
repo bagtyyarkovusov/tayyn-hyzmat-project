@@ -10,5 +10,9 @@
   "logo.png": {
     "sha256": "0dcc61c64956172dab00bd03ab00b1d98ee11e33233029abd5a364df4bac1957",
     "origin": "Original recovered Tayyn Hyzmat navy H/red swoosh. Canonical current artwork, restored at user request. Source retains baked white tile; generator extracts colored artwork without redrawing."
+  },
+  "supplied-navy-red.png": {
+    "sha256": "a0a6a204c97bf73c891727604c8f43b3a7ae53ddd0d14b4c8041aff6e9dd2b5c",
+    "origin": "User-provided navy H/red swoosh attachment; unmodified source used for generated web, favicon, launcher and splash artwork."
   }
 }

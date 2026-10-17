@@ -20,7 +20,7 @@ const referenceText: Record<string, string> = {
     "Coganly garadamak obyeznoydan asak tarapy garadamakdan cogalny",
   Центр:
     "Centr shayoly bilen cehow aralyk\nYokarsy maskowski asagam gurbansoltan",
-  "Ачабил, Бекреве": "Arcabilem dusnukli bekrewani 1 maydan yokarsyny goymaly",
+  "Арчабил, Бекреве": "Arcabilem dusnukli bekrewani 1 maydan yokarsyny goymaly",
   "Анау, Гами": "Anew gami gurbansoltan magistralnydan anarsy",
   "Аркадаг, Ялкым": "Arkadag yalkymam kone gurtlydan anarsy",
 };

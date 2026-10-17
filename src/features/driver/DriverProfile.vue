@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { formatPhone, isTurkmenPhone } from "@/shared/phone";
+import { formatPhone } from "@/shared/phone";
 import IncomingOrder from "./components/IncomingOrder.vue";
 import { onMounted, ref, watch } from "vue";
 import {
@@ -9,7 +9,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Phone,
 } from "lucide-vue-next";
 import { notificationSettings, toggleNotifications } from "./notifications";
 import { alertState, openNotificationSettings } from "./alerts";
@@ -267,20 +266,8 @@ onMounted(() => void load());
                   </dd>
                 </div>
                 <div>
-                  <dt class="text-xs text-muted-foreground">Телефон клиента</dt>
-                  <dd>
-                    <a
-                      v-if="
-                        order.clientPhone && isTurkmenPhone(order.clientPhone)
-                      "
-                      :href="`tel:${order.clientPhone}`"
-                      class="inline-flex min-h-11 items-center gap-2 font-medium underline underline-offset-4"
-                      ><Phone class="size-4" aria-hidden="true" />{{
-                        formatPhone(order.clientPhone)
-                      }}</a
-                    >
-                    <p v-else class="mt-0.5">Номер не указан</p>
-                  </dd>
+                  <dt class="text-xs text-muted-foreground">Номер заказа</dt>
+                  <dd class="mt-0.5 font-medium">#{{ order.orderNumber }}</dd>
                 </div>
                 <div v-if="order.note">
                   <dt class="text-xs text-muted-foreground">Примечание</dt>
@@ -344,10 +331,6 @@ onMounted(() => void load());
                     }}</time>
                   </dd>
                 </template>
-              </dl>
-              <dl class="space-y-1 border-t pt-3 text-xs">
-                <dt class="text-muted-foreground">Номер заказа</dt>
-                <dd class="select-all break-all">{{ order.id }}</dd>
               </dl>
             </div>
           </details>

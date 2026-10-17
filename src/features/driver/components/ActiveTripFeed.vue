@@ -8,7 +8,6 @@ import {
   Navigation,
 } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
-import { formatPhone } from "@/shared/phone";
 import { useDriver } from "../useDriver";
 import { money } from "../model";
 import { tripNavigation, openTripNavigation } from "../navigation";
@@ -81,6 +80,9 @@ const action = computed(() =>
         ><Ellipsis class="size-5"
       /></Button>
     </div>
+    <p class="text-sm font-semibold text-primary">
+      Заказ #{{ state.active.orderNumber }}
+    </p>
     <div class="trip-route flex items-start justify-between gap-3">
       <p class="min-w-0 flex-1 text-sm font-medium leading-snug">
         <span class="line-clamp-2 break-words">
@@ -107,7 +109,7 @@ const action = computed(() =>
       >
         <a
           :href="`tel:${state.active.clientPhone}`"
-          :aria-label="`Позвонить клиенту ${formatPhone(state.active.clientPhone)}`"
+          aria-label="Позвонить клиенту"
         >
           <Phone class="size-4" aria-hidden="true" />
           <span class="text-xs">Клиент</span>

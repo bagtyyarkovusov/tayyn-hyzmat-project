@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { canFundOrder } from "@/shared/order-funding";
 import { MapPin, ArrowDown } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
@@ -22,7 +22,10 @@ async function load() {
   error.value = "";
   try {
     const { data } = await driverApi.get<Order[]>("/orders/available", {
-      params: { districtId: props.districtId },
+      // The driver may claim any public order city-wide. The selected region
+      // is only a presentation priority; the API still re-checks eligibility
+      // and performs the atomic claim at acceptance time.
+      params: { districtId: props.districtId, scope: "all" },
     });
     if (id === request) {
       orders.value = data;
@@ -34,6 +37,34 @@ async function load() {
   } finally {
     if (id === request) loading.value = false;
   }
+}
+const sortedOrders = computed(() =>
+  [...orders.value].sort((a, b) => {
+    const aLocal = a.districtId === props.districtId ? 0 : 1;
+    const bLocal = b.districtId === props.districtId ? 0 : 1;
+    if (aLocal !== bLocal) return aLocal - bLocal;
+    const aNumber = Number(a.orderNumber);
+    const bNumber = Number(b.orderNumber);
+    if (Number.isFinite(aNumber) && Number.isFinite(bNumber))
+      return aNumber - bNumber;
+    return a.createdAt.localeCompare(b.createdAt);
+  }),
+);
+const localOrders = computed(() =>
+  sortedOrders.value.filter((order) => order.districtId === props.districtId),
+);
+const otherOrders = computed(() =>
+  sortedOrders.value.filter((order) => order.districtId !== props.districtId),
+);
+const groups = computed(() => [
+  { id: "selected", name: props.districtName, orders: localOrders.value },
+  { id: "other", name: "Другие районы", orders: otherOrders.value },
+]);
+function orderNumber(order: Order) {
+  return `Заказ #${order.orderNumber}`;
+}
+function regionName(order: Order) {
+  return order.district?.name || "Другой район";
 }
 async function claim(id: string) {
   await accept(id, eta.value[id] || 10);
@@ -80,7 +111,7 @@ onUnmounted(() => {
     :aria-busy="loading"
     tabindex="0"
   >
-    <h2 class="text-base font-semibold">{{ districtName }}</h2>
+    <h2 class="text-base font-semibold">Доступные заказы</h2>
     <p class="text-xs text-muted-foreground">
       Телефон клиента откроется после принятия. При принятии списывается цена
       заказа.
@@ -105,84 +136,111 @@ onUnmounted(() => {
     <p v-else-if="!orders.length" class="muted py-8 text-center">
       Сейчас нет свободных заказов. Новые появятся автоматически.
     </p>
-    <article
-      v-for="order in orders"
-      v-else
-      :key="order.id"
-      class="space-y-3 border-t py-3"
-    >
-      <div class="flex items-start justify-between gap-3">
-        <div class="min-w-0 space-y-2">
-          <p class="flex items-start gap-2 font-medium">
-            <MapPin class="mt-0.5 size-4 shrink-0 text-primary" /><span
-              class="break-words"
-              >{{
-                order.pickupAddress || "Подача уточняется по телефону"
-              }}</span
+    <template v-else v-for="group in groups" :key="group.id">
+      <section
+        v-if="group.orders.length"
+        :aria-label="group.name"
+        class="space-y-1"
+      >
+        <h3 class="sticky top-0 z-10 bg-background py-2 text-sm font-semibold">
+          {{ group.name }}
+        </h3>
+        <article
+          v-for="order in group.orders"
+          :key="order.id"
+          class="space-y-3 border-t py-3"
+          :data-region="regionName(order)"
+        >
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 space-y-2">
+              <p class="flex flex-wrap items-start gap-x-2 gap-y-1 font-medium">
+                <span class="shrink-0 text-sm font-semibold text-primary">{{
+                  orderNumber(order)
+                }}</span>
+                <span
+                  class="shrink-0 rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground"
+                  >{{ regionName(order) }}</span
+                >
+              </p>
+              <p class="flex items-start gap-2 font-medium">
+                <MapPin class="mt-0.5 size-4 shrink-0 text-primary" /><span
+                  class="break-words"
+                  >{{
+                    order.pickupAddress || "Подача уточняется по телефону"
+                  }}</span
+                >
+              </p>
+              <p
+                v-if="order.dropoffAddress"
+                class="flex items-start gap-2 text-sm text-muted-foreground"
+              >
+                <ArrowDown class="size-4 shrink-0" /><span
+                  class="break-words"
+                  >{{ order.dropoffAddress }}</span
+                >
+              </p>
+            </div>
+            <span
+              class="shrink-0 text-2xl font-semibold leading-none tabular-nums"
+              >{{ money(order.priceEstimated) }}</span
             >
+          </div>
+          <p v-if="order.note" class="muted text-sm break-words">
+            {{ order.note }}
           </p>
+          <div
+            class="grid grid-cols-[auto_minmax(0,1fr)] items-end gap-2 bg-background pb-1"
+          >
+            <label class="grid gap-1 text-sm" :for="`eta-${order.id}`"
+              >Буду через<select
+                :id="`eta-${order.id}`"
+                v-model="eta[order.id]"
+                class="native-select min-h-11"
+                :disabled="state.busy"
+              >
+                <option
+                  v-for="minutes in [5, 10, 15, 20]"
+                  :key="minutes"
+                  :value="minutes"
+                >
+                  {{ minutes }} мин
+                </option>
+              </select></label
+            ><Button
+              class="min-h-11"
+              :disabled="
+                state.busy ||
+                !!state.active ||
+                !canFundOrder(state.balance?.amount, order.priceEstimated) ||
+                !state.gpsReady ||
+                !state.profile?.isOnline
+              "
+              @click="claim(order.id)"
+              >Принять заказ</Button
+            >
+          </div>
           <p
-            v-if="order.dropoffAddress"
-            class="flex items-start gap-2 text-sm text-muted-foreground"
+            v-if="!canFundOrder(state.balance?.amount, order.priceEstimated)"
+            class="text-sm text-destructive"
           >
-            <ArrowDown class="size-4 shrink-0" /><span class="break-words">{{
-              order.dropoffAddress
-            }}</span>
-          </p>
-        </div>
-        <span
-          class="shrink-0 text-2xl font-semibold leading-none tabular-nums"
-          >{{ money(order.priceEstimated) }}</span
-        >
-      </div>
-      <p v-if="order.note" class="muted text-sm break-words">
-        {{ order.note }}
-      </p>
-      <div
-        class="grid grid-cols-[auto_minmax(0,1fr)] items-end gap-2 bg-background pb-1"
-      >
-        <label class="grid gap-1 text-sm" :for="`eta-${order.id}`"
-          >Буду через<select
-            :id="`eta-${order.id}`"
-            v-model="eta[order.id]"
-            class="native-select min-h-11"
-            :disabled="state.busy"
-          >
-            <option
-              v-for="minutes in [5, 10, 15, 20]"
-              :key="minutes"
-              :value="minutes"
+            Недостаточно средств.
+            <template v-if="Number(order.priceEstimated) > 0"
+              >Пополните баланс до {{ money(order.priceEstimated) }}, чтобы
+              принять заказ.</template
             >
-              {{ minutes }} мин
-            </option>
-          </select></label
-        ><Button
-          class="min-h-11"
-          :disabled="
-            state.busy ||
-            !!state.active ||
-            !canFundOrder(state.balance?.amount, order.priceEstimated) ||
-            !state.gpsReady ||
-            !state.profile?.isOnline
-          "
-          @click="claim(order.id)"
-          >Принять заказ</Button
-        >
-      </div>
-      <p
-        v-if="!canFundOrder(state.balance?.amount, order.priceEstimated)"
-        class="text-sm text-destructive"
-      >
-        Недостаточно средств.
-        <template v-if="Number(order.priceEstimated) > 0"
-          >Пополните баланс до {{ money(order.priceEstimated) }}, чтобы принять
-          заказ.</template
-        >
-        <template v-else>Пополните баланс, чтобы принять заказ.</template>
-      </p>
-      <p v-if="state.active" class="muted text-xs">
-        Сначала завершите текущую поездку.
-      </p>
-    </article>
+            <template v-else>Пополните баланс, чтобы принять заказ.</template>
+          </p>
+          <p v-if="state.active" class="muted text-xs">
+            Сначала завершите текущую поездку.
+          </p>
+        </article>
+      </section>
+    </template>
+    <p
+      v-if="!localOrders.length && otherOrders.length"
+      class="muted border-t py-2 text-xs"
+    >
+      В выбранном районе сейчас нет заказов.
+    </p>
   </section>
 </template>

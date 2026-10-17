@@ -14,8 +14,7 @@ public class DriverNavigationPlugin extends Plugin {
   @PluginMethod
   public void open(PluginCall call) {
     Double lat = call.getDouble("lat"), lng = call.getDouble("lng");
-    if (lat == null || lng == null || !Double.isFinite(lat) || !Double.isFinite(lng)
-        || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+    if (!NavigationCoordinates.valid(lat, lng)) {
       call.reject("Точка маршрута недоступна.");
       return;
     }

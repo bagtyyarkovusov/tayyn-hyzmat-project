@@ -103,7 +103,7 @@ const REFERENCE_TEXT = {
   'Хитровка, Бедев': 'Hitrowka bedew\nGurbansoltandan obyeznoya cenli beylesem bedew bn gagarin aralyk',
   'Чоганлы, Гарадамак': 'Coganly garadamak obyeznoydan asak tarapy garadamakdan cogalny',
   Центр: 'Centr shayoly bilen cehow aralyk\nYokarsy maskowski asagam gurbansoltan',
-  'Ачабил, Бекреве': 'Arcabilem dusnukli bekrewani 1 maydan yokarsyny goymaly',
+  'Арчабил, Бекреве': 'Arcabilem dusnukli bekrewani 1 maydan yokarsyny goymaly',
   'Анау, Гами': 'Anew gami gurbansoltan magistralnydan anarsy',
   'Аркадаг, Ялкым': 'Arkadag yalkymam kone gurtlydan anarsy'
 }

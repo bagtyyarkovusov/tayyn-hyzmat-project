@@ -2,7 +2,7 @@ const asyncHandler = require('../../utils/asyncHandler');
 const service = require('./orders.service');
 
 const available = asyncHandler(async (req, res) => {
-  const orders = await service.listAvailable(req.driver, req.query.districtId);
+  const orders = await service.listAvailable(req.driver, req.query.districtId, req.query.scope);
   res.json(orders);
 });
 

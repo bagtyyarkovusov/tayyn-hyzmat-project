@@ -285,7 +285,9 @@ test("a driver must explicitly accept after five minutes, then completes a quote
       driver.getByRole("heading", { name: "Текущая поездка" }),
     ).not.toBeVisible();
     await expect(
-      driver.getByRole("link", { name: "+993 60 00 09 99", exact: true }),
+      driver
+        .getByRole("dialog", { name: "Управление поездкой", exact: true })
+        .locator('a[href="tel:+99360000999"]'),
     ).not.toBeVisible();
     await expect(driver.getByText(/500\s*TMT/).first()).toBeVisible();
     // Advancing the browser clock also expires GPS. Reacquire a real fix
@@ -307,7 +309,9 @@ test("a driver must explicitly accept after five minutes, then completes a quote
       driver.getByRole("heading", { name: "Текущая поездка" }),
     ).toBeVisible();
     await expect(
-      driver.getByRole("link", { name: "+993 60 00 09 99", exact: true }),
+      driver
+        .getByRole("dialog", { name: "Управление поездкой", exact: true })
+        .locator('a[href="tel:+99360000999"]'),
     ).toBeVisible();
     await driver
       .getByRole("button", { name: "Я на месте", exact: true })
@@ -1047,7 +1051,9 @@ test("dispatcher enters region, phone and price and the region modal closes afte
       driver.getByText("Подача уточняется по телефону", { exact: true }),
     ).toBeVisible();
     await expect(
-      driver.getByRole("link", { name: "+993 60 00 08 88", exact: true }),
+      driver
+        .getByRole("dialog", { name: "Управление поездкой", exact: true })
+        .locator('a[href="tel:+99360000888"]'),
     ).not.toBeVisible();
     await driver
       .getByRole("button", { name: "Скрыть предложение", exact: true })
@@ -1062,7 +1068,9 @@ test("dispatcher enters region, phone and price and the region modal closes afte
       .click();
     await expect(regionOrders).not.toBeVisible();
     await expect(
-      driver.getByRole("link", { name: "+993 60 00 08 88", exact: true }),
+      driver
+        .getByRole("dialog", { name: "Управление поездкой", exact: true })
+        .locator('a[href="tel:+99360000888"]'),
     ).toBeVisible();
     await driver
       .getByRole("dialog", { name: "Управление поездкой", exact: true })
@@ -1402,7 +1410,9 @@ test("regional queues and counts recover through updates, reconnect and reload",
       .click();
     await expect(queue).not.toBeVisible();
     await expect(
-      driver.getByRole("link", { name: "+993 60 00 07 77", exact: true }),
+      driver
+        .getByRole("dialog", { name: "Управление поездкой", exact: true })
+        .locator('a[href="tel:+99360000777"]'),
     ).toBeVisible();
     await driver.reload();
     const trip = driver.getByRole("dialog", {
@@ -3937,7 +3947,13 @@ test("driver cancellation is visible only while waiting for the passenger", asyn
   }
 });
 
-for (const stage of ["pickup", "dropoff", "missing-destination"] as const) {
+for (const stage of [
+  "pickup",
+  "dropoff",
+  "missing-destination",
+  "invalid-pickup",
+  "invalid-destination",
+] as const) {
   test(`trip navigation uses ${stage} and preserves the active shift`, async ({
     browser,
   }) => {
@@ -3949,6 +3965,11 @@ for (const stage of ["pickup", "dropoff", "missing-destination"] as const) {
       driver = await driverContext.newPage();
     let driverToken = "",
       orderId = "";
+    const pickupStage = stage === "pickup" || stage === "invalid-pickup";
+    const unavailableTarget =
+      stage === "missing-destination" ||
+      stage === "invalid-pickup" ||
+      stage === "invalid-destination";
     try {
       await login(admin, "admin");
       await login(driver, "driver");
@@ -3970,10 +3991,13 @@ for (const stage of ["pickup", "dropoff", "missing-destination"] as const) {
             districtId: process.env.TEST_REGION_ID,
             clientPhone: "+99365000000",
             priceEstimated: 10,
-            pickupLat: 37.961,
-            pickupLng: 58.321,
+            pickupLat: stage === "invalid-pickup" ? 0 : 37.961,
+            pickupLng: stage === "invalid-pickup" ? 0 : 58.321,
             ...(stage !== "missing-destination"
-              ? { dropoffLat: 37.972, dropoffLng: 58.332 }
+              ? {
+                  dropoffLat: stage === "invalid-destination" ? 0 : 37.972,
+                  dropoffLng: stage === "invalid-destination" ? 0 : 58.332,
+                }
               : {}),
           },
         },
@@ -3991,7 +4015,7 @@ for (const stage of ["pickup", "dropoff", "missing-destination"] as const) {
         exact: true,
       });
       await expect(trip).toBeVisible();
-      if (stage !== "pickup") {
+      if (!pickupStage) {
         await trip
           .getByRole("button", { name: "Я на месте", exact: true })
           .click();
@@ -4002,9 +4026,10 @@ for (const stage of ["pickup", "dropoff", "missing-destination"] as const) {
           trip.getByRole("button", { name: "Завершить поездку", exact: true }),
         ).toBeVisible();
       }
-      const routeName =
-        stage === "pickup" ? "Маршрут до подачи" : "Маршрут до назначения";
-      if (stage === "missing-destination") {
+      const routeName = pickupStage
+        ? "Маршрут до подачи"
+        : "Маршрут до назначения";
+      if (unavailableTarget) {
         await expect(
           trip.getByRole("button", { name: /Маршрут до/ }),
         ).toHaveCount(0);
@@ -4018,7 +4043,7 @@ for (const stage of ["pickup", "dropoff", "missing-destination"] as const) {
         name: "Текущая поездка",
         exact: true,
       });
-      if (stage === "missing-destination") {
+      if (unavailableTarget) {
         await expect(
           feed.getByRole("button", { name: /Маршрут до/ }),
         ).toHaveCount(0);

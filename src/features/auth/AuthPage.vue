@@ -30,6 +30,11 @@ const busy = ref(false);
 const error = ref("");
 const message = ref("");
 async function submit() {
+  if (busy.value) return;
+  if (!navigator.onLine) {
+    error.value = "Нет интернета. Подключитесь и попробуйте снова.";
+    return;
+  }
   if (registering.value && passwordError(password.value)) {
     error.value = passwordError(password.value);
     return;

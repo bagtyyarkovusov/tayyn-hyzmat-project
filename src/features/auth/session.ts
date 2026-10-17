@@ -13,6 +13,9 @@ import {
   type SessionPayload,
   type User,
 } from "@/shared/api";
+// One deadline covers the verification request, token refresh and its retry.
+const SESSION_VERIFICATION_TIMEOUT_MS = 8000;
+
 function createSession(role: Role) {
   const storedUser = (): User | null => {
     try {
@@ -139,23 +142,40 @@ function createSession(role: Role) {
   function restore(): Promise<void> {
     if (restoring) return restoring;
     if (!tokens.access(role)) return Promise.resolve();
+    if (!navigator.onLine) {
+      state.verificationError = "Нет интернета. Данные входа сохранены.";
+      return Promise.resolve();
+    }
     state.restoring = true;
     state.verificationError = "";
     const generation = tokens.generation(role);
+    const controller = new AbortController();
+    const deadline = window.setTimeout(
+      () => controller.abort(),
+      SESSION_VERIFICATION_TIMEOUT_MS,
+    );
     restoring = client
-      .get(role === "admin" ? "/admin/drivers?limit=1" : "/driver/profile")
+      .get(role === "admin" ? "/admin/drivers?limit=1" : "/driver/profile", {
+        signal: controller.signal,
+      })
       .then(() => {
         if (generation === tokens.generation(role)) connect();
       })
       .catch((error: unknown) => {
         if (generation !== tokens.generation(role)) return;
-        if (error instanceof ApiError && [401, 403].includes(error.status))
+        if (
+          !controller.signal.aborted &&
+          error instanceof ApiError &&
+          [401, 403].includes(error.status)
+        )
           tokens.clear(role);
         else
-          state.verificationError =
-            "Не удалось проверить подключение. Данные входа сохранены.";
+          state.verificationError = navigator.onLine
+            ? "Не удалось проверить подключение. Данные входа сохранены."
+            : "Нет интернета. Данные входа сохранены.";
       })
       .finally(() => {
+        window.clearTimeout(deadline);
         state.restoring = false;
         restoring = null;
       });
