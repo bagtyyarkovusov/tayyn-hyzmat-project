@@ -1,6 +1,8 @@
 """Behavior checks for the stdlib diagnostic; no Docker or network required."""
 
 import argparse
+import contextlib
+import io
 import importlib.util
 import json
 from pathlib import Path
@@ -18,12 +20,92 @@ SPEC.loader.exec_module(readiness)
 def args(**overrides):
     values = dict(config_file=None, project_name="test", compose_file=None,
                   db_user="tayyn", db_name="tayyn", network=False,
-                  api_url=None, web_url=None, remote_only=False, disk_path="/")
+                  api_url=None, web_url=None, remote_only=False, disk_path="/",
+                  offline=False, email_transport="resend", smtp_host="smtp.gmail.com", smtp_port=465)
     values.update(overrides)
     return argparse.Namespace(**values)
 
 
 class ReadinessTests(unittest.TestCase):
+    def run_cli(self, arguments, probe):
+        output = io.StringIO()
+        with patch.object(sys, "argv", ["production-readiness.py", "--json", "--remote-only", "--network", *arguments]), \
+             patch.object(readiness, "run", side_effect=probe), contextlib.redirect_stdout(output):
+            code = readiness.main()
+        return code, json.loads(output.getvalue())
+
+    def test_smtp_offline_cli_does_not_require_resend_or_registry_access(self):
+        def probe(command, timeout=6):
+            return (1, "") if command[-1] in ("api.resend.com", "ghcr.io") else (0, "")
+        code, report = self.run_cli(["--offline", "--email-transport", "smtp"], probe)
+        outcomes = {row["name"]: row["status"] for row in report["results"]}
+        self.assertEqual(code, 2)
+        self.assertEqual(report["verdict"], "INCOMPLETE")
+        self.assertEqual(outcomes["network.smtp.gmail.com"], "PASS")
+        self.assertNotIn("network.api.resend.com", outcomes)
+        self.assertNotIn("network.ghcr.io", outcomes)
+        self.assertFalse(report["production_ready"])
+
+    def test_default_cli_still_requires_resend_and_registry_access(self):
+        def probe(command, timeout=6):
+            return (1, "") if command[-1] in ("api.resend.com", "ghcr.io") else (0, "")
+        code, report = self.run_cli([], probe)
+        outcomes = {row["name"]: row["status"] for row in report["results"]}
+        self.assertEqual(code, 1)
+        self.assertEqual(outcomes["network.api.resend.com"], "FAIL")
+        self.assertEqual(outcomes["network.ghcr.io"], "FAIL")
+
+    def test_smtp_cli_failure_remains_required(self):
+        def probe(command, timeout=6):
+            return (1, "") if "mail.example.test" in command else (0, "")
+        code, report = self.run_cli(["--offline", "--email-transport", "smtp", "--smtp-host", "mail.example.test", "--smtp-port", "587"], probe)
+        self.assertEqual(code, 1)
+        result = next(row for row in report["results"] if row["name"] == "network.mail.example.test")
+        self.assertEqual(result["status"], "FAIL")
+        self.assertTrue(result["required"])
+
+    def test_selected_compose_address_push_wiring_is_reported_without_secret_values(self):
+        secret = "synthetic-firebase-private-value"
+        configuration = {"services": {"api": {"environment": {name: secret for name in readiness.OPTIONAL_CONFIG}}}}
+        check = readiness.Checks(args())
+        with patch.object(readiness, "run", return_value=(0, json.dumps(configuration))):
+            check.compose_wiring(["docker", "compose", "-f", "selected.yaml"])
+        self.assertEqual(check.results[0]["status"], "PASS")
+        self.assertNotIn(secret, json.dumps(check.results))
+        self.assertIn("delivery", check.results[0]["detail"])
+
+    def test_missing_compose_push_wiring_warns_even_when_runtime_file_has_credentials(self):
+        configuration = {"services": {"api": {"environment": {name: "synthetic" for name in readiness.OPTIONAL_CONFIG if name != "FIREBASE_SERVICE_ACCOUNT_JSON"}}}}
+        check = readiness.Checks(args())
+        with patch.object(readiness, "run", return_value=(0, json.dumps(configuration))):
+            check.compose_wiring(["docker", "compose", "-f", "selected.yaml"])
+        self.assertEqual(check.results[0]["status"], "WARN")
+        self.assertIn("FIREBASE_SERVICE_ACCOUNT_JSON", check.results[0]["detail"])
+
+    def test_smtp_probe_refuses_failed_starttls_without_sending_credentials_or_email(self):
+        from unittest.mock import MagicMock
+        import smtplib
+        check = readiness.Checks(args(network=True, email_transport="smtp", smtp_port=587))
+        probes = []
+        def collect(command, timeout=6):
+            if "import smtplib" in command[2]:
+                probes.append(command)
+            return 0, ""
+        with patch.object(readiness, "run", side_effect=collect):
+            check.network()
+        client = MagicMock()
+        client.__enter__.return_value = client
+        client.ehlo.return_value = (250, b"OK")
+        client.starttls.side_effect = smtplib.SMTPException("synthetic TLS failure")
+        with patch("smtplib.SMTP", return_value=client), patch.object(sys, "argv", probes[0][2:]):
+            with self.assertRaises(smtplib.SMTPException):
+                exec(compile(probes[0][2], "smtp-probe", "exec", optimize=2), {})
+        client.login.assert_not_called()
+        client.sendmail.assert_not_called()
+        client.send_message.assert_not_called()
+        context = client.starttls.call_args.kwargs["context"]
+        self.assertTrue(context.check_hostname)
+
     def test_credentials_and_shell_content_are_never_printed_or_executed(self):
         with tempfile.TemporaryDirectory() as directory:
             marker = Path(directory) / "must-not-exist"

@@ -62,6 +62,12 @@ def valid_url(value):
     return value.rstrip("/")
 
 
+def valid_hostname(value):
+    if not re.fullmatch(r"(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?", value):
+        raise argparse.ArgumentTypeError("Use a hostname without a scheme, credentials, port or path")
+    return value
+
+
 def compose_rows(raw):
     try:
         value = json.loads(raw)
@@ -136,7 +142,23 @@ class Checks:
         absent = [name for name in OPTIONAL_CONFIG if name not in names]
         self.add("config.optional_names", "WARN" if absent else "PASS",
                  "Optional address/push configuration missing: " + ", ".join(absent) if absent else "Address/push configuration names present; delivery not verified", False)
-        self.add("config.wiring", "WARN", "Presence does not prove Compose passes variables; base Compose lacks geocoder/FCM wiring", False)
+
+    def compose_wiring(self, command):
+        # Resolve privately: Compose's complete output contains runtime secrets.
+        code, raw = run(command + ["config", "--format", "json"])
+        try:
+            if code != 0:
+                raise ValueError("Compose configuration unavailable")
+            environment = json.loads(raw)["services"]["api"].get("environment", {})
+            if not isinstance(environment, dict):
+                raise ValueError("Unrecognized Compose environment")
+            missing = [name for name in OPTIONAL_CONFIG if name not in environment]
+        except (ValueError, KeyError, TypeError, AttributeError):
+            self.add("config.wiring", "WARN", "Could not inspect API environment wiring from the selected Compose configuration", False)
+            return
+        self.add("config.wiring", "WARN" if missing else "PASS",
+                 "Selected Compose API environment omits address/push names: " + ", ".join(missing) if missing else
+                 "Selected Compose API environment includes address/push variable names; values and delivery are not verified", False)
 
     def docker(self):
         if not shutil.which("docker"):
@@ -154,6 +176,7 @@ class Checks:
             command += ["--env-file", self.args.config_file]
         for compose_file in self.args.compose_file or ["compose.yaml"]:
             command += ["-f", compose_file]
+        self.compose_wiring(command)
         code, raw = run(command + ["ps", "--all", "--format", "json"])
         if code != 0:
             self.add("compose.status", "FAIL", "Cannot inspect Compose project; config, daemon or permissions may be missing")
@@ -201,9 +224,26 @@ class Checks:
             return
         # A child process bounds DNS as well as TLS; socket timeout alone cannot bound DNS.
         probe = "import socket,ssl,sys; s=socket.create_connection((sys.argv[1],443),timeout=4); t=ssl.create_default_context().wrap_socket(s,server_hostname=sys.argv[1]); t.close()"
-        for host in PROVIDERS:
+        hosts = [host for host in PROVIDERS
+                 if not (self.args.offline and host == "ghcr.io")
+                 and not (self.args.email_transport == "smtp" and host == "api.resend.com")]
+        for host in hosts:
             code, _ = run([sys.executable, "-c", probe, host], timeout=6)
             self.add("network." + host, "PASS" if code == 0 else "FAIL", "DNS and verified TLS succeeded" if code == 0 else "DNS/TLS failed or timed out")
+        if self.args.email_transport == "smtp":
+            smtp_probe = ("import smtplib,ssl,sys\n"
+                          "host,port=sys.argv[1],int(sys.argv[2])\n"
+                          "context=ssl.create_default_context()\n"
+                          "client=smtplib.SMTP_SSL(host,port,timeout=4,context=context) if port==465 else smtplib.SMTP(host,port,timeout=4)\n"
+                          "with client:\n"
+                          " if client.ehlo()[0]!=250: raise ValueError('SMTP EHLO failed')\n"
+                          " if port==587:\n"
+                          "  client.starttls(context=context)\n"
+                          "  if client.ehlo()[0]!=250: raise ValueError('SMTP TLS EHLO failed')\n")
+            code, _ = run([sys.executable, "-c", smtp_probe, self.args.smtp_host, str(self.args.smtp_port)], timeout=8)
+            self.add("network." + self.args.smtp_host, "PASS" if code == 0 else "FAIL",
+                     "SMTP verified TLS and EHLO succeeded; authentication and email delivery not tested" if code == 0 else
+                     "SMTP DNS/TLS/EHLO failed or timed out")
         self.add("network.scope", "WARN", "Probes originate on this executing machine, never on a supplied remote URL. TLS does not verify API authorization, FCM delivery, image pulls or driver-network reachability", False)
         for kind, base in (("api", self.args.api_url), ("web", self.args.web_url)):
             if not base:
@@ -245,6 +285,10 @@ def main():
     parser.add_argument("--json", action="store_true", help="Print JSON instead of the human report")
     parser.add_argument("--remote-only", action="store_true", help="Skip host checks for remote/Railway simulation; verdict remains incomplete")
     parser.add_argument("--network", action="store_true", help="Probe public DNS/TLS and supplied HTTPS URLs; never sends API keys or geocodes")
+    parser.add_argument("--offline", action="store_true", help="Offline bundle deployment: do not require container-registry connectivity")
+    parser.add_argument("--email-transport", choices=("resend", "smtp"), default="resend", help="Required email connectivity, default: resend")
+    parser.add_argument("--smtp-host", type=valid_hostname, default="smtp.gmail.com", help="SMTP hostname for --email-transport smtp; no credentials are sent")
+    parser.add_argument("--smtp-port", type=int, choices=(465, 587), default=465, help="SMTP verified TLS port, default: 465; 587 requires STARTTLS")
     parser.add_argument("--api-url", type=valid_url, help="Direct API origin, or HTTPS base including /api")
     parser.add_argument("--web-url", type=valid_url, help="Web HTTPS origin")
     parser.add_argument("--config-file", help="Read dotenv names and file permissions, never source it or display values")

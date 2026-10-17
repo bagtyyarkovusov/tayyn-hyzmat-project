@@ -21,6 +21,7 @@ jobs:
           sudo bash scripts/production/prepare-offline-packages.sh --disposable-builder "$RUNNER_TEMP/packages-monitor" --monitor
       - name: Build application images and obtain infrastructure images
         run: |
+          test -z "$(git status --porcelain)"
           test -n "$MAPS_KEY"
           docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$GITHUB_SHA" -t "tayyn-api:$GITHUB_SHA" -f backend/Dockerfile backend
           docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$GITHUB_SHA" --build-arg "VUE_APP_YANDEX_MAPS_API_KEY=$MAPS_KEY" -t "tayyn-web:$GITHUB_SHA" -f deploy/Dockerfile.web .

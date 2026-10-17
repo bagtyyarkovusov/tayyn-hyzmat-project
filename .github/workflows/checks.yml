@@ -95,3 +95,15 @@ jobs:
           VITE_API_URL: https://api.example.invalid/api
           VITE_SOCKET_URL: https://api.example.invalid
       - run: cd android && sh ./gradlew :app:assembleDebug :app:testDebugUnitTest
+
+  production-offline-packages:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare disposable Ubuntu resolver fixture
+        run: docker pull --platform linux/amd64 ubuntu:24.04
+      - name: Verify offline package installation preserves provider SSH and init
+        run: python3 -m unittest discover -s scripts/tests -p 'test_offline_packages_integration.py' -v
+        env:
+          TAYYN_OFFLINE_APT_INTEGRATION: "1"

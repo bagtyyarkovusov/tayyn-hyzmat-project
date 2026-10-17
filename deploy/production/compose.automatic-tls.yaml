@@ -1,0 +1,7 @@
+# Add after compose.production.yaml for TLS_MODE=automatic. Requires Compose 2.24.4+.
+services:
+  proxy:
+    volumes: !override
+      - ./Caddyfile.automatic:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config

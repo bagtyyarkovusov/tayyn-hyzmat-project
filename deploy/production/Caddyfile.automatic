@@ -1,0 +1,27 @@
+{
+    admin off
+    email {$TLS_EMAIL}
+}
+
+{$DOMAIN} {
+    tls {
+        issuer acme {
+            # This provider blocks inbound port 80. Validate through TLS-ALPN-01 on 443.
+            disable_http_challenge
+        }
+    }
+    encode zstd gzip
+
+    handle_path /api/* {
+        reverse_proxy api:4000
+    }
+    handle /socket.io/* {
+        reverse_proxy api:4000
+    }
+    handle /health {
+        reverse_proxy api:4000
+    }
+    handle {
+        reverse_proxy web:8080
+    }
+}

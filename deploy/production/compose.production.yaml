@@ -82,13 +82,15 @@ services:
     pull_policy: never
     environment:
       DOMAIN: ${DOMAIN:?Set DOMAIN}
+      TLS_MODE: ${TLS_MODE:-external}
+      TLS_EMAIL: ${TLS_EMAIL:-}
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ${TLS_CERT_PATH:?Set TLS_CERT_PATH}:/etc/tayyn/tls/fullchain.pem:ro
-      - ${TLS_KEY_PATH:?Set TLS_KEY_PATH}:/etc/tayyn/tls/privkey.pem:ro
+      - ${TLS_CERT_PATH:-/etc/tayyn/tls/fullchain.pem}:/etc/tayyn/tls/fullchain.pem:ro
+      - ${TLS_KEY_PATH:-/etc/tayyn/tls/privkey.pem}:/etc/tayyn/tls/privkey.pem:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on:

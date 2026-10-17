@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 FILES = [
     "deploy/production/compose.production.yaml", "deploy/production/Caddyfile",
+    "deploy/production/compose.automatic-tls.yaml", "deploy/production/Caddyfile.automatic",
     "deploy/production/production.env.example", "scripts/production/apply-release.py",
     "scripts/production/install-offline-packages.sh", "scripts/production/build-offline-bundle.py",
     "scripts/production/prepare-offline-packages.sh",
@@ -19,6 +20,7 @@ FILES = [
     "scripts/production-readiness.py", "docs/offline-production-bundle.md",
     "docs/production-handoff.md", "docs/production-operations.md",
     "docs/production-update-runbook.md",
+    "docs/research/production-dns-certificate-renewal.md",
 ]
 
 

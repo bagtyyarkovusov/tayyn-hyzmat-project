@@ -23,8 +23,10 @@ apt-get update
 docker_packages=(docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin certbot)
 fi
 mkdir -p "$output/partial"
-# Empty dpkg status forces downloading dependencies already present on the
-# builder, rather than silently relying on those packages on the target VPS.
+# Empty dpkg status downloads the complete dependency pool, including packages
+# already on the builder. The installer resolves only missing requirements
+# against the target status; it must never explicitly install this entire pool
+# or upgrade provider SSH/init packages to the builder's newer versions.
 apt-get -o Dir::State::status=/dev/null -o Dir::Cache::archives="$output" \
   --download-only --yes --no-install-recommends install \
   "${docker_packages[@]}" \

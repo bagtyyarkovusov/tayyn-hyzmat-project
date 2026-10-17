@@ -28,7 +28,7 @@ git -c core.sshCommand="ssh -F /Users/bagtyyar/Projects/tayyn-hyzmat-project/.lo
 
 GitHub Settings → Deploy keys lists it as `Tayyn operator Mac release access 2026-10-17`. Rotate or remove it there if the operator computer is lost. This key can write only this repository and is separate from production-server and backup keys.
 
-The Namecheap A record is host `tayynhyzmat`, value `216.250.8.238`. Preserve the root-domain website. No AAAA record is needed until IPv6 works. DNS now resolves; certificate issuance and renewal still need verification.
+The Namecheap A record is host `tayynhyzmat`, value `216.250.8.238`. Preserve the root-domain website. No AAAA record is needed until IPv6 works. DNS now resolves. HTTP-01 and TLS-ALPN-01 failed CA secondary validation. Manual DNS-01 then succeeded after the owner's TXT change; the certificate expires 2027-01-15. Unattended renewal is not established.
 
 Gmail SMTP sends from `tkmdevelopers@gmail.com` to `bagtyyarkowusow.dev@gmail.com`. TLS, authentication and an actual setup email were tested from the monitoring VPS. The owner confirmed Inbox receipt. Its Google App Password is stored only in protected configuration. Resend remains an optional transport; it was unreachable from these hosts.
 
@@ -114,6 +114,18 @@ Backend and dashboard updates do not require changing DNS or recreating credenti
 Keep SSH open and use the failure instructions in [the offline guide](offline-production-bundle.md#recover-a-failed-update). A failed backup stops before migrations. If migrations have begun, do not assume the previous API can read the changed schema. Use a reviewed forward fix or a previously verified compatible image rollback.
 
 Never automatically restore an older database. That could discard trips, balance changes and messages recorded after the backup. Preserve failure evidence without publishing credentials. Use the provider console if management access fails.
+
+## Certificate issuance and renewal
+
+The main VPS reached the production Let's Encrypt directory, but HTTP-01 failed when CA secondary validation could not reach port 80. A direct Mac port-80 probe also timed out. TLS-ALPN-01 through Caddy on port 443 also failed secondary validation. Public connectivity is incomplete across network paths; a successful local probe does not establish CA reachability. Repeating failed requests can consume CA limits.
+
+The selected first-install path is manual DNS-01 with external certificate files. Issuance succeeded after the owner added the TXT record. The certificate expires 2027-01-15. Runtime now selects `TLS_MODE=external`, `TLS_CERT_PATH=/etc/letsencrypt/live/tayynhyzmat.bagtyyar.dev/fullchain.pem` and `TLS_KEY_PATH=/etc/letsencrypt/live/tayynhyzmat.bagtyyar.dev/privkey.pem`. App operations uses only `compose.production.yaml`. For renewal, the Namecheap TXT Host is `_acme-challenge.tayynhyzmat` in the `bagtyyar.dev` zone. Use the new active Certbot value and verify public DNS before continuing; an old value cannot complete a new challenge.
+
+After successful issuance, record the certificate's hostname, expiry and installed paths in the handoff. Keep certificate/key files root-controlled, set the runtime `TLS_CERT_PATH` and `TLS_KEY_PATH`, then run the reviewed initial deployment. Later certificate replacement must be followed by recreating only `proxy` so file bind mounts reopen the new files. Use the current release's env/image configuration and `--no-deps`; do not restart the database or change management SSH on port 2222 for renewal.
+
+Manual DNS-01 needs an operator for each renewal. A generic `certbot renew` timer cannot complete its TXT challenge without an authentication hook. Do not claim unattended renewal or depend on a timer merely being enabled. Keep expiry monitoring and an operator reminder well ahead of expiry until a tested DNS automation method exists.
+
+Caddy automatic TLS remains optional, but its validation failed on these hosts and it is not the selected initial deployment mode. Do not enable a competing automatic issuer or alternate challenge path without checking provider reachability and CA limits. The [DNS renewal review](research/production-dns-certificate-renewal.md) compares Namecheap API automation with delegating only the validation name. No extra DNS service or account credential is configured by this review.
 
 ## What makes the next update easier
 

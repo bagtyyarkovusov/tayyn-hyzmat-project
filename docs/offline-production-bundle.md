@@ -13,7 +13,7 @@ sudo bash scripts/production/prepare-offline-packages.sh --disposable-builder /o
 
 The downloader uses an empty dpkg status database so dependencies already installed on the builder are still downloaded. It records package versions in `PACKAGES.tsv`. It does not prove those packages install on the purchased VPS. Before release, install the exact package set on a clean Ubuntu 24.04 amd64 VM with network disconnected. Reboot it, check Docker/Compose, age, Python, SSH and the complete app startup. Record the Ubuntu image version and evidence. A container-only test cannot prove kernel, systemd, firewall or reboot behavior.
 
-The installer resolves ordering from explicit local `.deb` paths with `apt-get --no-download` and repository sources disabled. Missing dependencies stop installation. Existing conflicting Docker/containerd packages require operator review; the script never removes them. Do not run the downloader on production.
+The installer verifies the bundle, builds a temporary local-only package repository and installs missing requirements using `apt-get --no-download --no-remove`. Installed packages are pinned to their current versions, and a simulated plan rejects changes to them. The dependency pool is not an OS upgrade list. A missing dependency or an installed version conflict stops before installation; plan OS/Docker upgrades separately. `--simulate` performs this check without package or service changes, and `--bundle /absolute/path` lets a separately reviewed installer check an immutable older archive. Do not run the downloader on production.
 
 ## Export already-built images
 
