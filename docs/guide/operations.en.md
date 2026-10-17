@@ -12,6 +12,8 @@ The dispatcher can choose Sign out everywhere to revoke all sessions and end tha
 
 The pilot has one dispatcher and synthetic driver accounts. It uses TMT only and no real payments. The development seed is not a production credential store. Keep production secrets outside the repository and Railway logs.
 
+After the first verified driver login, the APK asks for precise location, then notifications. Enable Android system location. Denied or dismissed prompts do not repeat on login or reload; use GPS or Profile to recover manually. Notification permission never blocks a shift. Permission prompts alone do not start a shift or send an off-shift location. Browsers and dispatcher screens do not ask automatically.
+
 ## What the driver sees
 
 The home screen shows all saved dispatch regions as a compact grid. Each region card shows active orders first and online drivers second: orders:drivers. Active orders include accepted trips until completion or cancellation. The count is not the number available to claim; a claimed offer disappears from the queue even while that region count stays unchanged. The driver cannot choose a region manually. The server assigns the current region from the driver's fresh GPS point and the saved polygon. A point outside every polygon shows **Outside region** and the real coordinates. A region centre is only a fallback coordinate, never proof of the driver's exact pickup.

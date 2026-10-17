@@ -51,6 +51,9 @@ let gpsRequestSequence = 0;
 let latestGpsRequestResolved = 0;
 let offlinePending = false;
 let gpsEpoch = 0;
+// Explicit hardware/permission failures require a new user-requested fix.
+// A late profile or cached native status must not silently clear the blocker.
+let gpsRetryRequired = false;
 let handledNativeStop = -1;
 let offerTimer: ReturnType<typeof setInterval> | undefined;
 let offerVersion = 0;
@@ -114,7 +117,10 @@ async function forceOffline(message: string, preserveLocalGps = false) {
   stopGpsTracking();
   gpsEpoch++;
   state.gpsReady = false;
-  if (!preserveLocalGps) state.gpsFixReady = false;
+  if (!preserveLocalGps) {
+    state.gpsFixReady = false;
+    gpsRetryRequired = true;
+  }
   state.gpsError = message;
   state.locationSyncError = "";
   locationSyncFailureAt = 0;
@@ -294,6 +300,7 @@ watch(
     state.nativeConnected = false;
     handledNativeStop = -1;
     lastFixAt = 0;
+    gpsRetryRequired = false;
     locationSending = false;
     nativeGpsRequestPending = false;
     offlinePending = false;
@@ -346,6 +353,7 @@ async function refresh() {
         state.profile.isOnline &&
         !state.gpsFixReady &&
         !state.nativeRunning &&
+        !gpsRetryRequired &&
         !state.gpsPending
       )
         enableGps();
@@ -570,7 +578,8 @@ async function setOnline() {
 async function checkNativeLocationPermission() {
   if (!nativeAndroid) return;
   const generation = sessionGeneration;
-  const permission = await nativeShift.permissions();
+  // Focus/reconnect only reads permission. It must not reopen an OS prompt.
+  const permission = await nativeShift.status();
   if (generation !== sessionGeneration) return;
   if (!permission.locationGranted) {
     await loseGps("Разрешите точный GPS в настройках приложения.");
@@ -581,8 +590,9 @@ async function checkNativeLocationPermission() {
 async function synchronizeNative() {
   if (!nativeAndroid || !canControlShift()) return;
   const generation = sessionGeneration;
+  const epoch = gpsEpoch;
   const native = await nativeShift.status();
-  if (generation !== sessionGeneration) return;
+  if (generation !== sessionGeneration || epoch !== gpsEpoch) return;
   if (native.running && native.userId !== driverSession.state.user?.id) {
     await stopNativeShift();
     return;
@@ -593,6 +603,7 @@ async function synchronizeNative() {
   const localPermission =
     native.locationGranted !== false && native.locationEnabled !== false;
   if (
+    !gpsRetryRequired &&
     localPermission &&
     Number.isFinite(nativeFixAt) &&
     now - nativeFixAt >= -5000 &&
@@ -610,7 +621,10 @@ async function synchronizeNative() {
     state.locationUpdatedAt = nativeFixAt;
   }
   state.gpsFixReady =
-    localPermission && lastFixAt > 0 && now - lastFixAt < GPS_MAX_AGE_MS;
+    !gpsRetryRequired &&
+    localPermission &&
+    lastFixAt > 0 &&
+    now - lastFixAt < GPS_MAX_AGE_MS;
   state.nativeConnected =
     native.running &&
     native.phase === "online" &&
@@ -644,6 +658,7 @@ async function enableNativeGps() {
   nativeGpsRequestPending = true;
   const generation = sessionGeneration;
   const account = nativeAccountRequest();
+  const epoch = gpsEpoch;
   state.gpsPending =
     !state.gpsFixReady || Date.now() - lastFixAt >= GPS_MAX_AGE_MS;
   try {
@@ -656,10 +671,11 @@ async function enableNativeGps() {
     if (permissions.locationEnabled !== true)
       throw new Error("Включите GPS в настройках телефона.");
     const position = await nativeShift.location();
-    if (!account.current()) return;
+    if (!account.current() || epoch !== gpsEpoch) return;
     state.position = position;
     state.locationUpdatedAt = position.timestamp;
     lastFixAt = position.timestamp;
+    gpsRetryRequired = false;
     state.gpsFixReady = true;
     state.gpsPending = false;
     state.gpsError = "";
@@ -733,6 +749,7 @@ function enableGps() {
     state.position = { lat, lng, accuracy };
     state.locationUpdatedAt = position.timestamp;
     lastFixAt = position.timestamp;
+    gpsRetryRequired = false;
     state.gpsFixReady = true;
     state.gpsPending = false;
     state.gpsError = "";

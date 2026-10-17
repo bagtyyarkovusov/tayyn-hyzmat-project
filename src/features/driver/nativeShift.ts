@@ -18,6 +18,7 @@ export interface NativeShiftStatus {
   ordersEnabled: boolean;
   chatEnabled: boolean;
   locationGranted?: boolean;
+  locationPermission?: "prompt" | "granted" | "denied";
   locationEnabled?: boolean;
 }
 interface NativeShiftPlugin {

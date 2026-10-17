@@ -1704,9 +1704,28 @@ test("a transient GPS timeout keeps its blocker visible until an explicit retry 
       }),
     )
     .toBe(true);
+  // A profile fetched before GPS fails may arrive after Offline. It must
+  // not restart location tracking or clear the explicit-retry blocker.
+  let releaseProfile!: () => void;
+  const profileHeld = new Promise<void>((resolve) => {
+    releaseProfile = resolve;
+  });
+  let profileCaptured!: () => void;
+  const captured = new Promise<void>((resolve) => {
+    profileCaptured = resolve;
+  });
+  await page.route("**/api/driver/profile", async (route) => {
+    const response = await route.fetch();
+    profileCaptured();
+    await profileHeld;
+    await route.fulfill({ response });
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await captured;
   await page.evaluate(() =>
     window.dispatchEvent(new Event("synthetic-gps-timeout")),
   );
+  releaseProfile();
   await expect(power).toBeDisabled();
   await expect(
     page.getByText(/GPS.*(?:временно недоступен|не ответил)/).first(),
@@ -1754,6 +1773,10 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
       syntheticNativeStopAfterPermission?: boolean;
       syntheticNativePermissionDenied?: boolean;
       syntheticNativeGpsDisabled?: boolean;
+      holdNextNativeStatus?: boolean;
+      nativeStatusHeld?: boolean;
+      releaseNativeStatus?: () => void;
+      nativeFixAt?: number;
     };
     bridge.holdNativePermission = holdPermission;
     bridge.CapacitorCustomPlatform = { name: "android" };
@@ -1826,21 +1849,40 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
                 chatEnabled: true,
               });
           });
-        if (method === "location")
+        if (method === "location") {
+          bridge.nativeFixAt = Date.now();
           return {
             lat: 37.96,
             lng: 58.32,
             accuracy: 10,
-            timestamp: Date.now(),
+            timestamp: bridge.nativeFixAt,
           };
-        if (method === "status")
-          return bridge.syntheticNativeStopped
-            ? {
-                ...status,
-                detail: "Смена завершена сервером",
-                stopSequence: bridge.syntheticNativeStopSequence ?? 1,
-              }
-            : status;
+        }
+        if (method === "status") {
+          const snapshot = {
+            ...status,
+            locationGranted: !bridge.syntheticNativePermissionDenied,
+            locationEnabled: !bridge.syntheticNativeGpsDisabled,
+            lastFixAt: bridge.nativeFixAt ?? 0,
+            lat: 37.96,
+            lng: 58.32,
+            accuracy: 10,
+            ...(bridge.syntheticNativeStopped
+              ? {
+                  detail: "Смена завершена сервером",
+                  stopSequence: bridge.syntheticNativeStopSequence ?? 1,
+                }
+              : {}),
+          };
+          if (bridge.holdNextNativeStatus) {
+            bridge.holdNextNativeStatus = false;
+            bridge.nativeStatusHeld = true;
+            return new Promise((resolve) => {
+              bridge.releaseNativeStatus = () => resolve(snapshot);
+            });
+          }
+          return snapshot;
+        }
         return {};
       },
     };
@@ -1865,6 +1907,59 @@ test("native foreground detects revoked GPS permission while the shift is off", 
   await expect(
     page.getByRole("button", { name: "Выйти на линию", exact: true }),
   ).toBeDisabled();
+});
+
+type NativeGpsRaceBridge = {
+  holdNextNativeStatus: boolean;
+  nativeStatusHeld: boolean;
+  syntheticNativePermissionDenied: boolean;
+  releaseNativeStatus: () => void;
+};
+
+test("a native status captured before permission revocation cannot restore the invalidated GPS fix", async ({
+  page,
+}) => {
+  await emulateNativeBridge(page, false);
+  await login(page, "driver");
+  const gps = page.getByRole("button", { name: "Включить GPS", exact: true });
+  await gps.click();
+  await expect(gps).toHaveAttribute("data-state", "ready");
+  await page.evaluate(() => {
+    (window as unknown as NativeGpsRaceBridge).holdNextNativeStatus = true;
+  });
+  // The periodic native status read captures the old granted permission/fix.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => !!(window as unknown as NativeGpsRaceBridge).nativeStatusHeld,
+      ),
+    )
+    .toBe(true);
+  await page.evaluate(() => {
+    (window as unknown as NativeGpsRaceBridge).syntheticNativePermissionDenied =
+      true;
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(gps).toHaveAttribute("data-state", "blocked");
+  await page.evaluate(async () => {
+    (window as unknown as NativeGpsRaceBridge).releaseNativeStatus();
+    // Flush the bridge completion and Vue rendering before checking its effect.
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+  });
+  await expect(gps).toHaveAttribute("data-state", "blocked");
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeDisabled();
+  await page.evaluate(() => {
+    (window as unknown as NativeGpsRaceBridge).syntheticNativePermissionDenied =
+      false;
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(gps).toHaveAttribute("data-state", "blocked");
+  await gps.click();
+  await expect(gps).toHaveAttribute("data-state", "ready");
 });
 
 for (const foreground of [true, false]) {

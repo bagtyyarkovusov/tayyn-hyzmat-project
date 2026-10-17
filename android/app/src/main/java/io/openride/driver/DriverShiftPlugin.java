@@ -33,6 +33,9 @@ public class DriverShiftPlugin extends Plugin {
     try {
       JSObject result = JSObject.fromJSONObject(ShiftService.status(getContext()));
       result.put("locationGranted", getPermissionState("location") == PermissionState.GRANTED);
+      PermissionState permission = getPermissionState("location");
+      result.put("locationPermission", permission == PermissionState.GRANTED ? "granted" :
+          permission == PermissionState.PROMPT ? "prompt" : "denied");
       LocationManager locations = (LocationManager) getContext().getSystemService(Context.LOCATION_SERVICE);
       result.put("locationEnabled", locations != null && locations.isProviderEnabled(LocationManager.GPS_PROVIDER));
       return result;

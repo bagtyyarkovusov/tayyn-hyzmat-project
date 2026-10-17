@@ -35,6 +35,7 @@ import {
 } from "@/shared/ui/dropdown-menu";
 import { driverState } from "@/features/driver/useDriver";
 import { useDriverNotifications } from "@/features/driver/notifications";
+import { useDriverPermissionOnboarding } from "@/features/driver/permissionOnboarding";
 import AdminMessageAlert from "@/features/dispatcher/AdminMessageAlert.vue";
 const route = useRoute();
 const development = import.meta.env.DEV;
@@ -76,6 +77,16 @@ onUnmounted(() => {
 const router = useRouter();
 const auth = computed(() => route.meta.layout === "auth");
 const driver = computed(() => route.path.startsWith("/driver"));
+useDriverPermissionOnboarding(
+  computed(
+    () =>
+      driver.value &&
+      !auth.value &&
+      !!driverSession.state.accessToken &&
+      !driverSession.state.restoring &&
+      !driverSession.state.verificationError,
+  ),
+);
 // Include portalled dialogs and login screens while leaving dispatcher text selectable.
 watch(
   driver,
