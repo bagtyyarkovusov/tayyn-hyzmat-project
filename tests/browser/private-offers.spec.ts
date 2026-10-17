@@ -132,8 +132,8 @@ test("dispatcher creates a private offer and driver explicitly accepts into the 
       exact: true,
     });
     await expect(
-      trip.getByRole("link", { name: "+993 65 00 09 99", exact: true }),
-    ).toBeVisible();
+      trip.getByRole("link", { name: "Позвонить клиенту", exact: true }),
+    ).toHaveAttribute("href", "tel:+99365000999");
     await expect(
       trip.getByText("Прибытие: 5 мин", { exact: true }),
     ).toBeVisible();

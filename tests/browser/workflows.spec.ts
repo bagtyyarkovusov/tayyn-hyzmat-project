@@ -285,7 +285,9 @@ test("a driver must explicitly accept after five minutes, then completes a quote
       driver.getByRole("heading", { name: "Текущая поездка" }),
     ).not.toBeVisible();
     await expect(
-      driver.getByRole("link", { name: "+993 60 00 09 99", exact: true }),
+      driver
+        .getByRole("dialog", { name: "Управление поездкой", exact: true })
+        .locator('a[href="tel:+99360000999"]'),
     ).not.toBeVisible();
     await expect(driver.getByText(/500\s*TMT/).first()).toBeVisible();
     // Advancing the browser clock also expires GPS. Reacquire a real fix
@@ -307,7 +309,9 @@ test("a driver must explicitly accept after five minutes, then completes a quote
       driver.getByRole("heading", { name: "Текущая поездка" }),
     ).toBeVisible();
     await expect(
-      driver.getByRole("link", { name: "+993 60 00 09 99", exact: true }),
+      driver
+        .getByRole("dialog", { name: "Управление поездкой", exact: true })
+        .locator('a[href="tel:+99360000999"]'),
     ).toBeVisible();
     await driver
       .getByRole("button", { name: "Я на месте", exact: true })
@@ -1047,7 +1051,9 @@ test("dispatcher enters region, phone and price and the region modal closes afte
       driver.getByText("Подача уточняется по телефону", { exact: true }),
     ).toBeVisible();
     await expect(
-      driver.getByRole("link", { name: "+993 60 00 08 88", exact: true }),
+      driver
+        .getByRole("dialog", { name: "Управление поездкой", exact: true })
+        .locator('a[href="tel:+99360000888"]'),
     ).not.toBeVisible();
     await driver
       .getByRole("button", { name: "Скрыть предложение", exact: true })
@@ -1062,7 +1068,9 @@ test("dispatcher enters region, phone and price and the region modal closes afte
       .click();
     await expect(regionOrders).not.toBeVisible();
     await expect(
-      driver.getByRole("link", { name: "+993 60 00 08 88", exact: true }),
+      driver
+        .getByRole("dialog", { name: "Управление поездкой", exact: true })
+        .locator('a[href="tel:+99360000888"]'),
     ).toBeVisible();
     await driver
       .getByRole("dialog", { name: "Управление поездкой", exact: true })
@@ -1402,7 +1410,9 @@ test("regional queues and counts recover through updates, reconnect and reload",
       .click();
     await expect(queue).not.toBeVisible();
     await expect(
-      driver.getByRole("link", { name: "+993 60 00 07 77", exact: true }),
+      driver
+        .getByRole("dialog", { name: "Управление поездкой", exact: true })
+        .locator('a[href="tel:+99360000777"]'),
     ).toBeVisible();
     await driver.reload();
     const trip = driver.getByRole("dialog", {
