@@ -29,36 +29,38 @@
   --radius-xl: 1rem;
 }
 :root {
-  --background: #f6f6f6;
-  --foreground: #141414;
+  --background: #f5f7fa;
+  --foreground: #13283f;
   --card: #fff;
-  --primary: #111111;
+  --primary: #122d4b;
   --primary-foreground: #fff;
-  --secondary: #ebebeb;
-  --muted-foreground: #5c5c5c;
+  --secondary: #e9eef4;
+  --muted-foreground: #526174;
   --destructive: #b42318;
   --destructive-foreground: #fff;
   --success: #137333;
+  --brand-swoosh: #e20d20;
   --shadow-overlay: 0 12px 40px rgb(0 0 0 / 0.14), 0 2px 8px rgb(0 0 0 / 0.08);
-  --border: #dcdcdc;
+  --border: #d9e1e9;
   font-family: "Manrope Variable", sans-serif;
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;
   color-scheme: light;
 }
 .dark {
-  --background: #111111;
+  --background: #0e1724;
   --foreground: #f5f5f5;
-  --card: #1c1c1c;
+  --card: #172334;
   --primary: #f5f5f5;
-  --primary-foreground: #111111;
-  --secondary: #292929;
-  --muted-foreground: #b8b8b8;
+  --primary-foreground: #122d4b;
+  --secondary: #253246;
+  --muted-foreground: #bac6d4;
   --destructive: #ffb4ab;
   --destructive-foreground: #4a0903;
   --success: #8bd5a5;
+  --brand-swoosh: #ff7983;
   --shadow-overlay: 0 12px 40px rgb(0 0 0 / 0.45), 0 2px 8px rgb(0 0 0 / 0.24);
-  --border: #404040;
+  --border: #3a4a60;
   color-scheme: dark;
 }
 @layer base {
@@ -211,7 +213,7 @@
   --shadow-navigation: 0 4px 18px rgb(0 0 0 / 0.045);
 }
 .dark {
-  --glass-surface: rgb(28 28 28 / 0.9);
+  --glass-surface: rgb(23 35 52 / 0.9);
   --glass-edge: rgb(255 255 255 / 0.07);
   --shadow-navigation: 0 4px 18px rgb(0 0 0 / 0.18);
 }
