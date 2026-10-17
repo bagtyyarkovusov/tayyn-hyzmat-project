@@ -4,6 +4,7 @@ import { useRoute } from "vue-router";
 import { Plus } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
 import { Label } from "@/shared/ui/label";
+import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
 import {
   Dialog,
@@ -20,6 +21,8 @@ import OrderCard from "./components/OrderCard.vue";
 import PageState from "./components/PageState.vue";
 import PrivateOfferForm from "./components/PrivateOfferForm.vue";
 import CreateOrderForm from "./components/CreateOrderForm.vue";
+import PhoneInput from "@/shared/ui/phone-input/PhoneInput.vue";
+import { isTurkmenPhone } from "@/shared/phone";
 const route = useRoute();
 const filter = ref("waiting"),
   page = ref(1),
@@ -29,7 +32,12 @@ const filter = ref("waiting"),
   resolve = ref<Order | null>(null),
   reason = ref(""),
   pending = ref(false),
-  actionError = ref("");
+  actionError = ref(""),
+  customerPhone = ref(""),
+  driverPhone = ref(""),
+  orderNumber = ref("");
+const validFilterPhone = (value: string) =>
+  isTurkmenPhone(value) ? value : undefined;
 const filters = [
   { value: "waiting", label: "Ожидают" },
   { value: "accepted", label: "В работе" },
@@ -41,7 +49,16 @@ const { data, loading, error, load } = useResource(
   async () =>
     (
       await adminApi.get<Page<Order>>("/admin/orders", {
-        params: { status: filter.value, page: page.value, limit: 20 },
+        params: {
+          status: filter.value,
+          page: page.value,
+          limit: 20,
+          orderNumber: /^[1-9]\d*$/.test(orderNumber.value)
+            ? orderNumber.value
+            : undefined,
+          customerPhone: validFilterPhone(customerPhone.value),
+          driverPhone: validFilterPhone(driverPhone.value),
+        },
       })
     ).data,
   { items: [], total: 0, page: 1, limit: 20 },
@@ -57,6 +74,19 @@ const { data, loading, error, load } = useResource(
     "order:cancelled",
   ],
 );
+watch([customerPhone, driverPhone, orderNumber], () => {
+  if (
+    (customerPhone.value &&
+      customerPhone.value !== "+993" &&
+      !isTurkmenPhone(customerPhone.value)) ||
+    (driverPhone.value &&
+      driverPhone.value !== "+993" &&
+      !isTurkmenPhone(driverPhone.value))
+  )
+    return;
+  page.value = 1;
+  void load();
+});
 watch(filter, () => {
   page.value = 1;
   void load();
@@ -124,6 +154,28 @@ async function confirmResolve() {
         @click="filter = item.value"
         >{{ item.label }}</Button
       >
+    </div>
+    <div class="grid gap-3 rounded-xl border bg-card p-3 sm:grid-cols-3">
+      <label class="grid gap-1 text-sm" for="orders-number">
+        <span class="font-medium">Номер заказа</span>
+        <Input
+          id="orders-number"
+          v-model="orderNumber"
+          type="number"
+          inputmode="numeric"
+          min="1"
+          step="1"
+          placeholder="Например, 9"
+        />
+      </label>
+      <label class="grid gap-1 text-sm" for="orders-customer-phone">
+        <span class="font-medium">Телефон клиента</span>
+        <PhoneInput id="orders-customer-phone" v-model="customerPhone" />
+      </label>
+      <label class="grid gap-1 text-sm" for="orders-driver-phone">
+        <span class="font-medium">Телефон водителя</span>
+        <PhoneInput id="orders-driver-phone" v-model="driverPhone" />
+      </label>
     </div>
     <PageState
       :loading="loading"
@@ -205,7 +257,7 @@ async function confirmResolve() {
         ><DialogHeader
           ><DialogTitle>Отменить заказ?</DialogTitle
           ><DialogDescription
-            >Заказ #{{ cancel?.id.slice(0, 8) }} будет закрыт. Водитель получит
+            >Заказ #{{ cancel?.orderNumber }} будет закрыт. Водитель получит
             уведомление.</DialogDescription
           ></DialogHeader
         ><Label for="cancel-reason">Причина, необязательно</Label

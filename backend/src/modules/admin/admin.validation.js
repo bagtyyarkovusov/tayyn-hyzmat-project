@@ -1,6 +1,7 @@
 const { z } = require('zod');
 const { moneySchema } = require('../../utils/money-policy');
 const { registerDriverSchema } = require('../auth/auth.validation');
+const { phoneSchema } = require('../../utils/phone-policy');
 const createDriverSchema = registerDriverSchema;
 
 const driverIdParamSchema = z.object({
@@ -62,7 +63,10 @@ const readMessageSchema = z.object({ throughMessageId: z.string().uuid().optiona
 const listOrdersQuerySchema = z.object({
   status: z.enum(['waiting', 'active', 'accepted', 'completed', 'cancelled', 'all']).default('all'),
   page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(20)
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  customerPhone: phoneSchema.optional(),
+  driverPhone: phoneSchema.optional(),
+  orderNumber: z.coerce.number().int().positive().max(2147483647).optional()
 });
 
 const activityQuerySchema = z.object({

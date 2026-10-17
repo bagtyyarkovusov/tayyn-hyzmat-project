@@ -48,6 +48,36 @@ test("dispatcher order lifecycle lists are exclusive and default to unclaimed wa
       });
       orderIds.push(order.id);
     }
+    const driver = await prisma.driver.findFirstOrThrow({
+      include: { user: true },
+    });
+    const driverLocalPhone = driver.user.phone.slice(4);
+    const driverPhoneLabel =
+      driverLocalPhone.match(/\d{1,2}/g)?.join(" ") ?? driverLocalPhone;
+    const phoneFiltered = await prisma.order.create({
+      data: {
+        districtId: process.env.TEST_REGION_ID,
+        status: "NEW",
+        pickupLat: 37.96,
+        pickupLng: 58.32,
+        clientPhone: "+99365111111",
+        priceEstimated: 25,
+        pickupAddress: "Клиентский телефон 65111111",
+      },
+    });
+    const driverFiltered = await prisma.order.create({
+      data: {
+        districtId: process.env.TEST_REGION_ID,
+        status: "ACCEPTED",
+        driverId: driver.id,
+        pickupLat: 37.96,
+        pickupLng: 58.32,
+        clientPhone: "+99365222222",
+        priceEstimated: 25,
+        pickupAddress: `Телефон водителя ${driverLocalPhone}`,
+      },
+    });
+    orderIds.push(phoneFiltered.id, driverFiltered.id);
     await context.addInitScript(
       ({ token, id }) => {
         localStorage.setItem("openride.admin.accessToken", token);
@@ -86,6 +116,32 @@ test("dispatcher order lifecycle lists are exclusive and default to unclaimed wa
     await expect(
       page.getByText("Проверка фильтра NEW", { exact: true }),
     ).toBeVisible();
+    await page.getByRole("button", { name: "Все", exact: true }).click();
+    await page
+      .locator("#orders-number")
+      .fill(String(phoneFiltered.orderNumber));
+    await expect(
+      page.getByText("Клиентский телефон 65111111", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Проверка фильтра NEW", { exact: true }),
+    ).toHaveCount(0);
+    await page.locator("#orders-number").fill("");
+    await page.locator("#orders-customer-phone").fill("65 11 11 11");
+    await expect(
+      page.getByText("Клиентский телефон 65111111", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Телефон водителя 60000101", { exact: true }),
+    ).toHaveCount(0);
+    await page.locator("#orders-customer-phone").fill("");
+    await page.locator("#orders-driver-phone").fill(driverPhoneLabel);
+    await expect(
+      page.getByText(`Телефон водителя ${driverLocalPhone}`, { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Клиентский телефон 65111111", { exact: true }),
+    ).toHaveCount(0);
     await page.screenshot({
       path: test.info().outputPath("waiting-orders-mobile.png"),
       fullPage: true,

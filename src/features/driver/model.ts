@@ -14,6 +14,7 @@ export interface District {
 }
 export interface Order {
   id: string;
+  orderNumber: number;
   status: OrderStatus;
   pickupAddress: string | null;
   dropoffAddress?: string | null;

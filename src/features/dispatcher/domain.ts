@@ -47,6 +47,7 @@ export interface Driver {
 }
 export interface Order {
   id: string;
+  orderNumber: number;
   status: string;
   district?: District;
   driver?: Driver;

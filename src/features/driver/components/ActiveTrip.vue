@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { formatPhone } from "@/shared/phone";
 import { computed, ref } from "vue";
 import { Phone, Navigation, MapPin, Flag } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
@@ -47,7 +46,9 @@ async function cancel() {
         <p class="text-sm font-medium text-primary">
           {{ statusLabels[state.active.status] }}
         </p>
-        <h2 id="trip-title" class="text-xl font-semibold">Текущая поездка</h2>
+        <h2 id="trip-title" class="text-xl font-semibold">
+          Текущая поездка · #{{ state.active.orderNumber }}
+        </h2>
       </div>
       <span class="font-semibold tabular-nums">{{
         money(state.active.priceEstimated)
@@ -85,9 +86,7 @@ async function cancel() {
     <div class="flex flex-wrap gap-2">
       <Button v-if="state.active.clientPhone" as-child variant="secondary"
         ><a :href="`tel:${state.active.clientPhone}`"
-          ><Phone class="size-4" />{{
-            formatPhone(state.active.clientPhone)
-          }}</a
+          ><Phone class="size-4" />Позвонить клиенту</a
         ></Button
       ><Button v-if="navigation" variant="secondary" @click="openNavigation"
         ><Navigation class="size-4" />{{ navigation.label }}</Button

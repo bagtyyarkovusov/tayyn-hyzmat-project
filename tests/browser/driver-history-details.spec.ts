@@ -9,7 +9,7 @@ const require = createRequire(
 );
 const { PrismaClient } = require("@prisma/client");
 
-test("driver can expand their trip history to inspect route, customer contact and lifecycle details on mobile", async ({
+test("driver can expand their trip history while customer contact stays private", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 360, height: 740 });
@@ -104,24 +104,23 @@ test("driver can expand their trip history to inspect route, customer contact an
     await expect(
       trip.getByText("ТЕСТ — Центральный", { exact: true }),
     ).toBeVisible();
-    await expect(
-      trip.getByRole("link", { name: "+993 65 99 54 24", exact: true }),
-    ).toBeHidden();
+    await expect(trip.getByRole("link", { name: /\+993/ })).toHaveCount(0);
     await trip.locator("summary").click();
     await expect(trip.getByText("Откуда", { exact: true })).toBeVisible();
     await expect(trip.getByText("Куда", { exact: true })).toBeVisible();
     await expect(
       trip.getByText("проспект Гарашсызлык, 110", { exact: true }),
     ).toBeVisible();
+    await expect(trip.getByRole("link", { name: /\+993/ })).toHaveCount(0);
     await expect(
-      trip.getByRole("link", { name: "+993 65 99 54 24", exact: true }),
-    ).toHaveAttribute("href", "tel:+99365995424");
+      trip.getByText(new RegExp(`^#${completed.orderNumber}$`)),
+    ).toBeVisible();
+    await expect(trip.getByText(completed.id, { exact: true })).toHaveCount(0);
     await expect(
       trip.getByText("Вход со двора, позвонить перед приездом", {
         exact: true,
       }),
     ).toBeVisible();
-    await expect(trip.getByText(completed.id, { exact: true })).toBeVisible();
     for (const label of ["Создан", "Принят", "Начало поездки", "Завершён"])
       await expect(trip.getByText(label, { exact: true }).last()).toBeVisible();
     const missing = page.locator("details").filter({
@@ -137,7 +136,7 @@ test("driver can expand their trip history to inspect route, customer contact an
       missing.getByText("Место назначения не указано", { exact: true }),
     ).toBeVisible();
     await expect(
-      missing.getByText("Номер не указан", { exact: true }),
+      missing.getByText("Номер заказа", { exact: true }),
     ).toBeVisible();
     await expect(
       missing.getByText("Клиент отказался от поездки", { exact: true }),

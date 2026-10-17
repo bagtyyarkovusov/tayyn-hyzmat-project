@@ -4,6 +4,8 @@ This guide describes the driver app, dispatcher dashboard, and the rules they sh
 
 ## Roles and access
 
+Every order has a stable sequential number beginning at 1. Use it in calls, chat and support (“order 9”); UUIDs are internal only. The number is assigned by a database sequence, backfilled oldest-first, and never reused. The dispatcher order list can find an exact order number. Customer and driver phone filters are exact canonical +993 matches, including an archived driver phone. Driver history and balance history show the order number and never expose the customer phone or UUID; the call action is available on the active trip only.
+
 A dispatcher signs in with the fixed `+993` phone format and password. A driver uses the same format. The dispatcher creates or edits driver credentials; drivers do not receive or display an existing password. A phone or password reset revokes the old access and takes that driver offline. The driver keeps their balance and active trip, then signs in again.
 
 In the current candidate, dispatcher approval applies to the driver account. An approved account can sign in on any phone without separate device approval. Several phones can remain signed in and use chat, but exactly one owns the shift. A second phone cannot start a shift or change the working phone's location or trip progress until the owner goes Offline, logs out, or its 60-second availability expires. Signing in alone does not take over the shift. Device identifiers stay internal; there is no device-management screen. An accepted trip stays assigned to the account.
