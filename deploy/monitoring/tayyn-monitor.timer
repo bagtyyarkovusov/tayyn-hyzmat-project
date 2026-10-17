@@ -1,0 +1,11 @@
+[Unit]
+Description=Probe Tayyn production every minute
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=60
+Persistent=true
+Unit=tayyn-monitor.service
+
+[Install]
+WantedBy=timers.target

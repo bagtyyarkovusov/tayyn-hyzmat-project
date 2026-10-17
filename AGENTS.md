@@ -4,6 +4,8 @@ Read [product scope](docs/product.md) and [coding standards](docs/coding-standar
 
 The supporting developer edits real region boundaries in a shared environment. Use the isolated synthetic environment described in [development](docs/development.md). Keep fixture writes and automated tests isolated from shared databases. Merging to `main` triggers Railway deployment, so prepare changes on a feature branch.
 
+For VPS installation, production updates, credentials, backups or monitoring, read [production operations](docs/production-handoff.md) before changing deployment files. Record operational changes and evidence there.
+
 Run the relevant checks in [CONTRIBUTING.md](CONTRIBUTING.md). For backend changes, include typecheck, unit and disposable-database integration tests. Preserve the Docker startup path when changing build tooling.
 
 ## Agent skills

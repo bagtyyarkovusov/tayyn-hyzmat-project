@@ -24,6 +24,7 @@ OPTIONAL_CONFIG = (
 )
 PROVIDERS = (
     "ghcr.io", "geocode-maps.yandex.ru", "oauth2.googleapis.com", "fcm.googleapis.com",
+    "api.resend.com",
 )
 SERVICES = ("db", "api", "web")
 

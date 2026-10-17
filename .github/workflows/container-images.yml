@@ -38,6 +38,9 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
+          # Public browser key; server geocoder credentials never belong in builds.
+          build-args: |
+            VUE_APP_YANDEX_MAPS_API_KEY=${{ vars.VUE_APP_YANDEX_MAPS_API_KEY }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

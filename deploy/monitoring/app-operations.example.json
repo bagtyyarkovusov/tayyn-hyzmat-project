@@ -1,0 +1,16 @@
+{
+  "role": "app",
+  "compose_dir": "/opt/tayyn/current",
+  "compose_env_files": ["/etc/tayyn/app.env", "/opt/tayyn/current/release.env"],
+  "compose_files": ["deploy/production/compose.production.yaml"],
+  "project": "tayyn-production",
+  "backup_dir": "/var/lib/tayyn/backups",
+  "state_dir": "/var/lib/tayyn/operations",
+  "age_recipient": "REPLACE_WITH_OWNER_PUBLIC_AGE_RECIPIENT",
+  "disk_path": "/",
+  "outbound_hosts": [
+    "geocode-maps.yandex.ru",
+    "oauth2.googleapis.com",
+    "fcm.googleapis.com"
+  ]
+}

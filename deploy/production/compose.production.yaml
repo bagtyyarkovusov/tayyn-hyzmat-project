@@ -1,0 +1,102 @@
+name: tayyn-production
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+services:
+  db:
+    image: ${DB_IMAGE:-postgres:17-bookworm}
+    pull_policy: never
+    environment:
+      POSTGRES_USER: tayyn
+      POSTGRES_DB: tayyn
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tayyn -d tayyn"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    logging: *logging
+  migrate:
+    image: ${API_IMAGE:-tayyn-api:unconfigured}
+    pull_policy: never
+    environment:
+      DATABASE_URL: postgresql://tayyn:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/tayyn
+    command: ["./node_modules/.bin/prisma", "migrate", "deploy"]
+    depends_on:
+      db:
+        condition: service_healthy
+    logging: *logging
+  api:
+    image: ${API_IMAGE:-tayyn-api:unconfigured}
+    pull_policy: never
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://tayyn:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/tayyn
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Set JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET}
+      CORS_ORIGIN: ${CORS_ORIGIN:?Set CORS_ORIGIN}
+      SEED_ADMIN_PHONE: ${SEED_ADMIN_PHONE:?Set SEED_ADMIN_PHONE}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?Set SEED_ADMIN_PASSWORD}
+      YANDEX_GEOCODER_API_KEY: ${YANDEX_GEOCODER_API_KEY:-}
+      YANDEX_GEOCODER_DAILY_LIMIT: ${YANDEX_GEOCODER_DAILY_LIMIT:-0}
+      YANDEX_GEOCODER_QUOTA_TIMEZONE: ${YANDEX_GEOCODER_QUOTA_TIMEZONE:-}
+      YANDEX_GEOCODER_QUOTA_RESET_HOUR: ${YANDEX_GEOCODER_QUOTA_RESET_HOUR:-0}
+      YANDEX_GEOCODER_CACHE_SECONDS: ${YANDEX_GEOCODER_CACHE_SECONDS:-0}
+      YANDEX_GEOCODER_REFERER: ${YANDEX_GEOCODER_REFERER:-}
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:4000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    logging: *logging
+  web:
+    image: ${WEB_IMAGE:-tayyn-web:unconfigured}
+    pull_policy: never
+    environment:
+      PORT: 8080
+      API_UPSTREAM: http://api:4000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *logging
+  proxy:
+    image: ${PROXY_IMAGE:-caddy:2.10-alpine}
+    pull_policy: never
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${TLS_CERT_PATH:?Set TLS_CERT_PATH}:/etc/tayyn/tls/fullchain.pem:ro
+      - ${TLS_KEY_PATH:?Set TLS_KEY_PATH}:/etc/tayyn/tls/privkey.pem:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      web:
+        condition: service_started
+    restart: unless-stopped
+    logging: *logging
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:

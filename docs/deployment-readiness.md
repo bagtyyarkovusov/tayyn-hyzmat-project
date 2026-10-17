@@ -1,5 +1,7 @@
 # Ubuntu deployment readiness
 
+For the planned production locations, Namecheap DNS, offline installation, update/rollback commands, backups and alert setup, read the [production handoff](production-handoff.md), [offline bundle guide](offline-production-bundle.md) and [operations guide](production-operations.md). These tools are implemented; the purchased-host and clean Ubuntu offline rehearsals remain pending.
+
 The VPS has not been purchased. Ubuntu 24.04 LTS with Docker Compose is the initial target. A four-core, 4 GB RAM, SSD VPS is a sizing candidate for the initial three to five drivers, not a measured capacity guarantee. Provider connectivity and a disposable workload test decide whether it is suitable.
 
 ## Read-only diagnostic
@@ -11,8 +13,9 @@ On the prospective Ubuntu host, from the repository directory:
 ```sh
 python3 scripts/production-readiness.py --help
 python3 scripts/production-readiness.py \
-  --config-file /etc/tayyn/runtime.env \
-  --compose-file compose.yaml \
+  --config-file /etc/tayyn/app.env \
+  --project-name tayyn-production \
+  --compose-file deploy/production/compose.production.yaml \
   --network \
   --api-url https://api.example.com \
   --web-url https://dispatch.example.com
@@ -43,12 +46,12 @@ For a local shell, omit the last `exit` if you want to keep the session open. Re
 
 Run `--remote-only --network` with the isolated test API/web URLs. This verifies HTTPS responses and provider DNS/TLS from the machine running the script. **It does not test Railway outbound connectivity.** To inspect outbound reachability from a service host, execute the diagnostic on that host (Python may need to be provided separately); do not expose credentials or install tools in a live service just for this check.
 
-The API `/health` currently proves process liveness only, even when accessed through the web proxy. It does not query PostgreSQL. A local Compose inspection separately executes read-only `SELECT 1` through the `db` service. Remote database readiness remains unverified. HTTPS endpoint probes reject redirects; supply the final HTTPS URL so another page cannot accidentally count as a healthy endpoint. TLS connections to Yandex/Google/GHCR do not consume geocoder requests and do not establish authorization, quota, successful image pulls, delivery to Android, or connectivity on drivers' networks. API credentials must not be put in command arguments or diagnostic URLs.
+The API `/health` currently proves process liveness only, even when accessed through the web proxy. It does not query PostgreSQL. A local Compose inspection separately executes read-only `SELECT 1` through the `db` service. Remote database readiness remains unverified. HTTPS endpoint probes reject redirects; supply the final HTTPS URL so another page cannot accidentally count as a healthy endpoint. TLS connections to Yandex/Google/GHCR/Resend do not consume geocoder requests and do not establish authorization, quota, successful image pulls, delivery to Android, or connectivity on drivers' networks. API credentials must not be put in command arguments or diagnostic URLs.
 
 ## Work required before production
 
-1. Configure production DNS and HTTPS, then test HTTP-to-HTTPS redirection and WebSockets. If Caddy fronts Nginx, review forwarded IP/scheme handling: Nginx currently overwrites these headers and Express trusts one proxy. Expose only intended public ports; keep PostgreSQL private.
-2. Wire independent production database/JWT secrets and backend Yandex/FCM configuration at runtime. Base Compose currently omits geocoder and FCM variables. The public browser Maps key is a web build argument; the GHCR workflow does not currently pass it. Keep server credentials out of images, source control and reports.
+1. Configure production DNS and HTTPS, then test HTTP-to-HTTPS redirection and WebSockets. If Caddy fronts Nginx, review forwarded IP/scheme handling: the production Caddy configuration sends API/Socket.IO requests directly to Express, which trusts one proxy. The base development Nginx path has different forwarding behavior. Expose only intended public ports; keep PostgreSQL private.
+2. Wire independent production database/JWT secrets and backend Yandex/FCM configuration at runtime. Base development Compose omits geocoder and FCM variables; the separate production Compose wires them from private runtime configuration. The public browser Maps key is a web build argument; the GHCR workflow passes the repository variable `VUE_APP_YANDEX_MAPS_API_KEY`, which must be configured before the production image build. Keep server credentials out of images, source control and reports.
 3. Start fresh with one approved admin and the saved canonical regions. Bootstrap explicitly with a unique password and the approved admin phone. Normal server startup and `prisma migrate deploy` do not seed. Never run synthetic fixtures or copy shared development data into production. A seed run skips an existing matching phone rather than resetting its password. Do not use the fallback seed password.
 4. Configure bounded Docker logs, resource monitoring and an external uptime check that can alert when the VPS itself fails. Restart policies recover exited processes/reboots; they do not restart merely unhealthy containers. Current restart counts are not historical crash monitoring. A bounded recovery mechanism must avoid restart loops and alert on repeated failures.
 5. Agree on acceptable data loss and recovery time. Automate encrypted off-server database backups, monitor backup age/failures and restore a backup into a disposable database before cutover. Same-host volumes and snapshots alone are insufficient. Protect backup encryption credentials separately. Do not run restore drills against production.
