@@ -11,6 +11,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Check deployment diagnostic behavior
+        run: python3 -m unittest discover -s scripts/tests -p 'test_production_readiness.py'
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
