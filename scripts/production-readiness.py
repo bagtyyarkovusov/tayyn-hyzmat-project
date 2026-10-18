@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 
 REQUIRED_CONFIG = (
     "POSTGRES_PASSWORD", "JWT_ACCESS_SECRET", "JWT_REFRESH_SECRET", "CORS_ORIGIN",
+    "SEED_ADMIN_PHONE", "SEED_ADMIN_PASSWORD",
 )
 OPTIONAL_CONFIG = (
     "YANDEX_GEOCODER_API_KEY", "YANDEX_GEOCODER_DAILY_LIMIT",
@@ -26,7 +27,7 @@ PROVIDERS = (
     "ghcr.io", "geocode-maps.yandex.ru", "oauth2.googleapis.com", "fcm.googleapis.com",
     "api.resend.com",
 )
-SERVICES = ("db", "api", "web")
+SERVICES = ("db", "api", "web", "proxy")
 
 
 def run(command, timeout=6):
@@ -106,7 +107,7 @@ class Checks:
             if not ubuntu or info.get("VERSION_ID") != "24.04":
                 self.add("host.os_target", "SKIP", "Ubuntu 24.04 LTS is the reviewed deployment target")
         arch = platform.machine()
-        self.add("host.arch", "PASS" if arch in ("x86_64", "aarch64", "arm64") else "FAIL", arch)
+        self.add("host.arch", "PASS" if arch == "x86_64" else "FAIL", arch + "; Ubuntu amd64 requires x86_64")
         cpus = os.cpu_count() or 0
         self.add("host.cpu", "PASS" if cpus >= 4 else "WARN", f"{cpus} logical CPUs; pilot sizing starts at 4")
         try:

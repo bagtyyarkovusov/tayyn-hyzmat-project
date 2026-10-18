@@ -120,6 +120,27 @@ class ReadinessTests(unittest.TestCase):
             self.assertNotIn(secret, json.dumps(check.results))
             self.assertEqual(next(r for r in check.results if r["name"] == "config.required_names")["status"], "PASS")
 
+    def test_bootstrap_credentials_are_required_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "config.env"
+            config.write_text("POSTGRES_PASSWORD=hidden\nJWT_ACCESS_SECRET=hidden\nJWT_REFRESH_SECRET=hidden\nCORS_ORIGIN=https://example.test\n")
+            config.chmod(0o600)
+            check = readiness.Checks(args(config_file=str(config)))
+            check.config()
+            result = next(row for row in check.results if row["name"] == "config.required_names")
+            self.assertEqual(result["status"], "FAIL")
+            self.assertIn("SEED_ADMIN_PHONE", result["detail"])
+
+    def test_non_amd64_host_fails_architecture_gate(self):
+        check = readiness.Checks(args())
+        with patch.object(readiness.platform, "system", return_value="Darwin"), \
+             patch.object(readiness.platform, "machine", return_value="aarch64"), \
+             patch.object(readiness.os, "cpu_count", return_value=4), \
+             patch.object(readiness.shutil, "disk_usage", return_value=type("Usage", (), {"free": 25 * 1024**3})()):
+            check.host()
+        result = next(row for row in check.results if row["name"] == "host.arch")
+        self.assertEqual(result["status"], "FAIL")
+
     def test_world_readable_credentials_fail(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "config.env"
