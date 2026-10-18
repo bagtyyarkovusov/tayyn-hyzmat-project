@@ -4,9 +4,9 @@ This is the operational handoff for the first VPS release. Start with the [setup
 
 ## Current status
 
-Production has not been installed. The Railway services and `apk-test` environments are test environments; their databases and credentials must not be copied into production. The repository has Docker images and a read-only readiness diagnostic. This feature branch adds offline release and operational tooling; its checks, a matching offline Ubuntu test, the production domain, and the physical VPS rollout remain release gates. Use the dated evidence below for the checks already completed. Provider authorization, real phone delivery, TLS, installation and restore gates must be assessed separately.
+The first production release is installed on the main VPS from the verified clean-source bundle described below. The Railway services and `apk-test` environments remain test environments; their databases and credentials must not be copied into production. HTTPS health, admin login, authenticated WebSocket access, encrypted backup/relay, monitor checks and a disposable restore have now been verified. Real dispatcher-driver workflow, physical-phone delivery, clean APK rebuild and merge of the deployment PR remain open gates.
 
-The planned first deployment is a clean database containing one approved dispatcher/admin account and the versioned saved regions. Do not seed synthetic drivers, orders, chats, balances, or Railway records into production.
+The bootstrap began with one approved admin and the nine versioned saved regions. Current authenticated overview evidence reports two drivers, one active order and four completed trips; these records were not created by this handoff session. Do not seed synthetic drivers, orders, chats, balances, or Railway records into production.
 
 ## Target topology
 
@@ -29,7 +29,7 @@ main VPS hourly encrypted backup --restricted SSH pull--> monitoring VDS
 monitoring VDS checks -> Gmail SMTP with verified TLS -> personal Gmail recipient
 ```
 
-The purchased hosts and agreed domain are recorded below. DNS and reboot-persistent management access are verified. Application installation and TLS remain pending. Keep private keys, API keys and passwords out of this inventory.
+The purchased hosts, agreed domain and installed release are recorded below. DNS, trusted TLS, reboot-persistent management access and the application deployment are verified. Keep private keys, API keys and passwords out of this inventory.
 
 The agreed production origin is `https://tayynhyzmat.bagtyyar.dev`. Preserve the existing root-domain site. Use a separate monitoring hostname only if the monitor has a web UI that must be exposed. Do not publish PostgreSQL or Docker's control socket.
 
@@ -42,15 +42,15 @@ Fill this in during provisioning. An empty field is a deployment gate, not permi
 | Main host                             | Standard L, `216.250.8.238`, `tayynhyzmat`; Ubuntu 24.04.4 amd64 verified; key-only SSH port 2222 verified after reboot                  |
 | Monitoring host                       | Standard S, `216.250.9.242`, selected and authenticated; Ubuntu 24.04.4 amd64 verified. DC2 test host `216.250.13.190` remains untouched |
 | DNS owner                             | Namecheap; `bagtyyar.dev`                                                                                                                |
-| Production HTTPS origin               | `https://tayynhyzmat.bagtyyar.dev`; DNS resolves; DNS-01 certificate issued, expires 2027-01-15; public deployment checks pending        |
+| Production HTTPS origin               | `https://tayynhyzmat.bagtyyar.dev`; DNS, trusted TLS and health/login checks verified; certificate expires 2027-01-15                         |
 | Monitoring HTTPS origin               | Pending, or private access only                                                                                                          |
 | Alert recipient                       | `bagtyyarkowusow.dev@gmail.com`                                                                                                          |
 | Resend verified sender                | Production sender domain pending; `onboarding@resend.dev` permitted for initial tests to the confirmed Resend account email only         |
-| Current/previous production release   | Not deployed                                                                                                                             |
+| Current/previous production release   | `/opt/tayyn/current` → `vps-2-68c2f354c4374fdcaed850a6af6378f8af63ab4a`; bundle run `39037794659`                                      |
 | Main runtime configuration            | `/etc/tayyn/app.env`                                                                                                                     |
 | Monitor runtime configuration         | `/etc/tayyn/operations.json` and `/etc/tayyn/monitor-secrets.json`                                                                       |
-| Backup storage and private key holder | Pending provisioning                                                                                                                     |
-| Last restore test and alert test      | Pending purchased-host verification                                                                                                      |
+| Backup storage and private key holder | Hourly encrypted archive on main + verified relay on monitor; private age identity remains on the owner Mac                                 |
+| Last restore test and alert test      | 2026-10-18 UTC disposable PG17 restore + tamper rejection; monitor initialization email sent and healthy check verified                 |
 
 ### Purchased-host checks, 2026-10-17
 
@@ -101,6 +101,28 @@ Manual DNS-01 through Namecheap succeeded after the owner published the active T
 Automatic Caddy mode remains an optional feature, not the working deployment mode on these hosts. It has not established unattended issuance or renewal here. Manual DNS-01 also does not provide unattended renewal. The operator must renew through DNS validation, install the new certificate/key and recreate only the proxy before expiry. See the [renewal options](research/production-dns-certificate-renewal.md) and [update runbook](production-update-runbook.md#certificate-issuance-and-renewal) before choosing automation.
 
 The owner backup identity was generated on the Mac using the official age v1.3.2 Darwin arm64 asset after matching its published SHA-256. Only the public recipient is in app operations configuration. Keep an additional protected offline copy of the private identity; neither VPS receives it.
+
+### Lookup cutover and SSH hardening, 2026-10-17
+
+The isolated Railway `apk-test` API used the same Yandex HTTP Geocoder credential as the production candidate. To prevent two independent database budgets spending the same vendor allowance, only its `YANDEX_GEOCODER_DAILY_LIMIT` was changed to `0`; the key, timezone, reset hour and Referer were preserved. Deployment `92097293-fd5a-4629-a2fd-aea25c90bf16` reached `SUCCESS`, and an SSH readback from that exact deployment confirmed runtime limit `0`. Shared development was left unchanged and has no enabled geocoder configuration.
+
+A read-only transaction at 13:50:04 UTC found the test budget at period `2026-10-17`, with four attempts, zero failures and no active breaker. One additional direct request from main, outside that counter, returned HTTP 200 with an address for a synthetic Ashgabat point. The temporary remote credential candidate and checker were removed and their absence verified. This establishes provider acceptance for that request; it does not measure the vendor account's complete usage.
+
+Production is configured with an allocation of `1000`, an application ceiling of `800`, timezone `Europe/Moscow`, reset hour `0` and caching disabled. Application deployment and production counter initialization remain pending at this checkpoint. The initial production budget will conservatively carry **25 attempts** for `2026-10-17`, covering the four persisted test attempts, the known direct request and additional allowance for manual checks. Preserve any usage already recorded in production when applying the carryover. The next quota day begins at 00:00 Moscow, 21:00 UTC. GPS, regions and driver work remain independent of address availability. No production drivers or orders exist at this checkpoint.
+
+The pending application deployment uses the clean-source bundle built from `68c2f35`. This evidence-only documentation update does not require rebuilding its images or altering the verified bundle. Append the applied release identifier, initialized counter and acceptance results after deployment.
+
+Both hosts now have `/etc/ssh/sshd_config.d/00-tayyn-key-only.conf` disabling password authentication and root login for the global SSH service, including the port-22 listener. This follows the earlier step that initially preserved its configuration. Management on port `2222` remains key-only. Fresh operator-key login verification after this hardening is underway; retain the existing session and provider-console recovery until it succeeds on both hosts.
+
+### First production release and operations evidence, 2026-10-18
+
+The clean-source application bundle from commit `68c2f35` and GitHub artifact run `39037794659` is installed as release `vps-2-68c2f354c4374fdcaed850a6af6378f8af63ab4a`. The bundle and internal `SHA256SUMS` matched the trusted manifest; `apply-release.py --initialize` applied 25 migrations and bootstrapped one admin plus nine canonical regions. The main host reports healthy `db`, `api`, `web` and `proxy` containers. Pinned HTTPS checks returned 200 for `/health`, `/`, `/api/health` and admin login.
+
+The main `tayyn-backup.timer`, monitor `tayyn-backup-relay.timer` and monitor `tayyn-monitor.timer` are enabled and active. The first archive was created on 2026-10-18 at 12:08 UTC, encrypted with the owner age recipient, pulled to the monitor with matching size and SHA-256, and retained on both hosts. The monitor then reported all checks healthy and sent its one-time initialization email; the next run sent no duplicate.
+
+The relayed archive was copied to the owner Mac and its SHA-256 was checked against the monitor. Using the private owner identity only on the Mac, it restored into a disposable PostgreSQL 17 container and database. The restored snapshot contained one admin, nine districts, two drivers, six orders, three users and 25 migrations. A one-byte tampered copy was rejected before creating its disposable database. The restore container was removed afterward; production was never replaced.
+
+A pinned acceptance probe completed admin login, overview read and an authenticated WebSocket connection. The original helper's unpinned hostname request was blocked by the current Mac gateway, while the same checks passed with the documented pinned origin probe. A real dispatcher-driver workflow, FCM delivery on the target Infinix, and clean APK rebuild remain pending; no driver or order was seeded for this check. The Yandex carryover was skipped because the Moscow quota day had already rolled over.
 
 ## Namecheap DNS and TLS
 
