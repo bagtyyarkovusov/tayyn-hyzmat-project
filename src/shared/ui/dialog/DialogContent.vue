@@ -50,6 +50,10 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
 <style>
 /* Mobile keyboards resize the visual viewport without changing CSS vh. */
 .app-dialog-content {
+  left: calc(
+    50% + var(--native-safe-left, env(safe-area-inset-left, 0px)) / 2 -
+      var(--native-safe-right, env(safe-area-inset-right, 0px)) / 2
+  );
   top: calc(
     var(--app-viewport-top, 0px) +
       var(--native-safe-top, env(safe-area-inset-top, 0px)) / 2 -

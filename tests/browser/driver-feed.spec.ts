@@ -665,6 +665,24 @@ test("native Back closes the top overlay through its normal action then tabs ret
     await page.screenshot({
       path: test.info().outputPath("native-safe-insets.png"),
     });
+    await page.setViewportSize({ width: 568, height: 320 });
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty("--native-safe-left", "72px");
+      document.documentElement.style.setProperty("--native-safe-right", "0px");
+      document.documentElement.style.setProperty("--native-safe-top", "0px");
+      document.documentElement.style.setProperty("--native-safe-bottom", "0px");
+    });
+    await page
+      .getByRole("group", { name: "Регионы", exact: true })
+      .getByRole("button", { name: /ТЕСТ — Центральный/ })
+      .click();
+    const landscapeDialog = await queue.boundingBox();
+    expect(landscapeDialog!.x).toBeGreaterThanOrEqual(72);
+    const closeBox = await queue
+      .getByRole("button", { name: "Close", exact: true })
+      .boundingBox();
+    expect(closeBox!.x + closeBox!.width).toBeLessThanOrEqual(568);
+    await back("handled");
   } finally {
     await close();
   }
@@ -933,6 +951,58 @@ test("failed private decline through native Back keeps the incoming offer and er
       dialog.getByRole("button", { name: "Отказаться", exact: true }),
     ).toBeEnabled();
   } finally {
+    await f.close();
+  }
+});
+
+test("a delayed acceptance response cannot dismiss a same-order reoffer", async ({
+  browser,
+}) => {
+  const f = await fixture(browser);
+  let release = () => {};
+  try {
+    let reached!: () => void;
+    const held = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await f.page.route("**/orders/accept", async (route) => {
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      reached();
+      await gate;
+      await route.fulfill({ response });
+    });
+    const first = await f.create("Задержанный ответ принятия");
+    const incoming = f.page.getByRole("dialog", {
+      name: "Предложение заказа",
+      exact: true,
+    });
+    await incoming
+      .getByRole("button", { name: "Принять заказ", exact: true })
+      .click();
+    await held;
+    expect((await f.post("/orders/cancel", { orderId: first.id })).ok()).toBe(
+      true,
+    );
+    const reofferResponse = await f.adminPost(
+      `/admin/orders/${first.id}/reoffer`,
+    );
+    expect(reofferResponse.ok()).toBe(true);
+    const second = await reofferResponse.json();
+    expect(second.notificationEventId).not.toBe(first.notificationEventId);
+    await expect(incoming).toBeVisible();
+    release();
+    await expect(
+      incoming.getByRole("button", { name: "Принять заказ", exact: true }),
+    ).toBeEnabled();
+    await f.page.waitForTimeout(300);
+    expect(await incoming.count()).toBe(1);
+    await expect(incoming.getByRole("timer")).toBeVisible();
+  } finally {
+    release();
     await f.close();
   }
 });

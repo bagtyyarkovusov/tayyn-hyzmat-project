@@ -553,8 +553,16 @@ async function accept(orderId: string, etaMinutes: number) {
       },
     );
     if (generation !== sessionGeneration) return;
-    dismissIncoming();
-    state.active = data;
+    // A successful response can arrive after cancellation and reoffer. It owns
+    // only its original alert; the current-order read resolves newer state.
+    dismissIncoming(data.notificationEventId);
+    if (
+      !state.incoming &&
+      (!state.active ||
+        (state.active.id === data.id &&
+          state.active.offerAttemptId === data.offerAttemptId))
+    )
+      state.active = data;
     await refresh();
   });
 }

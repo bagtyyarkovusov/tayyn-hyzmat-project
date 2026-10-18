@@ -54,3 +54,9 @@ Shared Dialog and DropdownMenu preserve Reka's controlled contract. A supplied `
 The review-focused nine-case run passes, including pagination retry, controlled-dialog refusal/failure, private decline failure, ACCEPTED-only cancellation visibility and all five trip navigation variants. The initial broad run finished 169/184 with 15 failures, including cascades from obsolete cancellation/charge assertions and failed fixture cleanup. All directly affected cases have focused passing reruns. A final 187-case broad run is in progress after the shared primitive changes. Typecheck and formatting pass; final modern/legacy build is being repeated.
 
 Owned diagnostic logs, error-context reports, screenshots and the controlled-dialog red trace are retained in ignored `.local/release1.20-validation/`. After preservation, 76 MiB of superseded owned traces were removed. Shared caches, dependencies, other checkouts and Docker resources of uncertain ownership were untouched.
+
+## Delayed acceptance and asymmetric cutout
+
+A further transport regression held a real successful acceptance response for attempt A, cancelled A through the driver API, reoffered the same order through the dispatcher API, then released A after B was visible. Before the fix B disappeared. Acceptance now dismisses only its response's exact notification event and preserves a newer incoming/active assignment until canonical refresh. The regression passes.
+
+The native Back case also checks short landscape with an asymmetric 72px cutout. Dialog horizontal centering now accounts for unequal safe insets, keeping the close control within usable bounds. Both targeted cases pass. [Enlarged 320px high-price evidence](../evidence/driver-rollout-1.20/incoming-large-price-320.png) confirms wrapping rather than clipping. No physical-device claim is implied.
