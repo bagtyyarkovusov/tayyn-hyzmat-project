@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for new encrypted backups every five minutes
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=5min
+Persistent=true
+Unit=tayyn-backup-relay.service
+
+[Install]
+WantedBy=timers.target

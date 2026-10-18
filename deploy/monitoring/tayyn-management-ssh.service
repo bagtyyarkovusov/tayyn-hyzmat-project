@@ -1,0 +1,14 @@
+[Unit]
+Description=Tayyn key-only management SSH on port 2222
+After=network.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/mkdir -p /run/sshd
+ExecStartPre=/usr/sbin/sshd -t
+ExecStart=/usr/sbin/sshd -D -e -f /etc/ssh/sshd_config -p 2222 -o PidFile=/run/tayyn-management-sshd.pid -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o AuthenticationMethods=publickey -o PermitRootLogin=no -o AllowUsers=ubuntu
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,24 @@
+{
+    admin off
+    auto_https disable_certs
+}
+
+{$DOMAIN} {
+    tls /etc/tayyn/tls/fullchain.pem /etc/tayyn/tls/privkey.pem
+    encode zstd gzip
+
+    # Keep exactly one trusted proxy before Express. Caddy sets forwarding
+    # headers itself; API requests do not pass through the web image's Nginx.
+    handle_path /api/* {
+        reverse_proxy api:4000
+    }
+    handle /socket.io/* {
+        reverse_proxy api:4000
+    }
+    handle /health {
+        reverse_proxy api:4000
+    }
+    handle {
+        reverse_proxy web:8080
+    }
+}

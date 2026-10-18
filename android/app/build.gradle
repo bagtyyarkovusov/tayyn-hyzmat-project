@@ -22,13 +22,15 @@ android {
     namespace "io.openride.driver"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "io.openride.driver"
+        // The public APK has its own Firebase Android registration. Keep the
+        // Java namespace stable; it is independent from installation identity.
+        applicationId "tayyn.hyzmat.production"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // Increment packaged app versions before distributing updates.
         // The active Vue app has no automatic APK updater; see docs/android.md.
-        versionCode 18
-        versionName "1.17"
+        versionCode 19
+        versionName "1.18"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -48,10 +50,11 @@ android {
     }
     buildTypes {
         debug {
-            applicationIdSuffix ".test"
             versionNameSuffix "-test"
             resValue "string", "app_name", "Tayyn Hyzmat Test"
             resValue "string", "title_activity_main", "Tayyn Hyzmat Test"
+            resValue "string", "package_name", "io.openride.driver.test"
+            resValue "string", "custom_url_scheme", "io.openride.driver.test"
         }
         release {
             // R8 code shrinking + obfuscation, and unused-resource removal -
@@ -74,6 +77,14 @@ android {
         variant.outputs.all { output ->
             outputFileName = "TayynHyzmat-${variant.buildType.name}.apk"
         }
+    }
+}
+
+androidComponents {
+    onVariants(selector().withBuildType("debug")) { variant ->
+        // A suffix cannot preserve the legacy test ID after changing the
+        // production ID. Set the complete debug ID before task registration.
+        variant.applicationId.set("io.openride.driver.test")
     }
 }
 

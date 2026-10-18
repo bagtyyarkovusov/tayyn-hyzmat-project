@@ -127,3 +127,7 @@ test-results/
 
 # Local release artifacts and verification output
 /output/
+
+# Python deployment tooling caches
+__pycache__/
+*.py[cod]

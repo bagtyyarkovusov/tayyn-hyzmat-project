@@ -1,0 +1,45 @@
+name: Build offline Ubuntu production bundles
+on:
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RELEASE: vps-${{ github.run_number }}-${{ github.sha }}
+      MAPS_KEY: ${{ vars.VUE_APP_YANDEX_MAPS_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify production tooling
+        run: python3 -m unittest discover -s scripts/tests -p 'test_production*.py'
+      - name: Download signed Ubuntu amd64 dependency closures
+        run: |
+          sudo bash scripts/production/prepare-offline-packages.sh --disposable-builder "$RUNNER_TEMP/packages"
+          sudo bash scripts/production/prepare-offline-packages.sh --disposable-builder "$RUNNER_TEMP/packages-monitor" --monitor
+      - name: Build application images and obtain infrastructure images
+        run: |
+          test -z "$(git status --porcelain)"
+          test -n "$MAPS_KEY"
+          docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$GITHUB_SHA" -t "tayyn-api:$GITHUB_SHA" -f backend/Dockerfile backend
+          docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$GITHUB_SHA" --build-arg "VUE_APP_YANDEX_MAPS_API_KEY=$MAPS_KEY" -t "tayyn-web:$GITHUB_SHA" -f deploy/Dockerfile.web .
+          docker pull --platform linux/amd64 postgres:17-bookworm
+          docker pull --platform linux/amd64 caddy:2.10-alpine
+      - name: Export checksummed app and monitor bundles
+        run: |
+          python3 scripts/production/build-offline-bundle.py --release "$RELEASE" --api "tayyn-api:$GITHUB_SHA" --web "tayyn-web:$GITHUB_SHA" --db postgres:17-bookworm --proxy caddy:2.10-alpine --deb-dir "$RUNNER_TEMP/packages" --monitor-deb-dir "$RUNNER_TEMP/packages-monitor" --output-dir "$RUNNER_TEMP/$RELEASE"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/app-bundle.tar.gz" "$RELEASE"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/monitor-bundle.tar.gz" "$RELEASE-monitor"
+          cd "$RUNNER_TEMP"
+          sha256sum app-bundle.tar.gz monitor-bundle.tar.gz > bundle-archives.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: offline-production-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/app-bundle.tar.gz
+            ${{ runner.temp }}/monitor-bundle.tar.gz
+            ${{ runner.temp }}/bundle-archives.sha256
+          compression-level: 0
+          retention-days: 7

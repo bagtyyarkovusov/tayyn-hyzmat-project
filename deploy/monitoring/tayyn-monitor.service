@@ -1,0 +1,16 @@
+[Unit]
+Description=Independent Tayyn production and backup monitoring
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=tayyn-monitor
+UMask=0077
+ExecStart=/usr/bin/python3 /opt/tayyn/operations.py --config /etc/tayyn/operations.json monitor
+TimeoutStartSec=180
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/tayyn

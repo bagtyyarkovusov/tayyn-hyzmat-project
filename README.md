@@ -14,6 +14,8 @@ pnpm preview:isolated
 
 The preview creates its own synthetic database and prints its loopback URL. Its ignored `.local/browser-context.json` contains actor credentials. Stop it with Ctrl-C to clean up. No Railway access is required. `main` automatically deploys shared Railway, where a supporting developer edits real regions; keep test data and feature work isolated.
 
+Production VPS setup and release gates are documented in [production handoff](docs/production-handoff.md). Railway remains the shared development environment.
+
 Original documentation is preserved intact in `archive/documentation-2026-10-15.tar.gz`, with a SHA-256 manifest. It is historical reference, not current agent instructions.
 
 Derived from [majordomo-consulting/openride](https://github.com/majordomo-consulting/openride). See [LICENSE](LICENSE) for GPL-3.0 terms. shadcn-vue component sources retain their upstream MIT terms; see [third-party notices](docs/third-party-notices.md).

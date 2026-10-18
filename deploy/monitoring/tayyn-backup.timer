@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly Tayyn backup schedule
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=30
+Unit=tayyn-backup.service
+
+[Install]
+WantedBy=timers.target

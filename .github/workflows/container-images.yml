@@ -1,6 +1,11 @@
 name: Publish container images
 on:
   workflow_dispatch:
+    inputs:
+      offline_bundle:
+        description: Build offline Ubuntu artifacts instead of publishing images
+        type: boolean
+        default: false
   push:
     tags: ["v*"]
 permissions:
@@ -8,6 +13,7 @@ permissions:
   packages: write
 jobs:
   publish:
+    if: ${{ !inputs.offline_bundle }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -38,9 +44,15 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
+          # Public browser key; server geocoder credentials never belong in builds.
+          build-args: |
+            VUE_APP_YANDEX_MAPS_API_KEY=${{ vars.VUE_APP_YANDEX_MAPS_API_KEY }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+  offline-bundle:
+    if: ${{ inputs.offline_bundle }}
+    uses: ./.github/workflows/offline-production-bundle.yml

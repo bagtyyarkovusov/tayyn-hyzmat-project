@@ -1,0 +1,3 @@
+# Replace both placeholders. Pin Standard S public IPv4 and insert its SSH public key.
+# Use a dedicated account with password login disabled, shell /bin/sh, no docker group.
+from="REPLACE_MONITOR_IPV4",restrict,command="sudo -n /usr/bin/python3 /opt/tayyn/operations.py --config /etc/tayyn/operations.json serve" ssh-ed25519 REPLACE_MONITOR_PUBLIC_KEY tayyn-monitor
