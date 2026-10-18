@@ -1,232 +1,246 @@
-"""Behavior checks for the stdlib diagnostic; no Docker or network required."""
-
-import argparse
-import contextlib
-import io
-import importlib.util
+"""Readiness CLI reports against synthetic OS, Docker and network boundaries."""
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 
+SCRIPT = Path(__file__).parents[1] / "production-readiness.py"
 
-SPEC = importlib.util.spec_from_file_location("readiness", Path(__file__).parents[1] / "production-readiness.py")
-readiness = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(readiness)
+# All substitutions are OS/network boundaries in the child process, never
+# readiness classes or helpers. Python provider probes inherit the same fixture.
+BOUNDARIES = r'''
+import json, os, platform, socket, ssl, smtplib, urllib.request
+from pathlib import Path
+from types import SimpleNamespace
+settings = json.loads(Path(os.environ["READINESS_FIXTURE"]).read_text())
+platform.system = lambda: "Linux"
+platform.machine = lambda: settings.get("arch", "x86_64")
+platform.freedesktop_os_release = lambda: {"ID": "ubuntu", "VERSION_ID": "24.04"}
+def connection(address, **kwargs):
+    if address[0] in settings.get("failed_hosts", []):
+        raise OSError("synthetic-private-network-error")
+    return SimpleNamespace(close=lambda: None)
+socket.create_connection = connection
+class Context:
+    check_hostname = True
+    verify_mode = ssl.CERT_REQUIRED
+    def wrap_socket(self, sock, **kwargs):
+        return sock
+ssl.create_default_context = Context
+class SMTP:
+    def __init__(self, host, port, **kwargs):
+        connection((host, port))
+        if port == 465:
+            self.verify(kwargs["context"])
+    def verify(self, context):
+        if not context.check_hostname or context.verify_mode != ssl.CERT_REQUIRED:
+            raise ValueError("TLS verification required")
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
+    def ehlo(self): return (250, b"OK")
+    def starttls(self, context):
+        self.verify(context)
+        if settings.get("starttls_failure"):
+            raise ssl.SSLError("synthetic-private-network-error")
+    def login(self, *args): raise AssertionError("readiness must not authenticate")
+    def send_message(self, *args): raise AssertionError("readiness must not send mail")
+smtplib.SMTP = SMTP
+smtplib.SMTP_SSL = SMTP
+class Response:
+    status = settings.get("http_status", 200)
+    headers = {"Content-Type": settings.get("mime", "text/html")}
+    def read(self, limit): return json.dumps({"status": settings.get("health", "ok")}).encode()
+class Opener:
+    def __init__(self, handlers): self.handlers = handlers
+    def open(self, url, **kwargs):
+        if settings.get("redirect"):
+            for handler in self.handlers:
+                handler.redirect_request(None, None, 302, "Found", {}, settings["redirect"])
+        return Response()
+urllib.request.build_opener = lambda *handlers: Opener(handlers)
+'''
 
-
-def args(**overrides):
-    values = dict(config_file=None, project_name="test", compose_file=None,
-                  db_user="tayyn", db_name="tayyn", network=False,
-                  api_url=None, web_url=None, remote_only=False, disk_path="/",
-                  offline=False, email_transport="resend", smtp_host="smtp.gmail.com", smtp_port=465)
-    values.update(overrides)
-    return argparse.Namespace(**values)
+DOCKER = r'''
+import json, os, sys
+from pathlib import Path
+s = json.loads(Path(os.environ["READINESS_FIXTURE"]).read_text())
+a = sys.argv[1:]
+if "config" in a:
+    env = {name: "synthetic-private-value" for name in ["YANDEX_GEOCODER_API_KEY", "YANDEX_GEOCODER_DAILY_LIMIT", "YANDEX_GEOCODER_QUOTA_TIMEZONE", "FIREBASE_SERVICE_ACCOUNT_JSON"] if name != s.get("missing_wiring")}
+    print(json.dumps({"services": {"api": {"environment": env}}}))
+elif "ps" in a:
+    print(json.dumps([{"Service": n, "State": "running", "Health": "healthy", "ID": "a" * 64} for n in ["db", "api", "web", "proxy"] if n != s.get("missing_service")]))
+elif "inspect" in a:
+    print('0 "unless-stopped" {"Type":"local","Config":{}}')
+elif "exec" in a:
+    if s.get("database_failure"):
+        print("synthetic-private-value")
+        sys.exit(1)
+    print("1")
+else:
+    print("27.0")
+'''
 
 
 class ReadinessTests(unittest.TestCase):
-    def run_cli(self, arguments, probe):
-        output = io.StringIO()
-        with patch.object(sys, "argv", ["production-readiness.py", "--json", "--remote-only", "--network", *arguments]), \
-             patch.object(readiness, "run", side_effect=probe), contextlib.redirect_stdout(output):
-            code = readiness.main()
-        return code, json.loads(output.getvalue())
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        (self.root / "sitecustomize.py").write_text(BOUNDARIES)
+        docker = self.root / "docker"
+        docker.write_text("#!" + sys.executable + "\n" + DOCKER)
+        docker.chmod(0o700)
+        self.config = self.root / "app.env"
+        self.config.write_text("\n".join(name + "=synthetic-private-value" for name in [
+            "POSTGRES_PASSWORD", "JWT_ACCESS_SECRET", "JWT_REFRESH_SECRET", "CORS_ORIGIN",
+            "SEED_ADMIN_PHONE", "SEED_ADMIN_PASSWORD", "DOMAIN"]))
+        self.config.chmod(0o600)
 
-    def test_smtp_offline_cli_does_not_require_resend_or_registry_access(self):
-        def probe(command, timeout=6):
-            return (1, "") if command[-1] in ("api.resend.com", "ghcr.io") else (0, "")
-        code, report = self.run_cli(["--offline", "--email-transport", "smtp"], probe)
+    def cli(self, *arguments, settings=None, optimized=False):
+        fixture = self.root / "fixture.json"
+        fixture.write_text(json.dumps(settings or {}))
+        env = {**os.environ, "PYTHONPATH": str(self.root), "PATH": str(self.root),
+               "READINESS_FIXTURE": str(fixture)}
+        command = [sys.executable, *(["-O"] if optimized else []), str(SCRIPT), "--json", *arguments]
+        result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=15)
+        return result, json.loads(result.stdout) if result.stdout else None
+
+    def local(self, settings=None):
+        return self.cli("--config-file", str(self.config), "--disk-path", str(self.root), settings=settings)
+
+    def outcome(self, report, name):
+        return next(row for row in report["results"] if row["name"] == name)
+
+    def test_smtp_offline_does_not_require_resend_or_registry_access(self):
+        result, report = self.cli("--remote-only", "--network", "--offline", "--email-transport", "smtp",
+                                  settings={"failed_hosts": ["api.resend.com", "ghcr.io"]})
         outcomes = {row["name"]: row["status"] for row in report["results"]}
-        self.assertEqual(code, 2)
-        self.assertEqual(report["verdict"], "INCOMPLETE")
+        self.assertEqual(result.returncode, 2)
         self.assertEqual(outcomes["network.smtp.gmail.com"], "PASS")
         self.assertNotIn("network.api.resend.com", outcomes)
         self.assertNotIn("network.ghcr.io", outcomes)
         self.assertFalse(report["production_ready"])
 
-    def test_default_cli_still_requires_resend_and_registry_access(self):
-        def probe(command, timeout=6):
-            return (1, "") if command[-1] in ("api.resend.com", "ghcr.io") else (0, "")
-        code, report = self.run_cli([], probe)
-        outcomes = {row["name"]: row["status"] for row in report["results"]}
-        self.assertEqual(code, 1)
-        self.assertEqual(outcomes["network.api.resend.com"], "FAIL")
-        self.assertEqual(outcomes["network.ghcr.io"], "FAIL")
+    def test_default_requires_resend_and_registry_access(self):
+        result, report = self.cli("--remote-only", "--network",
+                                  settings={"failed_hosts": ["api.resend.com", "ghcr.io"]})
+        self.assertEqual(result.returncode, 1)
+        for name in ["network.api.resend.com", "network.ghcr.io"]:
+            self.assertEqual(self.outcome(report, name)["status"], "FAIL")
 
-    def test_smtp_cli_failure_remains_required(self):
-        def probe(command, timeout=6):
-            return (1, "") if "mail.example.test" in command else (0, "")
-        code, report = self.run_cli(["--offline", "--email-transport", "smtp", "--smtp-host", "mail.example.test", "--smtp-port", "587"], probe)
-        self.assertEqual(code, 1)
-        result = next(row for row in report["results"] if row["name"] == "network.mail.example.test")
-        self.assertEqual(result["status"], "FAIL")
-        self.assertTrue(result["required"])
+    def test_smtp_failure_is_required_and_private(self):
+        result, report = self.cli("--remote-only", "--network", "--email-transport", "smtp",
+                                  "--smtp-host", "mail.example.test", settings={"failed_hosts": ["mail.example.test"]})
+        self.assertEqual(result.returncode, 1)
+        self.assertTrue(self.outcome(report, "network.mail.example.test")["required"])
+        self.assertNotIn("synthetic-private-network-error", result.stdout)
 
-    def test_selected_compose_address_push_wiring_is_reported_without_secret_values(self):
-        secret = "synthetic-firebase-private-value"
-        configuration = {"services": {"api": {"environment": {name: secret for name in readiness.OPTIONAL_CONFIG}}}}
-        check = readiness.Checks(args())
-        with patch.object(readiness, "run", return_value=(0, json.dumps(configuration))):
-            check.compose_wiring(["docker", "compose", "-f", "selected.yaml"])
-        self.assertEqual(check.results[0]["status"], "PASS")
-        self.assertNotIn(secret, json.dumps(check.results))
-        self.assertIn("delivery", check.results[0]["detail"])
+    def test_failed_starttls_cannot_report_smtp_success(self):
+        result, report = self.cli("--remote-only", "--network", "--email-transport", "smtp",
+                                  "--smtp-port", "587", settings={"starttls_failure": True})
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.outcome(report, "network.smtp.gmail.com")["status"], "FAIL")
 
-    def test_missing_compose_push_wiring_warns_even_when_runtime_file_has_credentials(self):
-        configuration = {"services": {"api": {"environment": {name: "synthetic" for name in readiness.OPTIONAL_CONFIG if name != "FIREBASE_SERVICE_ACCOUNT_JSON"}}}}
-        check = readiness.Checks(args())
-        with patch.object(readiness, "run", return_value=(0, json.dumps(configuration))):
-            check.compose_wiring(["docker", "compose", "-f", "selected.yaml"])
-        self.assertEqual(check.results[0]["status"], "WARN")
-        self.assertIn("FIREBASE_SERVICE_ACCOUNT_JSON", check.results[0]["detail"])
+    def test_compose_wiring_is_reported_without_secret_values(self):
+        result, report = self.local()
+        self.assertEqual(self.outcome(report, "config.wiring")["status"], "PASS")
+        self.assertNotIn("synthetic-private-value", result.stdout)
 
-    def test_smtp_probe_refuses_failed_starttls_without_sending_credentials_or_email(self):
-        from unittest.mock import MagicMock
-        import smtplib
-        check = readiness.Checks(args(network=True, email_transport="smtp", smtp_port=587))
-        probes = []
-        def collect(command, timeout=6):
-            if "import smtplib" in command[2]:
-                probes.append(command)
-            return 0, ""
-        with patch.object(readiness, "run", side_effect=collect):
-            check.network()
-        client = MagicMock()
-        client.__enter__.return_value = client
-        client.ehlo.return_value = (250, b"OK")
-        client.starttls.side_effect = smtplib.SMTPException("synthetic TLS failure")
-        with patch("smtplib.SMTP", return_value=client), patch.object(sys, "argv", probes[0][2:]):
-            with self.assertRaises(smtplib.SMTPException):
-                exec(compile(probes[0][2], "smtp-probe", "exec", optimize=2), {})
-        client.login.assert_not_called()
-        client.sendmail.assert_not_called()
-        client.send_message.assert_not_called()
-        context = client.starttls.call_args.kwargs["context"]
-        self.assertTrue(context.check_hostname)
+    def test_missing_push_wiring_warns_despite_runtime_credentials(self):
+        _, report = self.local({"missing_wiring": "FIREBASE_SERVICE_ACCOUNT_JSON"})
+        row = self.outcome(report, "config.wiring")
+        self.assertEqual(row["status"], "WARN")
+        self.assertIn("FIREBASE_SERVICE_ACCOUNT_JSON", row["detail"])
 
-    def test_credentials_and_shell_content_are_never_printed_or_executed(self):
-        with tempfile.TemporaryDirectory() as directory:
-            marker = Path(directory) / "must-not-exist"
-            secret = "private-value-123"
-            config = Path(directory) / "config.env"
-            config.write_text("\n".join(f"{name}={secret}" for name in readiness.REQUIRED_CONFIG)
-                              + f"\nEVIL=$(touch {marker})\n")
-            config.chmod(0o600)
-            check = readiness.Checks(args(config_file=str(config)))
-            check.config()
-            self.assertFalse(marker.exists())
-            self.assertNotIn(secret, json.dumps(check.results))
-            self.assertEqual(next(r for r in check.results if r["name"] == "config.required_names")["status"], "PASS")
+    def test_config_is_never_executed_or_printed(self):
+        marker = self.root / "must-not-exist"
+        with self.config.open("a") as config:
+            config.write("\nEVIL=$(touch " + str(marker) + ")\n")
+        result, report = self.local()
+        self.assertFalse(marker.exists())
+        self.assertEqual(self.outcome(report, "config.required_names")["status"], "PASS")
+        self.assertNotIn("synthetic-private-value", result.stdout)
 
-    def test_bootstrap_credentials_are_required_names(self):
-        with tempfile.TemporaryDirectory() as directory:
-            config = Path(directory) / "config.env"
-            config.write_text("POSTGRES_PASSWORD=hidden\nJWT_ACCESS_SECRET=hidden\nJWT_REFRESH_SECRET=hidden\nCORS_ORIGIN=https://example.test\n")
-            config.chmod(0o600)
-            check = readiness.Checks(args(config_file=str(config)))
-            check.config()
-            result = next(row for row in check.results if row["name"] == "config.required_names")
-            self.assertEqual(result["status"], "FAIL")
-            self.assertIn("SEED_ADMIN_PHONE", result["detail"])
+    def test_bootstrap_credentials_and_domain_are_required(self):
+        for name in ["SEED_ADMIN_PHONE", "SEED_ADMIN_PASSWORD", "DOMAIN"]:
+            with self.subTest(name=name):
+                original = self.config.read_text()
+                self.config.write_text("\n".join(line for line in original.splitlines() if not line.startswith(name + "=")))
+                result, report = self.local()
+                row = self.outcome(report, "config.required_names")
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(row["status"], "FAIL")
+                self.assertIn(name, row["detail"])
+                self.config.write_text(original)
 
-    def test_non_amd64_host_fails_architecture_gate(self):
-        check = readiness.Checks(args())
-        with patch.object(readiness.platform, "system", return_value="Darwin"), \
-             patch.object(readiness.platform, "machine", return_value="aarch64"), \
-             patch.object(readiness.os, "cpu_count", return_value=4), \
-             patch.object(readiness.shutil, "disk_usage", return_value=type("Usage", (), {"free": 25 * 1024**3})()):
-            check.host()
-        result = next(row for row in check.results if row["name"] == "host.arch")
-        self.assertEqual(result["status"], "FAIL")
+    def test_non_amd64_fails_host_gate(self):
+        for arch in ["aarch64", "arm64"]:
+            with self.subTest(arch=arch):
+                result, report = self.local({"arch": arch})
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(self.outcome(report, "host.arch")["status"], "FAIL")
 
     def test_world_readable_credentials_fail(self):
-        with tempfile.TemporaryDirectory() as directory:
-            config = Path(directory) / "config.env"
-            config.write_text("POSTGRES_PASSWORD=hidden")
-            config.chmod(0o644)
-            check = readiness.Checks(args(config_file=str(config)))
-            check.config()
-            self.assertEqual(check.results[0]["status"], "FAIL")
+        self.config.chmod(0o644)
+        result, report = self.local()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.outcome(report, "config.permissions")["status"], "FAIL")
 
     def test_missing_docker_is_reported_without_exception(self):
-        check = readiness.Checks(args())
-        with patch.object(readiness.shutil, "which", return_value=None):
-            check.docker()
-        self.assertEqual(check.results[0]["status"], "FAIL")
+        (self.root / "docker").unlink()
+        result, report = self.local()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.outcome(report, "docker.command")["status"], "FAIL")
 
-    def test_command_timeout_is_bounded_and_output_is_private(self):
-        code, output = readiness.run([sys.executable, "-c", "import time; time.sleep(10)"], timeout=0.05)
-        self.assertEqual((code, output), (-1, ""))
+    def test_missing_https_proxy_fails_despite_other_healthy_services(self):
+        result, report = self.local({"missing_service": "proxy"})
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.outcome(report, "compose.proxy")["status"], "FAIL")
+        self.assertEqual(self.outcome(report, "compose.api")["status"], "PASS")
 
-    def test_unavailable_database_fails_despite_healthy_api_container(self):
-        containers = [{"Service": name, "State": "running", "Health": "healthy", "ID": "a" * 64}
-                      for name in readiness.SERVICES]
-        def fake_run(command, timeout=6):
-            if "ps" in command:
-                return 0, json.dumps(containers)
-            if "inspect" in command:
-                return 0, '0 "unless-stopped" {"Type":"local","Config":{}}'
-            if "exec" in command:
-                return 1, "secret database error"
-            return 0, "27.0"
-        check = readiness.Checks(args())
-        with patch.object(readiness.shutil, "which", return_value="docker"), patch.object(readiness, "run", side_effect=fake_run):
-            check.docker()
-        outcomes = {row["name"]: row["status"] for row in check.results}
-        self.assertEqual(outcomes["compose.api"], "PASS")
-        self.assertEqual(outcomes["database.query"], "FAIL")
-        self.assertNotIn("secret database error", json.dumps(check.results))
+    def test_unavailable_database_fails_despite_healthy_api(self):
+        result, report = self.local({"database_failure": True})
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.outcome(report, "compose.api")["status"], "PASS")
+        self.assertEqual(self.outcome(report, "database.query")["status"], "FAIL")
+        self.assertNotIn("synthetic-private-value", result.stdout)
 
-    def test_remote_success_does_not_claim_host_readiness(self):
-        check = readiness.Checks(args(remote_only=True, network=True, api_url="https://api.example.test", web_url="https://web.example.test"))
-        with patch.object(readiness, "run", return_value=(0, "")):
-            report, code = check.execute()
-        self.assertEqual(code, 2)
-        self.assertEqual(report["summary_exit"], 2)
-        self.assertFalse(report["production_ready"])
+    def test_remote_success_never_claims_host_readiness(self):
+        result, report = self.cli("--remote-only", "--network", "--api-url", "https://api.example.test", "--web-url", "https://web.example.test")
+        self.assertEqual(result.returncode, 2)
         self.assertEqual(report["verdict"], "INCOMPLETE")
+        self.assertFalse(report["production_ready"])
         self.assertIn("this machine", report["scope"])
 
-    def endpoint_probes(self):
-        check = readiness.Checks(args(network=True, web_url="https://web.example.test"))
-        probes = []
-        def collect(command, timeout=6):
-            if "urllib.request" in command[2]:
-                probes.append(command[2])
-            return 0, ""
-        with patch.object(readiness, "run", side_effect=collect):
-            check.network()
-        return probes
+    def test_endpoint_redirects_never_establish_readiness(self):
+        for destination in ["http://unsafe.test/", "https://other.test/"]:
+            with self.subTest(destination=destination):
+                result, report = self.cli("--remote-only", "--network", "--web-url", "https://web.example.test", settings={"redirect": destination})
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(self.outcome(report, "endpoint.web")["status"], "FAIL")
 
-    def test_endpoint_probe_refuses_https_downgrade_and_cross_origin_redirects(self):
-        probes = self.endpoint_probes()
-        namespace = {}
-        # Stop before any HTTP, retaining the actual redirect handler from the child code.
-        with patch("urllib.request.build_opener", side_effect=RuntimeError("stop")):
-            with self.assertRaises(RuntimeError):
-                exec(probes[0], namespace)
-        for destination in ("http://unsafe.test/", "https://other.test/"):
-            with self.assertRaises(ValueError):
-                namespace["NoRedirect"]().redirect_request(None, None, 302, "Found", {}, destination)
+    def test_optimized_python_rejects_bad_endpoint_responses(self):
+        for settings in [{"http_status": 503}, {"mime": "application/json"}]:
+            with self.subTest(settings=settings):
+                result, report = self.cli("--remote-only", "--network", "--web-url", "https://web.example.test", settings=settings, optimized=True)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(self.outcome(report, "endpoint.web")["status"], "FAIL")
 
-    def test_optimized_python_still_rejects_bad_endpoint(self):
-        from unittest.mock import MagicMock
-        code = self.endpoint_probes()[0]
-        for status, content_type in ((503, "text/html"), (200, "application/json")):
-            response = MagicMock(status=status, headers={"Content-Type": content_type})
-            opener = MagicMock()
-            opener.open.return_value = response
-            with patch("urllib.request.build_opener", return_value=opener):
-                with self.assertRaises(ValueError):
-                    exec(compile(code, "probe", "exec", optimize=2), {})
+    def test_api_requires_ok_health_body(self):
+        result, report = self.cli("--remote-only", "--network", "--api-url", "https://api.example.test", settings={"health": "unavailable"})
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.outcome(report, "endpoint.api")["status"], "FAIL")
 
     def test_url_rejects_credentials_or_insecure_scheme(self):
-        for value in ("http://example.test", "https://user:password@example.test", "https://example.test/?key=hidden",
-                      "https://[", "https://example.test:invalid", "https://example.test/ bad"):
-            with self.assertRaises(argparse.ArgumentTypeError):
-                readiness.valid_url(value)
+        for value in ["http://example.test", "https://user:password@example.test", "https://example.test/?key=hidden", "https://[", "https://example.test:invalid", "https://example.test/ bad"]:
+            with self.subTest(value=value):
+                result, _ = self.cli("--remote-only", "--api-url", value)
+                self.assertEqual(result.returncode, 2)
+                self.assertNotIn("Traceback", result.stderr)
 
 
 if __name__ == "__main__":

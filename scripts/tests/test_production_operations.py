@@ -1,6 +1,11 @@
-"""Behavior tests for production scripts; no shared environments or actual mail."""
-import importlib.util
-import io
+"""Public operations CLI tests with local files and substituted OS/provider boundaries.
+
+No production module is imported. The child bootstrap replaces only stdlib clock,
+disk, HTTPS/certificate and SMTP boundaries; synthetic executables replace SSH,
+Docker and age. Real encryption/database restore is covered by the opt-in drill.
+"""
+import datetime as dt
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -8,192 +13,296 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch, MagicMock
 
 SCRIPT = Path(__file__).parents[1] / "production" / "operations.py"
-SPEC = importlib.util.spec_from_file_location("operations", SCRIPT)
-ops = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(ops)
+START = int(dt.datetime(2026, 10, 17, 4, tzinfo=dt.timezone.utc).timestamp())
+
+# Execute the unmodified CLI in its own process. Each fake is an external
+# boundary, and rejects unexpected destinations instead of opening a network.
+BOOTSTRAP = r'''
+import collections, datetime, json, os, runpy, shutil, smtplib, socket, ssl, sys, time, urllib.request
+from pathlib import Path
+root = Path(os.environ["OPERATIONS_FIXTURE"])
+control = json.loads((root / "control.json").read_text())
+time.time = lambda: control["now"]
+class Clock(datetime.datetime):
+    @classmethod
+    def now(cls, tz=None): return cls.fromtimestamp(control["now"], tz)
+datetime.datetime = Clock
+shutil.disk_usage = lambda path: collections.namedtuple("usage", "total used free")(100, 50, 50)
+def record(value):
+    with (root / "smtp.jsonl").open("a") as stream:
+        stream.write(json.dumps(value) + "\n")
+def verified(context):
+    if not context.check_hostname or context.verify_mode != ssl.CERT_REQUIRED:
+        raise ValueError("Unverified TLS context")
+class Connection:
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
+    def getpeercert(self): return {"notAfter": "Jan 15 00:00:00 2027 GMT"}
+def connect(address, **kwargs):
+    if address != ("synthetic.test", 443): raise OSError("Unexpected destination")
+    return Connection()
+socket.create_connection = connect
+def wrap(context, raw, server_hostname):
+    verified(context)
+    if server_hostname != "synthetic.test": raise OSError("Unexpected TLS host")
+    return Connection()
+ssl.SSLContext.wrap_socket = wrap
+class Response(Connection):
+    status = 200
+    def __init__(self, url):
+        self.url = url
+        self.headers = {"Content-Type": "application/json" if url.endswith("/health") else "text/html"}
+    def read(self, limit):
+        if "/socket.io/" in self.url: return b'0{"sid":"synthetic","upgrades":["websocket"]}'
+        if self.url.endswith("/health"):
+            return b'{"error":"unavailable"}' if control.get("bad_health") else b'{"status":"ok"}'
+        return b"<html>synthetic dashboard</html>"
+class Opener:
+    def open(self, url, **kwargs):
+        if not isinstance(url, str) or not url.startswith("https://synthetic.test/"):
+            raise OSError("Unexpected HTTP destination")
+        return Response(url)
+urllib.request.build_opener = lambda *args: Opener()
+class SMTP(Connection):
+    def __init__(self, host, port, timeout, context=None):
+        if host != "smtp.synthetic.test": raise OSError("Unexpected SMTP host")
+        self.secure = context is not None
+        if context is not None: verified(context)
+        record({"stage": "connect", "port": port, "verified_tls": self.secure})
+    def ehlo(self): return 250, b"OK"
+    def starttls(self, context):
+        verified(context)
+        record({"stage": "starttls", "verified_tls": True})
+        if control.get("smtp_failure") == "starttls":
+            raise ssl.SSLError("synthetic-private-provider-response")
+        self.secure = True
+    def login(self, username, password):
+        if not self.secure: raise ValueError("Credentials before TLS")
+        record({"stage": "authenticated"})
+    def send_message(self, message, **kwargs):
+        if not self.secure: raise ValueError("Message before TLS")
+        record({"stage": "message", "to": message["To"], "subject": message["Subject"],
+                "id": message["Message-ID"], "body": message.get_content()})
+        if control.get("smtp_failure") == "reject": return {"operator@synthetic.test": (550, b"synthetic-private-provider-response")}
+        if control.get("smtp_failure") == "disconnect": raise OSError("synthetic-private-provider-response")
+        return {}
+smtplib.SMTP_SSL = SMTP
+smtplib.SMTP = SMTP
+script = sys.argv.pop(1)
+runpy.run_path(script, run_name="__main__")
+'''
+
+SSH = r'''
+import json, os, sys
+from pathlib import Path
+root = Path(os.environ["OPERATIONS_FIXTURE"])
+control = json.loads((root / "control.json").read_text())
+command = sys.argv[-1]
+if command == "facts":
+    print(json.dumps({"checks": {"database": not control.get("database_down"), "containers": True,
+        "disk": True, "backup_fresh": True}, "generated_at": control["now"],
+        "disk_percent": 75 if control.get("warning") else 50, "restarts": {}}))
+elif command == "list": print((root / "inventory.json").read_text())
+elif command.startswith("fetch "): sys.stdout.buffer.write((root / "remote.age").read_bytes())
+else: sys.exit(9)
+'''
 
 
-class NotificationTests(unittest.TestCase):
-    def test_critical_schedule_and_recovery(self):
-        state = {"installation_id": "test"}
-        for instant, expected in [(1000, True), (1299, False), (1300, True), (1899, False), (1900, True), (3699, False), (3700, True)]:
-            notice = ops.notification(state, ["database"], [], instant, "2026-10-17", True)
-            self.assertEqual(notice is not None, expected)
-            if notice:
-                state["incident"]["sent"] += 1
-                state["incident"]["last_sent"] = instant
-        recovery = ops.notification(state, [], [], 3800, "2026-10-17", True)
-        self.assertEqual(recovery[3], "recovery")
+class OperationsCliTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.backups = self.root / "backups"
+        self.backups.mkdir()
+        self.state = self.root / "state"
+        self.state.mkdir()
+        self.control = {"now": START}
+        self.config = {"compose_dir": str(self.root), "compose_env": str(self.root / "app.env"),
+                       "project": "isolated-synthetic", "backup_dir": str(self.backups),
+                       "state_dir": str(self.state), "age_recipient": "age1" + "a" * 58,
+                       "public_url": "https://synthetic.test", "app_ssh_target": "test@synthetic.test",
+                       "ssh_key": "unused", "ssh_known_hosts": "unused",
+                       "secrets_file": str(self.root / "secrets.json")}
+        self.secrets = {"email_transport": "smtp", "smtp_host": "smtp.synthetic.test", "smtp_port": 465,
+                        "smtp_username": "alerts@synthetic.test", "smtp_password": "synthetic-app-password",
+                        "smtp_from": "Tayyn Hyzmat <alerts@synthetic.test>", "alert_email": "operator@synthetic.test"}
+        (self.root / "app.env").write_text("")
+        self.executable("ssh", SSH)
+        self.executable("docker", 'import os,sys\nfrom pathlib import Path\nroot=Path(os.environ["OPERATIONS_FIXTURE"])\n(root/"database-touched").write_text("yes")\nprint("synthetic custom dump payload")\nsys.exit(int(os.environ.get("DUMP_FAILURE", "0")))\n')
+        self.executable("age", 'import os,sys\nfrom pathlib import Path\n(Path(os.environ["OPERATIONS_FIXTURE"])/"identity-opened").write_text("yes")\nsys.stdout.buffer.write(b"age-encryption-header" + b"0"*100 + sys.stdin.buffer.read())\n')
 
-    def test_normal_never_sent_with_warning_or_before_checks(self):
-        state = {"installation_id": "test"}
-        self.assertIsNone(ops.notification(state, [], ["disk >=70%"], 1, "2026-10-17", False))
-        warning = ops.notification(state, [], ["disk >=70%"], 1, "2026-10-17", True)
-        self.assertIn("attention", warning[0])
-        self.assertNotIn("normal", warning[0])
-        initial = ops.notification(state, [], [], 1, "2026-10-17", False)
-        self.assertEqual(initial[3], "initial")
-        state.update(initial_sent=True, daily_day="2026-10-17")
-        self.assertIsNone(ops.notification(state, [], [], 2, "2026-10-17", True))
-        self.assertEqual(ops.notification(state, [], [], 3, "2026-10-18", True)[3], "daily")
+    def executable(self, name, body):
+        path = self.root / name
+        path.write_text(f"#!{sys.executable}\n" + body)
+        path.chmod(0o700)
 
+    def private_file(self, name, value):
+        path = self.root / name
+        path.write_text(json.dumps(value))
+        path.chmod(0o600)
+        return path
 
-class EmailTransportTests(unittest.TestCase):
-    def smtp_secrets(self):
-        return {"email_transport": "smtp", "smtp_host": "smtp.synthetic.test", "smtp_port": 465,
-                "smtp_username": "alerts@synthetic.test", "smtp_password": "synthetic-app-password",
-                "smtp_from": "Tayyn Hyzmat <alerts@synthetic.test>", "alert_email": "operator@synthetic.test"}
+    def cli(self, *arguments, **environment):
+        self.private_file("control.json", self.control)
+        config_path = self.private_file("operations.json", self.config)
+        self.private_file("secrets.json", self.secrets)
+        result = subprocess.run([sys.executable, "-c", BOOTSTRAP, str(SCRIPT), "--config", str(config_path), *arguments],
+                                env={**os.environ, "PATH": str(self.root) + os.pathsep + os.environ["PATH"],
+                                     "OPERATIONS_FIXTURE": str(self.root), **environment},
+                                text=True, capture_output=True, timeout=10)
+        for private in ("synthetic-app-password", "synthetic-private-provider-response"):
+            self.assertNotIn(private, result.stdout + result.stderr)
+        return result
 
-    def test_smtp_sends_report_with_stable_message_identity_over_verified_tls(self):
-        secrets = self.smtp_secrets()
-        client = MagicMock()
-        client.send_message.return_value = {}
-        transport = MagicMock()
-        transport.return_value.__enter__.return_value = client
-        with patch.object(ops, "private_json", return_value=secrets), patch.object(ops.smtplib, "SMTP_SSL", transport):
-            ops.send_email({"secrets_file": "unused"}, "Daily normal", "All checks pass", "same-event")
-            first = client.send_message.call_args.args[0]
-            ops.send_email({"secrets_file": "unused"}, "Daily normal", "All checks pass", "same-event")
-            second = client.send_message.call_args.args[0]
-        self.assertEqual(first["To"], "operator@synthetic.test")
-        self.assertEqual(first["Subject"], "Tayyn Hyzmat: Daily normal")
-        self.assertEqual(first.get_content().strip(), "All checks pass")
-        self.assertEqual(first["Message-ID"], second["Message-ID"])
-        context = transport.call_args.kwargs["context"]
-        self.assertTrue(context.check_hostname)
-        self.assertEqual(context.verify_mode, ops.ssl.CERT_REQUIRED)
+    def monitor(self, instant=START, **control):
+        self.control.update(now=instant, **control)
+        stamp = dt.datetime.fromtimestamp(instant, dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        (self.backups / f"tayyn-{stamp}-12345678.dump.age").write_bytes(b"synthetic ciphertext")
+        self.private_file("state/relay.json", {"success_at": instant})
+        result = self.cli("monitor")
+        return result, json.loads(result.stdout)
 
-    def test_smtp_recipient_rejection_is_not_success(self):
-        transport = MagicMock()
-        transport.return_value.__enter__.return_value.send_message.return_value = {"operator@synthetic.test": (550, b"rejected")}
-        with patch.object(ops, "private_json", return_value=self.smtp_secrets()), patch.object(ops.smtplib, "SMTP_SSL", transport):
-            with self.assertRaises(RuntimeError):
-                ops.send_email({"secrets_file": "unused"}, "Critical", "Database down", "incident")
+    def smtp_events(self):
+        path = self.root / "smtp.jsonl"
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    def messages(self):
+        return [event for event in self.smtp_events() if event["stage"] == "message"]
+
+    def test_critical_cadence_and_recovery_survive_separate_cli_runs(self):
+        for offset, expected in [(0, "incident"), (299, "none"), (300, "incident"),
+                                 (899, "none"), (900, "incident"), (2699, "none"), (2700, "incident")]:
+            with self.subTest(offset=offset):
+                result, report = self.monitor(START + offset, database_down=True)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(report["email"], expected)
+                self.assertIn("database", report["failures"])
+        self.assertEqual([message["subject"] for message in self.messages()],
+                         ["Tayyn Hyzmat: CRITICAL: production checks failing"] * 4)
+        result, report = self.monitor(START + 2800, database_down=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(report["email"], "recovery")
+        self.assertEqual(self.messages()[-1]["subject"], "Tayyn Hyzmat: Recovered")
+
+    def test_initial_and_daily_reports_persist_without_duplicate_launch_mail(self):
+        result, report = self.monitor()
+        self.assertEqual((result.returncode, report["email"]), (0, "initial"))
+        self.assertEqual(self.monitor(START + 60)[1]["email"], "none")
+        self.assertEqual(self.monitor(START + 86400)[1]["email"], "daily")
+        self.assertEqual([message["subject"] for message in self.messages()],
+                         ["Tayyn Hyzmat: Initial production checks passed", "Tayyn Hyzmat: Daily health report: normal"])
+        self.assertTrue(json.loads((self.state / "monitor.json").read_text())["initial_sent"])
+
+    def test_warning_waits_for_daily_hour_and_suppresses_normal_email(self):
+        result, report = self.monitor(START - 3600, warning=True)
+        self.assertEqual((result.returncode, report["email"], report["healthy"]), (0, "none", False))
+        self.assertEqual(self.messages(), [])
+        result, report = self.monitor(warning=True)
+        self.assertEqual((result.returncode, report["email"]), (0, "daily"))
+        self.assertEqual(self.messages()[0]["subject"], "Tayyn Hyzmat: Daily health report: attention needed")
+        self.assertIn("app disk >=70%", self.messages()[0]["body"])
+
+    def test_smtp_acceptance_preserves_recipient_body_and_verified_tls(self):
+        result, report = self.monitor()
+        self.assertEqual((result.returncode, report["email"]), (0, "initial"))
+        message = self.messages()[0]
+        self.assertEqual(message["to"], "operator@synthetic.test")
+        self.assertIn("Application, database, disk, backup relay and outbound checks passed", message["body"])
+        self.assertIn({"stage": "connect", "port": 465, "verified_tls": True}, self.smtp_events())
+
+    def test_failed_email_retries_same_identity_without_recording_success(self):
+        for failure in ("reject", "disconnect"):
+            with self.subTest(failure=failure):
+                for offset in (0, 60):
+                    result, report = self.monitor(START + offset, database_down=True, smtp_failure=failure)
+                    self.assertEqual((result.returncode, report["email"]), (2, "failed; retry next timer"))
+                self.assertEqual(self.messages()[-2]["id"], self.messages()[-1]["id"])
+                self.assertEqual(json.loads((self.state / "monitor.json").read_text())["incident"]["sent"], 0)
+        result, report = self.monitor(START + 120, database_down=True, smtp_failure=None)
+        self.assertEqual((result.returncode, report["email"]), (1, "incident"))
+        self.assertEqual(self.messages()[-1]["id"], self.messages()[0]["id"])
 
     def test_smtp_refuses_unencrypted_port(self):
-        secrets = self.smtp_secrets()
-        secrets["smtp_port"] = 25
-        with patch.object(ops, "private_json", return_value=secrets):
-            with self.assertRaises(ValueError):
-                ops.send_email({"secrets_file": "unused"}, "Critical", "Database down", "incident")
+        self.secrets["smtp_port"] = 25
+        result, report = self.monitor()
+        self.assertEqual((result.returncode, report["email"]), (2, "failed; retry next timer"))
+        self.assertEqual(self.smtp_events(), [])
+        self.assertNotIn("initial_sent", json.loads((self.state / "monitor.json").read_text()))
 
     def test_failed_starttls_never_sends_credentials_or_message(self):
-        secrets = self.smtp_secrets()
-        secrets["smtp_port"] = 587
-        client = MagicMock()
-        client.starttls.side_effect = ops.ssl.SSLError("Synthetic untrusted certificate")
-        transport = MagicMock()
-        transport.return_value.__enter__.return_value = client
-        with patch.object(ops, "private_json", return_value=secrets), patch.object(ops.smtplib, "SMTP", transport):
-            with self.assertRaises(ops.ssl.SSLError):
-                ops.send_email({"secrets_file": "unused"}, "Critical", "Database down", "incident")
-        client.login.assert_not_called()
-        client.send_message.assert_not_called()
+        self.secrets["smtp_port"] = 587
+        result, report = self.monitor(smtp_failure="starttls")
+        self.assertEqual((result.returncode, report["email"]), (2, "failed; retry next timer"))
+        self.assertEqual(self.smtp_events(), [{"stage": "connect", "port": 587, "verified_tls": False},
+                                              {"stage": "starttls", "verified_tls": True}])
 
+    def test_health_requires_ok_json_not_just_mime(self):
+        result, report = self.monitor(bad_health=True)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("API HTTPS", report["failures"])
+        self.assertIn("API HTTPS", self.messages()[0]["body"])
 
-class OperationsTests(unittest.TestCase):
-    def fixture(self, directory):
-        root = Path(directory)
-        config = {"compose_dir": str(root), "compose_env": str(root / "app.env"),
-                  "project": "isolated-synthetic", "backup_dir": str(root / "backups"),
-                  "state_dir": str(root / "state"), "age_recipient": "age1" + "a" * 58}
-        root.joinpath("app.env").write_text("")
-        return config
-
-    def test_public_backup_command_streams_and_discards_failed_dump(self):
-        for failed in [False, True]:
-            with self.subTest(failed=failed), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                config = self.fixture(directory)
-                # Synthetic executables exercise the CLI pipe/error paths, not the shared database.
-                root.joinpath("docker").write_text("#!/bin/sh\nprintf 'synthetic custom dump payload'\nexit " + ("4" if failed else "0") + "\n")
-                root.joinpath("age").write_text("#!/bin/sh\nprintf 'age-encryption-header%0100d' 0\ncat\n")
-                for name in ["docker", "age"]:
-                    root.joinpath(name).chmod(0o700)
-                path = root / "operations.json"
-                path.write_text(json.dumps(config))
-                path.chmod(0o600)
-                env = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"]}
-                result = subprocess.run([sys.executable, str(SCRIPT), "--config", str(path), "backup"], env=env, capture_output=True, timeout=5)
-                self.assertEqual(result.returncode, 2 if failed else 0)
-                self.assertEqual(len(ops.archives(config["backup_dir"])), 0 if failed else 1)
-                self.assertFalse(list(Path(config["backup_dir"]).glob("*.partial")))
-                self.assertFalse(list(root.glob("*.dump")))
+    def test_backup_streams_and_discards_failed_dump(self):
+        result = self.cli("backup")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        archive = self.backups / json.loads(result.stdout)["backup"]
+        self.assertTrue(archive.read_bytes().endswith(b"synthetic custom dump payload\n"))
+        archive.unlink()
+        result = self.cli("backup", DUMP_FAILURE="4")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(list(self.backups.iterdir()), [])
+        self.assertFalse(list(self.root.glob("*.dump")))
 
     def test_forced_ssh_command_cannot_traverse_or_execute(self):
-        for command in ["fetch ../../etc/shadow", "list; touch /tmp/bad", "fetch tayyn-invalid.dump.age", "bash"]:
-            with self.subTest(command=command), patch.dict(os.environ, {"SSH_ORIGINAL_COMMAND": command}):
-                with self.assertRaises(ValueError):
-                    ops.serve({"backup_dir": "/unused"})
+        marker = self.root / "must-not-exist"
+        for command in ("fetch ../../etc/shadow", f"list; touch {marker}", "fetch tayyn-invalid.dump.age", "bash"):
+            with self.subTest(command=command):
+                result = self.cli("serve", SSH_ORIGINAL_COMMAND=command)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, "")
+        self.assertFalse(marker.exists())
 
     def test_restore_refuses_production_before_opening_identity_or_database(self):
-        with patch.object(ops, "run") as runner:
-            with self.assertRaises(ValueError):
-                ops.restore({"project": "tayyn-production"}, MagicMock())
-            runner.assert_not_called()
-
-    def test_failed_email_does_not_record_success_and_retries_same_event(self):
-        with tempfile.TemporaryDirectory() as directory:
-            config = self.fixture(directory)
-            config.update(public_url="https://synthetic.test", app_ssh_target="test@synthetic.test")
-            Path(config["backup_dir"]).mkdir()
-            archive = Path(config["backup_dir"]) / "tayyn-20261017T120000Z-12345678.dump.age"
-            archive.write_bytes(b"synthetic ciphertext")
-            remote = {"checks": {name: False for name in ["database", "containers", "disk", "backup_fresh"]},
-                      "generated_at": 1792238400, "disk_percent": 50, "restarts": {}}
-            sent = []
-            def mail(*arguments):
-                sent.append(arguments[-1])
-                raise OSError("secret API response")
-            with patch.object(ops, "ssh", return_value=MagicMock(stdout=json.dumps(remote).encode())), patch.object(ops, "endpoint", return_value=True), patch.object(ops, "socketio_probe", return_value=True), patch.object(ops, "certificate_days", return_value=90), patch.object(ops, "send_email", side_effect=mail), patch.object(ops.time, "time", return_value=1792238400), patch("sys.stdout", new_callable=io.StringIO) as output:
-                self.assertEqual(ops.monitor(config), 2)
-                self.assertEqual(ops.monitor(config), 2)
-                self.assertNotIn("secret API response", output.getvalue())
-            self.assertEqual(sent[0], sent[1])
-            state = json.loads((Path(config["state_dir"]) / "monitor.json").read_text())
-            self.assertEqual(state["incident"]["sent"], 0)
+        self.config.update(project="tayyn-production", isolated_restore=True)
+        result = self.cli("restore", "--archive", str(self.root / "missing.age"),
+                          "--identity", str(self.root / "missing.key"), "--database", "tayyn_restore_test")
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse((self.root / "database-touched").exists())
+        self.assertFalse((self.root / "identity-opened").exists())
 
     def test_relay_rejects_corruption_without_replacing_good_copy(self):
-        with tempfile.TemporaryDirectory() as directory:
-            config = self.fixture(directory)
-            config.update(app_ssh_target="test@synthetic.test", ssh_key="unused", ssh_known_hosts="unused")
-            name = "tayyn-20261017T120000Z-12345678.dump.age"
-            inventory = [{"name": name, "sha256": "a" * 64, "size": 8}]
-            def remote(_config, command, **kwargs):
-                if command == "list":
-                    return MagicMock(stdout=json.dumps(inventory).encode())
-                kwargs["stdout"].write(b"bad data")
-                return MagicMock()
-            with patch.object(ops, "ssh", side_effect=remote):
-                with self.assertRaises(ValueError):
-                    ops.relay(config)
-            self.assertEqual(ops.archives(config["backup_dir"]), [])
-            self.assertFalse(list(Path(config["backup_dir"]).glob("*.partial")))
+        name = "tayyn-20261017T040000Z-12345678.dump.age"
+        existing = self.backups / name
+        existing.write_bytes(b"last good copy")
+        payload = b"expected new copy"
+        self.private_file("inventory.json", [{"name": name, "sha256": hashlib.sha256(payload).hexdigest(), "size": len(payload)}])
+        (self.root / "remote.age").write_bytes(b"corrupted transfer")
+        result = self.cli("relay")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(existing.read_bytes(), b"last good copy")
+        self.assertFalse(list(self.backups.glob("*.partial")))
+        self.assertFalse((self.state / "relay.json").exists())
 
-    def test_public_health_requires_ok_json_not_just_mime(self):
-        response = MagicMock(status=200, headers={"Content-Type": "application/json"})
-        response.read.return_value = b'{"error":"unavailable"}'
-        response.__enter__.return_value = response
-        opener = MagicMock()
-        opener.open.return_value = response
-        with patch.object(ops.urllib.request, "build_opener", return_value=opener):
-            self.assertFalse(ops.endpoint("https://synthetic.test/health", "application/json"))
-
-    def test_retention_preserves_hourly_and_daily_recovery_points(self):
-        with tempfile.TemporaryDirectory() as directory:
-            import datetime as dt
-            end = dt.datetime(2026, 10, 17, 12, tzinfo=dt.timezone.utc)
-            for hour in range(24 * 17):
-                instant = end - dt.timedelta(hours=hour)
-                Path(directory, "tayyn-" + instant.strftime("%Y%m%dT%H%M%SZ") + "-12345678.dump.age").write_bytes(b"cipher")
-            ops.retention(directory, end.timestamp())
-            files = ops.archives(directory)
-            self.assertLessEqual(len(files), 38)
-            self.assertGreaterEqual(len(files), 36)
-            self.assertEqual(len({p.name[6:14] for p in files}), 14)
+    def test_backup_retention_preserves_hourly_and_daily_recovery_points(self):
+        end = dt.datetime.fromtimestamp(START, dt.timezone.utc)
+        expected = set()
+        for hour in range(24 * 17):
+            instant = end - dt.timedelta(hours=hour)
+            name = "tayyn-" + instant.strftime("%Y%m%dT%H%M%SZ") + "-12345678.dump.age"
+            (self.backups / name).write_bytes(b"cipher")
+            # The new archive takes one of 24 hourly positions.
+            if hour < 23:
+                expected.add(name)
+        # With an October 17 04:00 UTC backup, the daily recovery points
+        # outside that hourly window are October 4 through 15 at 23:00 UTC.
+        expected.update(f"tayyn-202610{day:02d}T230000Z-12345678.dump.age" for day in range(4, 16))
+        result = self.cli("backup")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        new_name = json.loads(result.stdout)["backup"]
+        self.assertEqual({path.name for path in self.backups.iterdir()}, expected | {new_name})
 
 
 if __name__ == "__main__":
