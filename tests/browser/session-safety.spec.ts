@@ -88,6 +88,7 @@ test("an old message request returning 401 cannot send as or sign out a replacem
     .getByRole("button", { name: "Отправить сообщение", exact: true })
     .click();
   await seen;
+  await page.getByRole("link", { name: "Профиль", exact: true }).click();
   await page.getByRole("button", { name: "Выйти", exact: true }).click();
   await expect(page).toHaveURL(/driverLogin/);
   await login(page, "60000102");

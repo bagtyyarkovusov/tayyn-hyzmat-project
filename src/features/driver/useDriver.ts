@@ -1,7 +1,7 @@
 import { onMounted, onUnmounted, reactive, readonly, watch } from "vue";
 import { driverApi, errorMessage, apiBase, tokens } from "@/shared/api";
 import { driverSession } from "@/features/auth/session";
-import { closeOrderAlerts, notifyOrder } from "./alerts";
+import { closeOrderAlerts, notifyOrder, reconcileOrderAlerts } from "./alerts";
 import type { Balance, District, DriverProfile, Order } from "./model";
 import {
   nativeAndroid,
@@ -22,6 +22,7 @@ const state = reactive({
   actionAttempt: 0,
   addressLookupRequest: 0,
   notice: "",
+  noticeEventId: "",
   gpsError: "",
   gpsPending: false,
   gpsReady: false,
@@ -37,7 +38,16 @@ const state = reactive({
   clock: Date.now(),
 });
 export const driverState = readonly(state);
+const consumedNotices = new Set<string>();
+export function consumeDriverNotice(eventId: string) {
+  if (!eventId || consumedNotices.has(eventId)) return false;
+  consumedNotices.add(eventId);
+  if (consumedNotices.size > 100)
+    consumedNotices.delete(consumedNotices.values().next().value as string);
+  return true;
+}
 let users = 0;
+let localGpsUsers = 0;
 let refreshVersion = 0;
 let districtSnapshotVersion = 0;
 let sessionGeneration = 0;
@@ -62,14 +72,48 @@ let offerVersion = 0;
 // A close event can overtake creation while its delivery awaits room sync.
 // Keep only a short session-local memory, longer than the public popup window.
 const closedPublicOffers = new Map<string, number>();
+function persistClosedOffers() {
+  try {
+    sessionStorage.setItem(
+      `tayyn.closed-offers.${driverSession.state.user?.id}`,
+      JSON.stringify([...closedPublicOffers]),
+    );
+  } catch {
+    /* Memory still deduplicates when storage is unavailable. */
+  }
+}
+function restoreClosedOffers() {
+  try {
+    const saved: unknown = JSON.parse(
+      sessionStorage.getItem(
+        `tayyn.closed-offers.${driverSession.state.user?.id}`,
+      ) ?? "[]",
+    );
+    if (Array.isArray(saved))
+      for (const entry of saved) {
+        if (
+          Array.isArray(entry) &&
+          typeof entry[0] === "string" &&
+          typeof entry[1] === "number" &&
+          entry[1] > Date.now() &&
+          entry[1] <= Date.now() + 60_000
+        )
+          closedPublicOffers.set(entry[0], entry[1]);
+      }
+  } catch {
+    /* A malformed or unavailable cache does not block orders. */
+  }
+}
+restoreClosedOffers();
 function pruneClosedPublicOffers() {
-  const now = performance.now();
+  const now = Date.now();
   for (const [id, until] of closedPublicOffers)
     if (until <= now) closedPublicOffers.delete(id);
 }
-function rememberClosedPublicOffer(orderId: string) {
+function rememberClosedPublicOffer(eventId: string) {
   pruneClosedPublicOffers();
-  closedPublicOffers.set(orderId, performance.now() + 60_000);
+  closedPublicOffers.set(eventId, Date.now() + 60_000);
+  persistClosedOffers();
 }
 const GPS_MAX_AGE_MS = 60000;
 const LOCATION_SYNC_FAILURE_GRACE_MS = 60000;
@@ -169,19 +213,45 @@ function markLocationSyncFailure(message: string) {
   )
     void forceOffline("Связь с диспетчером потеряна. Вы вышли с линии.", true);
 }
-function dismissIncoming() {
+function dismissIncoming(eventId = state.incoming?.notificationEventId) {
+  if (
+    !state.incoming ||
+    !eventId ||
+    state.incoming.notificationEventId !== eventId
+  )
+    return;
+  rememberClosedPublicOffer(eventId);
   offerVersion++;
   if (offerTimer !== undefined) clearInterval(offerTimer);
   offerTimer = undefined;
   state.offerSeconds = 0;
   // Empty queue reconciliation must not pause a user-initiated sound unlock.
   // Only an actual incoming order owns the order-alert playback.
-  if (state.incoming) closeOrderAlerts();
+  if (state.incoming) closeOrderAlerts([eventId]);
   state.incoming = null;
 }
 
 function receivePrivateOffer(order: Order, sound = true) {
   if (
+    state.incoming?.id === order.id &&
+    state.incoming.notificationEventId !== order.notificationEventId
+  ) {
+    const currentDeadline =
+      state.incoming.privateOfferExpiresAt ??
+      state.incoming.publicRegionOnlyUntil;
+    const candidateDeadline =
+      order.privateOfferExpiresAt ?? order.publicRegionOnlyUntil;
+    if (
+      currentDeadline &&
+      candidateDeadline &&
+      Date.parse(candidateDeadline) <= Date.parse(currentDeadline)
+    )
+      return;
+  }
+
+  if (
+    !order.notificationEventId ||
+    closedPublicOffers.has(order.notificationEventId) ||
     !order.privateOfferExpiresAt ||
     !hasCurrentGps() ||
     !state.profile?.isOnline ||
@@ -198,40 +268,63 @@ function receivePrivateOffer(order: Order, sound = true) {
   )
     return;
   const until = performance.now() + Math.min(20_000, remainingMs);
-  if (
-    state.incoming?.id === order.id &&
-    state.incoming.privateOfferExpiresAt === order.privateOfferExpiresAt
-  )
-    return;
+  if (state.incoming?.notificationEventId === order.notificationEventId) return;
   dismissIncoming();
+  offerVersion++;
   state.incoming = order;
   const tick = () => {
     state.offerSeconds = Math.max(
       0,
       Math.ceil((until - performance.now()) / 1000),
     );
-    if (!state.offerSeconds) dismissIncoming();
+    if (!state.offerSeconds) dismissIncoming(order.notificationEventId);
   };
   tick();
   offerTimer = setInterval(tick, 250);
-  if (sound) notifyOrder(order);
+  if (sound)
+    notifyOrder(order, {
+      eventId: order.notificationEventId,
+      expiresAt: order.privateOfferExpiresAt,
+      remainingMs,
+    });
 }
 function receivePublicOffer(order: Order) {
+  if (
+    state.incoming?.id === order.id &&
+    state.incoming.notificationEventId !== order.notificationEventId
+  ) {
+    const currentDeadline =
+      state.incoming.privateOfferExpiresAt ??
+      state.incoming.publicRegionOnlyUntil;
+    const candidateDeadline =
+      order.privateOfferExpiresAt ?? order.publicRegionOnlyUntil;
+    if (
+      currentDeadline &&
+      candidateDeadline &&
+      Date.parse(candidateDeadline) <= Date.parse(currentDeadline)
+    )
+      return;
+  }
+
   pruneClosedPublicOffers();
   if (
-    closedPublicOffers.has(order.id) ||
+    !order.notificationEventId ||
+    closedPublicOffers.has(order.notificationEventId) ||
     !hasCurrentGps() ||
     !state.profile?.isOnline ||
     state.active ||
-    state.incoming ||
+    (state.incoming && state.incoming.id !== order.id) ||
     (order.districtId ?? order.district?.id) !== state.profile.districtId ||
     !order.publicRegionOnlyUntil
   )
     return;
   const remainingMs =
     order.publicOfferRemainingMs ??
-    Date.parse(order.publicRegionOnlyUntil) - Date.now();
+    Date.parse(order.publicRegionOnlyUntil) -
+      (order.serverTime ? Date.parse(order.serverTime) : Date.now());
   if (!Number.isFinite(remainingMs) || remainingMs <= 0) return;
+  if (state.incoming?.notificationEventId === order.notificationEventId) return;
+  dismissIncoming();
   const until = performance.now() + Math.min(20_000, remainingMs);
   // A private-offer recovery started before this event must not replace it.
   offerVersion++;
@@ -241,25 +334,62 @@ function receivePublicOffer(order: Order) {
       0,
       Math.ceil((until - performance.now()) / 1000),
     );
-    if (!state.offerSeconds) dismissIncoming();
+    if (!state.offerSeconds) dismissIncoming(order.notificationEventId);
   };
   tick();
   offerTimer = setInterval(tick, 250);
-  notifyOrder(order);
+  notifyOrder(order, {
+    eventId: order.notificationEventId,
+    expiresAt: order.publicRegionOnlyUntil,
+    remainingMs,
+  });
 }
-async function recoverPrivateOffer() {
+async function recoverOffers() {
   const version = ++offerVersion;
   const generation = sessionGeneration;
   try {
-    const { data } = await driverApi.get<Order | null>("/orders/private-offer");
+    const requestedAt = performance.now();
+    const { data } = await driverApi.get<{
+      events: Array<{
+        id: string;
+        channel: "orders";
+        offerAttemptId: string;
+        expiresAt: string;
+        serverTime: string;
+        order: Order;
+      }>;
+      serverTime: string;
+    }>("/driver/notifications/inbox");
     if (
       generation !== sessionGeneration ||
       version !== offerVersion ||
       !driverSession.state.accessToken
     )
       return;
-    if (data) receivePrivateOffer(data, false);
-    else if (state.incoming?.privateOfferExpiresAt) dismissIncoming();
+    const eventIds = data.events.map((event) => event.id);
+    reconcileOrderAlerts(eventIds, data.serverTime);
+    if (
+      state.incoming &&
+      !eventIds.includes(state.incoming.notificationEventId)
+    )
+      dismissIncoming();
+    for (const event of data.events) {
+      const remainingMs =
+        Date.parse(event.expiresAt) -
+        Date.parse(event.serverTime ?? data.serverTime) -
+        (performance.now() - requestedAt);
+      if (!Number.isFinite(remainingMs) || remainingMs <= 0) continue;
+      const order = {
+        ...event.order,
+        offerAttemptId: event.offerAttemptId,
+        notificationEventId: event.id,
+        serverTime: event.serverTime ?? data.serverTime,
+      };
+      if (order.privateOfferExpiresAt)
+        receivePrivateOffer({ ...order, privateOfferRemainingMs: remainingMs });
+      else
+        receivePublicOffer({ ...order, publicOfferRemainingMs: remainingMs });
+    }
   } catch (error) {
     if (generation === sessionGeneration && version === offerVersion)
       state.error = errorMessage(error);
@@ -271,17 +401,14 @@ async function declinePrivateOffer() {
   if (!orderId || !state.incoming?.privateOfferExpiresAt) return;
   const generation = sessionGeneration;
   const privateOfferExpiresAt = state.incoming.privateOfferExpiresAt;
+  const eventId = state.incoming.notificationEventId;
   await act(async () => {
     await driverApi.post("/orders/private-offer/decline", {
       orderId,
       privateOfferExpiresAt,
     });
     if (generation !== sessionGeneration) return;
-    if (
-      state.incoming?.id === orderId &&
-      state.incoming.privateOfferExpiresAt === privateOfferExpiresAt
-    )
-      dismissIncoming();
+    if (state.incoming?.notificationEventId === eventId) dismissIncoming();
     await refresh();
   });
 }
@@ -292,6 +419,8 @@ watch(
   () => {
     sessionGeneration++;
     closedPublicOffers.clear();
+    restoreClosedOffers();
+    closeOrderAlerts();
     gpsEpoch++;
     refreshVersion++;
     dismissIncoming();
@@ -301,6 +430,8 @@ watch(
     state.districts = [];
     state.error = "";
     state.notice = "";
+    state.noticeEventId = "";
+    consumedNotices.clear();
     state.loading = false;
     state.busy = false;
     state.position = null;
@@ -372,7 +503,7 @@ async function refresh() {
       )
         enableGps();
     } else if (state.profile.isOnline && !state.active) {
-      await recoverPrivateOffer();
+      await recoverOffers();
     }
   } catch (error) {
     if (current()) state.error = errorMessage(error);
@@ -386,6 +517,7 @@ async function act(work: () => Promise<void>) {
   state.busy = true;
   state.error = "";
   state.notice = "";
+  state.noticeEventId = "";
   state.actionAttempt++;
   try {
     await work();
@@ -421,8 +553,16 @@ async function accept(orderId: string, etaMinutes: number) {
       },
     );
     if (generation !== sessionGeneration) return;
-    dismissIncoming();
-    state.active = data;
+    // A successful response can arrive after cancellation and reoffer. It owns
+    // only its original alert; the current-order read resolves newer state.
+    dismissIncoming(data.notificationEventId);
+    if (
+      !state.incoming &&
+      (!state.active ||
+        (state.active.id === data.id &&
+          state.active.offerAttemptId === data.offerAttemptId))
+    )
+      state.active = data;
     await refresh();
   });
 }
@@ -432,12 +572,17 @@ async function transition(
 ) {
   if (!state.active || !requireShiftControl()) return;
   const orderId = state.active.id;
+  const attemptId = state.active.offerAttemptId;
+  const generation = sessionGeneration;
   await act(async () => {
     await driverApi.post(`/orders/${action}`, {
       orderId,
       ...(reason ? { reason } : {}),
     });
+    if (generation !== sessionGeneration) return;
     await refresh();
+    if (generation !== sessionGeneration) return;
+    state.noticeEventId = `${generation}:${orderId}:${attemptId}:${action}`;
     if (action === "complete") state.notice = "Поездка завершена.";
     if (action === "cancel") state.notice = "Заказ отменён.";
   });
@@ -849,7 +994,10 @@ function enableGps() {
       gpsTimer = undefined;
     }
   };
-  if (state.profile?.isOnline && canControlShift() && gpsWatch === undefined)
+  if (
+    ((state.profile?.isOnline && canControlShift()) || localGpsUsers > 0) &&
+    gpsWatch === undefined
+  )
     gpsWatch = navigator.geolocation.watchPosition(report, failed, options);
   // Permission and an existing watch do not prove a fresh fix was accepted by the server.
   const initialRequest = ++gpsRequestSequence;
@@ -880,6 +1028,16 @@ function enableGps() {
   }, 10000);
 }
 function start() {
+  const offerRecovery = setInterval(() => {
+    if (
+      !document.hidden &&
+      hasCurrentGps() &&
+      state.profile?.isOnline &&
+      !state.active
+    )
+      void recoverOffers();
+  }, 5000);
+  cleanups.push(() => clearInterval(offerRecovery));
   const readinessClock = setInterval(() => {
     state.clock = Date.now();
     pruneClosedPublicOffers();
@@ -941,26 +1099,29 @@ function start() {
     }
   });
   on("order:private-offer", (payload) => receivePrivateOffer(payload as Order));
-  on("order:private-offer-ended", (payload) => {
+  function invalidateOffer(payload: unknown) {
     offerVersion++;
-    const ended = payload as {
-      orderId: string;
-      privateOfferExpiresAt?: string;
-    };
-    if (
-      state.incoming?.id === ended.orderId &&
-      state.incoming.privateOfferExpiresAt === ended.privateOfferExpiresAt
-    )
-      dismissIncoming();
+    const ended = payload as { notificationEventId?: string; eventId?: string };
+    const eventId = ended.notificationEventId ?? ended.eventId;
+    if (eventId) {
+      rememberClosedPublicOffer(eventId);
+      closeOrderAlerts([eventId]);
+      dismissIncoming(eventId);
+    }
     void refresh();
-  });
+  }
+  on("order:private-offer-ended", invalidateOffer);
   on("order:new", (payload) => receivePublicOffer(payload as Order));
-  on("order:taken", (payload) => {
-    const { orderId } = payload as { orderId: string };
-    rememberClosedPublicOffer(orderId);
-    if (state.incoming?.id === orderId) dismissIncoming();
-    void refresh();
+  on("notification:event", (payload) => {
+    if (
+      (payload as { event?: { channel?: string } }).event?.channel ===
+        "orders" &&
+      hasCurrentGps() &&
+      !state.active
+    )
+      void recoverOffers();
   });
+  on("order:taken", invalidateOffer);
   for (const event of [
     "order:accepted",
     "order:waiting",
@@ -969,17 +1130,11 @@ function start() {
     "order:cancelled",
   ])
     on(event, (payload) => {
-      const order = payload as { id: string };
-      if (event === "order:cancelled") rememberClosedPublicOffer(order.id);
-      if (event === "order:cancelled" && state.incoming?.id === order.id)
-        dismissIncoming();
+      if (event === "order:cancelled") invalidateOffer(payload);
       void refresh();
     });
   const visibility = () => {
     if (!document.hidden) {
-      // Native notifications may exist before the WebView recovers an offer.
-      // Browser playback belongs to an incoming order, not a permission probe.
-      if (nativeAndroid || state.incoming) closeOrderAlerts();
       if (nativeAndroid)
         void checkNativeLocationPermission().then(() => refresh());
       else void refresh();
@@ -993,11 +1148,17 @@ function start() {
   );
   void refresh();
 }
-export function useDriver() {
+export function useDriver(options: { localGps?: boolean } = {}) {
   onMounted(() => {
+    if (options.localGps) {
+      localGpsUsers++;
+      if (state.gpsFixReady) enableGps();
+    }
     if (users++ === 0) start();
   });
   onUnmounted(() => {
+    if (options.localGps && --localGpsUsers === 0 && !state.profile?.isOnline)
+      stopGpsTracking();
     if (--users === 0) {
       cleanups.forEach((fn) => fn());
       cleanups = [];

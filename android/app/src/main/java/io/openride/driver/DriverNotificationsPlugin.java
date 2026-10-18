@@ -42,7 +42,6 @@ public final class DriverNotificationsPlugin extends Plugin {
       permission = getPermissionState("notifications") == PermissionState.PROMPT ? "prompt" : "denied";
     if ("granted".equals(permission) && (!ShiftService.channelEnabled(getContext(), ShiftService.ORDER_CHANNEL) || !ShiftService.channelEnabled(getContext(), ShiftService.CHAT_CHANNEL))) permission = "denied";
     return new JSObject().put("permission", permission)
-        .put("enabled", p.getBoolean(PushNotificationService.ENABLED, true))
         .put("configured", firebaseConfigured)
         .put("token", p.getString(PushNotificationService.TOKEN, ""));
   }
@@ -60,11 +59,8 @@ public final class DriverNotificationsPlugin extends Plugin {
       URI uri = new URI(api);
       if (!"https".equals(uri.getScheme()) || uri.getHost() == null || uri.getUserInfo() != null || uri.getQuery() != null || uri.getFragment() != null || capability.length() < 32 || userId.isEmpty() || deviceId.isEmpty()) throw new Exception();
     } catch (Exception error) { call.reject("Для уведомлений требуется защищённый HTTPS API и подтверждённый вход."); return; }
-    PushNotificationService.configure(getContext(), api, capability, userId, deviceId, call.getBoolean("enabled", true));
+    PushNotificationService.configure(getContext(), api, capability, userId, deviceId);
     call.resolve();
-  }
-  @PluginMethod public void setEnabled(PluginCall call) {
-    PushNotificationService.setEnabled(getContext(), call.getBoolean("enabled", true)); call.resolve();
   }
   @PluginMethod public void setPresence(PluginCall call) {
     PushNotificationService.setPresence(call.getBoolean("chatVisible", false), call.getBoolean("foreground", true)); call.resolve();
@@ -85,6 +81,20 @@ public final class DriverNotificationsPlugin extends Plugin {
       }
     }
     PushNotificationService.clear(getContext(), call.getString("channel", "chat"), selected); call.resolve();
+  }
+  @PluginMethod public void reconcileOrders(PluginCall call) {
+    JSArray raw = call.getArray("eventIds");
+    if (raw == null) { call.reject("Canonical event IDs required"); return; }
+    java.util.Set<String> ids = new java.util.HashSet<>();
+    for (int i = 0; i < raw.length(); i++) if (raw.opt(i) instanceof String) ids.add((String) raw.opt(i));
+    try {
+      String serverTime = call.getString("serverTime");
+      if (serverTime == null) {
+        call.reject("Canonical serverTime required"); return;
+      }
+      PushNotificationService.reconcileOrdersAtServerTime(getContext(), ids, PushNotificationService.parseIso(serverTime));
+      call.resolve();
+    } catch (Exception error) { call.reject("Invalid canonical serverTime"); }
   }
   @PluginMethod public void reset(PluginCall call) { PushNotificationService.reset(getContext()); call.resolve(); }
   @PluginMethod public void settings(PluginCall call) {

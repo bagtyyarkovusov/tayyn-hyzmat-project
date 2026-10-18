@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { canFundOrder } from "@/shared/order-funding";
 import { Button } from "@/shared/ui/button";
 import { useDriver } from "../useDriver";
+import OrderRoute from "./OrderRoute.vue";
 import { money } from "../model";
 defineProps<{ embedded?: boolean }>();
 const { state, accept, dismissIncoming, declinePrivateOffer } = useDriver();
@@ -16,7 +17,7 @@ const eta = ref(10);
     aria-live="polite"
   >
     <header class="grid min-h-8 gap-1" :class="{ 'pr-9': embedded }">
-      <h2 class="min-w-0 break-words text-lg font-semibold leading-snug">
+      <h2 class="min-w-0 break-words text-xl font-semibold leading-snug">
         {{
           state.incoming.privateOfferExpiresAt
             ? "Личное предложение"
@@ -38,26 +39,36 @@ const eta = ref(10);
     <p
       class="offer-price flex flex-wrap items-baseline gap-x-2 font-semibold leading-none tabular-nums"
     >
-      <span>{{ money(state.incoming.priceEstimated).slice(0, -4) }}</span>
-      <span class="text-base font-medium text-muted-foreground">TMT</span>
+      <span class="min-w-0 break-words [overflow-wrap:anywhere]">{{
+        money(state.incoming.priceEstimated)
+          .slice(0, -4)
+          .replace(/[\u00a0\u202f]/g, " ")
+      }}</span>
+      <span class="text-base font-medium text-muted-foreground">{{
+        " TMT"
+      }}</span>
     </p>
-    <div class="min-w-0 space-y-2">
-      <p class="break-words font-medium [overflow-wrap:anywhere]">
-        {{ state.incoming.pickupAddress || "Подача уточняется по телефону" }}
-      </p>
-      <p
-        v-if="state.incoming.dropoffAddress"
-        class="muted text-sm break-words [overflow-wrap:anywhere]"
-      >
-        {{ state.incoming.dropoffAddress }}
-      </p>
+    <div
+      class="offer-countdown h-1.5 overflow-hidden rounded-full bg-secondary"
+      aria-hidden="true"
+    >
+      <div
+        class="h-full origin-left bg-primary"
+        :style="{ transform: `scaleX(${state.offerSeconds / 20})` }"
+      />
     </div>
-    <p class="muted text-sm leading-relaxed">
-      При принятии спишется {{ money(state.incoming.priceEstimated) }} с
-      баланса. Телефон клиента откроется после принятия.
-    </p>
+    <OrderRoute
+      :pickup="state.incoming.pickupAddress"
+      :destination="state.incoming.dropoffAddress"
+      :note="state.incoming.note"
+    />
     <p
-      v-if="!canFundOrder(state.balance?.amount, state.incoming.priceEstimated)"
+      v-if="
+        !canFundOrder(
+          state.balance?.available ?? state.balance?.amount,
+          state.incoming.priceEstimated,
+        )
+      "
       class="text-sm text-destructive"
     >
       Недостаточно средств.
@@ -88,7 +99,10 @@ const eta = ref(10);
         class="min-h-11 w-full"
         :disabled="
           state.busy ||
-          !canFundOrder(state.balance?.amount, state.incoming.priceEstimated)
+          !canFundOrder(
+            state.balance?.available ?? state.balance?.amount,
+            state.incoming.priceEstimated,
+          )
         "
         @click="accept(state.incoming!.id, eta)"
         >Принять заказ</Button
@@ -112,6 +126,14 @@ const eta = ref(10);
 </template>
 <style scoped>
 .offer-price {
-  font-size: clamp(1.75rem, 8vw, 2.25rem);
+  font-size: clamp(2.25rem, 10vw, 3rem);
+}
+.offer-countdown > div {
+  transition: transform 250ms linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  .offer-countdown > div {
+    transition: none;
+  }
 }
 </style>

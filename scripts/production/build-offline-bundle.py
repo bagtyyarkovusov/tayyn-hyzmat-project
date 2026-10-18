@@ -17,9 +17,11 @@ FILES = [
     "scripts/production/install-offline-packages.sh", "scripts/production/build-offline-bundle.py",
     "scripts/production/prepare-offline-packages.sh",
     "scripts/production/setup-wizard.sh", "scripts/production/operations.py",
+    "scripts/production/reset-rollout.py", "deploy/production/rollout-1.20-reset-policy.json",
     "scripts/production-readiness.py", "docs/offline-production-bundle.md",
     "docs/production-handoff.md", "docs/production-operations.md",
     "docs/production-update-runbook.md",
+    "docs/production-reset-1.20.md",
     "docs/research/production-dns-certificate-renewal.md",
 ]
 

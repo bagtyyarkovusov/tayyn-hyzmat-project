@@ -12,7 +12,7 @@ import logger from '../../config/logger';
 
 type Lease = { driver_id: string; device_id: string; started_at: Date; expires_at: Date; revoked_at: Date | null; credential_version: number };
 type Fix = { lat: number; lng: number; recordedAt: string; accuracy?: number };
-type Event = { id: string; channel: 'orders' | 'chat'; title: string; body: string; expiresAt: string; orderId?: string; messageId?: string };
+type Event = { id: string; channel: 'orders' | 'chat'; title: string; body: string; expiresAt: string; orderId?: string; offerAttemptId?: string; serverTime?: string; messageId?: string };
 const digest = (token: string) => createHash('sha256').update(token).digest('hex');
 
 async function broadcastStopped(driverId: string): Promise<void> {
@@ -118,18 +118,19 @@ export async function tick(token: string, fix: Fix) {
         ...(renewed.driver.districtId ? [{ privateOfferDriverId: null, privateOfferStoppedAt: null, districtId: renewed.driver.districtId, publicRegionOnlyUntil: { gt: responseTime } }] : []),
         { privateOfferDriverId: renewed.driver.id, privateOfferStoppedAt: null, privateOfferExpiresAt: { gt: responseTime } }
       ] },
-      select: { id: true, privateOfferExpiresAt: true, publicRegionOnlyUntil: true }, orderBy: { createdAt: 'asc' }, take: 100
+      select: { id: true, offerAttemptId: true, offerAttemptKind: true, privateOfferExpiresAt: true, publicRegionOnlyUntil: true }, orderBy: { createdAt: 'asc' }, take: 100
     });
     for (const order of orders) {
       const expiry = order.privateOfferExpiresAt?.toISOString();
-      events.push({ id: expiry ? `private:${order.id}:${expiry}` : `order:${order.id}`, channel: 'orders', title: 'Новый заказ', body: expiry ? 'Личное предложение. Откройте приложение.' : 'Доступен заказ. Откройте приложение.', orderId: order.id, expiresAt: expiry ?? order.publicRegionOnlyUntil!.toISOString() });
+      events.push({ id: require('../orders/order-payload').notificationEventId(order), channel: 'orders', title: 'Новый заказ', body: expiry ? 'Личное предложение. Откройте приложение.' : 'Доступен заказ. Откройте приложение.', orderId: order.id, offerAttemptId: order.offerAttemptId, serverTime: responseTime.toISOString(), expiresAt: expiry ?? order.publicRegionOnlyUntil!.toISOString() });
     }
   }
   const after = new Date(Math.max(renewed.lease.started_at.getTime(), renewed.driver.lastChatReadAt?.getTime() ?? 0));
   const readCursor = renewed.driver.lastChatReadAt && renewed.driver.lastChatReadAt.getTime() >= renewed.lease.started_at.getTime()
     ? require('../chat/cursors').afterCursor(renewed.driver.lastChatReadAt, renewed.driver.lastChatReadMessageId)
     : { sentAt: { gt: after } };
-  const messages = await prisma.message.findMany({ where: { AND: [readCursor], OR: [{ receiverId: renewed.driver.userId }, { isBroadcast: true }], NOT: { senderId: renewed.driver.userId } }, select: { id: true }, orderBy: [{ sentAt: 'desc' }, { id: 'desc' }], take: 100 });
+  const { incoming } = await require('../chat/visibility').driverChatVisibility(renewed.driver.userId);
+  const messages = await prisma.message.findMany({ where: { AND: [readCursor, incoming], NOT: { senderId: renewed.driver.userId } }, select: { id: true }, orderBy: [{ sentAt: 'desc' }, { id: 'desc' }], take: 100 });
   for (const message of messages) events.push({ id: `chat:${message.id}`, channel: 'chat', title: 'Сообщение диспетчера', body: 'Откройте чат в приложении.', messageId: message.id, expiresAt: renewed.expires.toISOString() });
   return { serverTime: responseTime.toISOString(), leaseExpiresAt: renewed.expires.toISOString(), events };
 }

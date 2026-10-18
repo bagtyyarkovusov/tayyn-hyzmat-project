@@ -9,7 +9,7 @@ const require = createRequire(
 );
 const { PrismaClient } = require("@prisma/client");
 
-test("profile reconciliation does not interrupt enabling notification sound", async ({
+test("profile focus reconciles without notification settings, sound, or permission prompts", async ({
   browser,
 }) => {
   const prisma = new PrismaClient();
@@ -38,43 +38,45 @@ test("profile reconciliation does not interrupt enabling notification sound", as
     deviceId,
   );
   const page = await context.newPage();
-  await page.addInitScript(() =>
+  await page.addInitScript(() => {
     Object.defineProperty(Notification, "permission", {
       configurable: true,
-      value: "granted",
-    }),
-  );
-  let release!: () => void;
-  let reached!: () => void;
-  const mediaGate = new Promise<void>((resolve) => (release = resolve));
-  const mediaRequested = new Promise<void>((resolve) => (reached = resolve));
+      value: "denied",
+    });
+    Object.defineProperty(window, "notificationRequests", { value: [] });
+    Notification.requestPermission = async () => {
+      (
+        window as unknown as { notificationRequests: string[] }
+      ).notificationRequests.push("permission");
+      return "denied";
+    };
+    HTMLMediaElement.prototype.play = async () => {
+      (
+        window as unknown as { notificationRequests: string[] }
+      ).notificationRequests.push("audio");
+    };
+  });
   try {
     await page.goto("/driverProfile");
-    const toggle = page.getByRole("switch", {
-      name: "Уведомления",
-      exact: true,
-    });
-    await expect(toggle).toHaveAttribute("aria-checked", "true");
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-checked", "false");
-    await page.route("**/notification.mp3", async (route) => {
-      reached();
-      await mediaGate;
-      await route.continue();
-    });
-    await toggle.click();
-    await mediaRequested;
-    await expect(toggle).toHaveAttribute("aria-busy", "true");
+    await expect(
+      page.getByRole("button", { name: "Выйти", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("switch", { name: "Уведомления", exact: true }),
+    ).toHaveCount(0);
     const refreshed = page.waitForResponse(
       (response) => response.url().endsWith("/driver/profile") && response.ok(),
     );
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await refreshed;
-    release();
-    await expect(toggle).toHaveAttribute("aria-checked", "true");
-    await expect(toggle).toHaveAttribute("aria-busy", "false");
+    expect(
+      await page.evaluate(
+        () =>
+          (window as unknown as { notificationRequests: string[] })
+            .notificationRequests,
+      ),
+    ).toEqual([]);
   } finally {
-    release();
     await context.close();
     await prisma.user.delete({ where: { id: user.id } });
     await prisma.$disconnect();

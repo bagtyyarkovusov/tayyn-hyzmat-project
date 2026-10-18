@@ -12,6 +12,7 @@ import {
 } from "reka-ui";
 import { cn } from "@/shared/utils";
 
+defineOptions({ inheritAttrs: false });
 const props = defineProps<
   DialogContentProps & { class?: HTMLAttributes["class"] }
 >();
@@ -26,7 +27,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
   <DialogPortal>
     <DialogOverlay class="app-dialog-overlay fixed inset-0 z-50" />
     <DialogContent
-      v-bind="forwarded"
+      v-bind="{ ...forwarded, ...$attrs }"
       :class="
         cn(
           'app-dialog-content fixed left-1/2 top-1/2 z-50 grid w-[calc(100%-1.5rem)] max-w-lg max-h-[85dvh] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-xl border bg-background p-5',
@@ -37,9 +38,9 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
       <slot />
 
       <DialogClose
-        class="dialog-close absolute right-1 top-1 flex size-11 items-center justify-center rounded-lg border-0 bg-transparent text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none"
+        class="dialog-close absolute right-1 top-1 flex size-12 items-center justify-center rounded-lg border-0 bg-secondary text-foreground transition-colors hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none"
       >
-        <X class="w-4 h-4" />
+        <X class="w-5 h-5" />
         <span class="sr-only">Close</span>
       </DialogClose>
     </DialogContent>
@@ -49,10 +50,25 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
 <style>
 /* Mobile keyboards resize the visual viewport without changing CSS vh. */
 .app-dialog-content {
-  top: calc(
-    var(--app-viewport-top, 0px) + var(--app-viewport-height, 100dvh) / 2
+  left: calc(
+    50% + var(--native-safe-left, env(safe-area-inset-left, 0px)) / 2 -
+      var(--native-safe-right, env(safe-area-inset-right, 0px)) / 2
   );
-  max-height: calc(var(--app-viewport-height, 100dvh) - 1.5rem);
+  top: calc(
+    var(--app-viewport-top, 0px) +
+      var(--native-safe-top, env(safe-area-inset-top, 0px)) / 2 -
+      var(--native-safe-bottom, env(safe-area-inset-bottom, 0px)) / 2 +
+      var(--app-viewport-height, 100dvh) / 2
+  );
+  max-height: calc(
+    var(--app-viewport-height, 100dvh) - 1.5rem -
+      var(--native-safe-top, env(safe-area-inset-top, 0px)) -
+      var(--native-safe-bottom, env(safe-area-inset-bottom, 0px))
+  );
+  max-width: calc(
+    100vw - 1.5rem - var(--native-safe-left, env(safe-area-inset-left, 0px)) -
+      var(--native-safe-right, env(safe-area-inset-right, 0px))
+  );
 }
 
 .app-dialog-overlay[data-state="open"] {
@@ -68,7 +84,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
   animation: dialog-content-in 120ms ease-in reverse;
 }
 .app-dialog-content > div:first-child:not(.sr-only) {
-  padding-right: 1.25rem;
+  padding-right: 2.25rem;
 }
 @keyframes dialog-overlay-in {
   from {

@@ -76,12 +76,25 @@ test("native GPS remains local and green during server reconnect and after the s
       bridge.Capacitor = {
         PluginHeaders: [
           {
+            name: "DriverUi",
+            methods: [
+              "ready",
+              "respondBack",
+              "resetBack",
+              "detach",
+              "theme",
+              "removeListener",
+            ]
+              .map((name) => ({ name, rtype: "promise" }))
+              .concat([{ name: "addListener", rtype: "callback" }]),
+          },
+          {
             name: "DriverNotifications",
             methods: [
               "status",
               "requestPermissions",
               "configure",
-              "setEnabled",
+              "reconcileOrders",
               "setPresence",
               "deliver",
               "clear",

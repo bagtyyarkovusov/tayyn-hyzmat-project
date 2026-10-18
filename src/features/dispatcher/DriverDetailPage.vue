@@ -431,13 +431,34 @@ function adjust(withdraw: boolean) {
       </section>
       <section v-if="tab === 'balance'" class="space-y-6">
         <div class="rounded-xl border bg-card p-5">
-          <p class="text-sm text-muted-foreground">Баланс</p>
+          <p class="text-sm text-muted-foreground">Всего</p>
           <p class="mt-2 text-3xl font-semibold tabular-nums">
-            {{ money(driver.user.balance?.amount) }}
+            {{
+              money(driver.user.balance?.total ?? driver.user.balance?.amount)
+            }}
           </p>
           <p class="mt-2 text-xs text-muted-foreground">
             Пополнение и корректировка через диспетчера.
           </p>
+          <dl class="grid grid-cols-2 gap-4 border-y py-3">
+            <div>
+              <dt class="text-sm text-muted-foreground">Удержано</dt>
+              <dd class="mt-1 text-xl font-semibold tabular-nums">
+                {{ money(driver.user.balance?.held) }}
+              </dd>
+            </div>
+            <div>
+              <dt class="text-sm text-muted-foreground">Доступно</dt>
+              <dd class="mt-1 text-xl font-semibold tabular-nums">
+                {{
+                  money(
+                    driver.user.balance?.available ??
+                      driver.user.balance?.amount,
+                  )
+                }}
+              </dd>
+            </div>
+          </dl>
           <form
             v-if="!driver.accountDeleted"
             class="mt-5 grid gap-3 sm:grid-cols-2"

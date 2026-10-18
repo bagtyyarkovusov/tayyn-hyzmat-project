@@ -137,7 +137,19 @@ const visible = computed(() =>
             :class="driver.isOnline ? 'text-primary' : 'text-muted-foreground'"
           >
             {{ driver.isOnline ? "На линии" : "Не в сети" }} ·
-            {{ money(driver.user.balance?.amount) }}
+            <span class="block"
+              >Всего
+              {{
+                money(driver.user.balance?.total ?? driver.user.balance?.amount)
+              }}</span
+            ><span class="mt-1 block text-xs text-muted-foreground"
+              >Удержано {{ money(driver.user.balance?.held) }} · Доступно
+              {{
+                money(
+                  driver.user.balance?.available ?? driver.user.balance?.amount,
+                )
+              }}</span
+            >
           </p>
         </div>
         <ChevronRight class="hidden size-4 text-muted-foreground sm:block"

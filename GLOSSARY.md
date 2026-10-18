@@ -23,3 +23,11 @@ The pilot coordinates dispatcher-created rides and driver claims within regions.
 **Private offer**: A dispatcher reservation for one eligible driver, requiring explicit confirmation within 20 seconds.
 
 **Reservation deadline**: The fixed end of a private offer’s exclusive acceptance window. The dispatcher’s fallback choice determines whether it then becomes public or stays unassigned.
+
+**Quote hold**: TMT reserved for an accepted trip until Start or pre-start cancellation. It reduces available funds without reducing the total balance.
+
+**Capture**: The deduction of a held quote when a driver starts the trip.
+
+**Cancellation review**: Unresolved dispatcher work created when a driver cancels before arrival. The dispatcher resolves it by reoffering the same order or finally cancelling it.
+
+**Offer attempt**: One delivery window for an order. Reoffering an order creates a distinct attempt while preserving the order number.

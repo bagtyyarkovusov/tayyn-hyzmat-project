@@ -4,6 +4,9 @@ import { nativeAndroid } from "./nativeShift";
 import { nativeNotifications } from "./nativeNotifications";
 let audio: HTMLAudioElement | null = null;
 let notification: Notification | null = null;
+let attempt: string | null = null;
+let deadline: ReturnType<typeof setTimeout> | undefined;
+const seenAttempts = new Map<string, number>();
 const chatNotifications = new Map<string, Notification>();
 function player() {
   return (audio ??= new Audio("/notification.mp3"));
@@ -12,16 +15,8 @@ const state = reactive({
   permission: "unsupported" as NotificationPermission | "unsupported",
   soundReady: false,
   pending: false,
-  enabled: true,
 });
 export const alertState = readonly(state);
-export function setAlertsEnabled(enabled: boolean) {
-  state.enabled = enabled;
-  if (!enabled) {
-    closeOrderAlerts();
-    closeChatAlerts();
-  }
-}
 export function resetAlerts() {
   // Native session replacement resets its own persisted ledger. Cold recovery
   // of the same installation must retain those already delivered alerts.
@@ -29,7 +24,6 @@ export function resetAlerts() {
     closeOrderAlerts();
     closeChatAlerts();
   }
-  setAlertsEnabled(true);
 }
 export function syncAlertPermission() {
   if (nativeAndroid) {
@@ -60,7 +54,6 @@ export async function enableOrderAlerts() {
       state.permission =
         result.permission === "prompt" ? "default" : result.permission;
       state.soundReady = state.permission === "granted";
-      if (state.permission === "denied") await nativeNotifications.settings();
     } catch {
       state.permission = "denied";
       state.soundReady = false;
@@ -95,8 +88,14 @@ export async function enableOrderAlerts() {
     state.pending = false;
   }
 }
-export function closeOrderAlerts() {
-  if (nativeAndroid) void nativeNotifications.clear({ channel: "orders" });
+export function closeOrderAlerts(eventIds?: string[]) {
+  if (nativeAndroid)
+    void nativeNotifications
+      .clear({ channel: "orders", eventIds })
+      .catch(() => {});
+  if (eventIds && (!attempt || !eventIds.includes(attempt))) return;
+  clearTimeout(deadline);
+  attempt = null;
   if (audio) {
     audio.pause();
     audio.currentTime = 0;
@@ -107,13 +106,45 @@ export function closeOrderAlerts() {
   }
   notification = null;
 }
-export function notifyOrder(order: Order) {
-  if (nativeAndroid || !state.enabled) return;
-  void player()
-    .play()
-    .catch(() => {
-      state.soundReady = false;
-    });
+export function reconcileOrderAlerts(eventIds: string[], serverTime?: string) {
+  if (nativeAndroid)
+    void nativeNotifications
+      .reconcileOrders({ eventIds, serverTime })
+      .catch(() => {});
+  if (attempt && !eventIds.includes(attempt)) closeOrderAlerts([attempt]);
+}
+export interface OfferAlertAttempt {
+  eventId: string;
+  expiresAt: string;
+  remainingMs?: number;
+}
+export function notifyOrder(order: Order, offer?: OfferAlertAttempt) {
+  // Android has one sound owner across WebView, Socket.IO, polling and FCM.
+  if (nativeAndroid || !offer?.eventId) return;
+  const now = Date.now();
+  for (const [id, expiry] of seenAttempts)
+    if (expiry <= now) seenAttempts.delete(id);
+  const expiry = Date.parse(offer.expiresAt);
+  // Canonical remaining time already accounts for server clock skew. Local
+  // wall time is only a fallback for callers without that measurement.
+  const remaining = Math.min(20000, offer.remainingMs ?? expiry - now);
+  if (
+    !Number.isFinite(remaining) ||
+    remaining <= 0 ||
+    seenAttempts.has(offer.eventId)
+  )
+    return;
+  closeOrderAlerts();
+  attempt = offer.eventId;
+  seenAttempts.set(offer.eventId, now + remaining);
+  // Schedule before play resolves, so a pending autoplay promise cannot
+  // extend the canonical deadline or restart after local dismissal.
+  deadline = setTimeout(() => closeOrderAlerts([offer.eventId]), remaining);
+  const sound = player();
+  sound.loop = false;
+  void sound.play().catch(() => {
+    state.soundReady = false;
+  });
   if (
     document.hidden &&
     typeof Notification !== "undefined" &&
@@ -124,14 +155,16 @@ export function notifyOrder(order: Order) {
         body: [order.pickupAddress, order.dropoffAddress]
           .filter(Boolean)
           .join(" → "),
-        tag: "order-new",
+        tag: offer.eventId,
+        silent: true,
       });
       notification.onclick = () => {
         window.focus();
-        notification?.close();
+        closeOrderAlerts([offer.eventId]);
       };
+      notification.onclose = () => closeOrderAlerts([offer.eventId]);
     } catch {
-      /* Some mobile browsers expose Notification but reject its constructor. */
+      /* Mobile browsers may require a service worker. */
     }
   }
 }
@@ -150,14 +183,12 @@ export function closeChatAlerts(eventIds?: string[]) {
   }
 }
 /** Show a dispatcher message outside the chat view. The native renderer owns
- * Android delivery; browsers use the permission that the profile switch
- * enabled. `body` is deliberately passed through so the driver can identify
+ * Android delivery; browsers use OS permission. `body` is deliberately passed through so the driver can identify
  * the message without opening the chat first. */
 export function notifyChat(body: string, eventId: string) {
-  if (nativeAndroid || !state.enabled) return;
-  void player()
-    .play()
-    .catch(() => {});
+  if (nativeAndroid) return;
+  // Chat has its own short player and cannot touch the offer music.
+  void new Audio("/chat-notification.mp3").play().catch(() => {});
   if (
     typeof Notification !== "undefined" &&
     Notification.permission === "granted"
@@ -166,6 +197,7 @@ export function notifyChat(body: string, eventId: string) {
       const alert = new Notification("Диспетчер", {
         body,
         tag: eventId,
+        silent: true,
       });
       chatNotifications.set(eventId, alert);
       alert.onclick = () => {

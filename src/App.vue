@@ -35,7 +35,11 @@ import {
 } from "@/shared/ui/dropdown-menu";
 import { useDriverNotifications } from "@/features/driver/notifications";
 import { useDriverPermissionOnboarding } from "@/features/driver/permissionOnboarding";
+import CancellationReviewBanner from "@/features/dispatcher/CancellationReviewBanner.vue";
+import DriverOfferOverlay from "@/features/driver/components/DriverOfferOverlay.vue";
 import AdminMessageAlert from "@/features/dispatcher/AdminMessageAlert.vue";
+import { installNativeUi, resetNativeBack } from "@/features/driver/nativeUi";
+import { closeTopOverlay, overlayRevision } from "@/shared/overlays";
 const props = defineProps<{ driverOnly?: boolean }>();
 const route = useRoute();
 const startup = ref(true);
@@ -71,6 +75,25 @@ onUnmounted(() => {
   window.visualViewport?.removeEventListener("scroll", resizeChat);
 });
 const router = useRouter();
+let disposeNativeUi: (() => void) | undefined;
+let shellAlive = true;
+onMounted(async () => {
+  const dispose = await installNativeUi(async () => {
+    if (closeTopOverlay()) return "handled";
+    if (driver.value && !auth.value && route.path !== "/driverDashboard") {
+      await router.replace("/driverDashboard");
+      return "handled";
+    }
+    return "root";
+  });
+  if (shellAlive) disposeNativeUi = dispose;
+  else dispose();
+});
+onUnmounted(() => {
+  shellAlive = false;
+  disposeNativeUi?.();
+});
+watch([() => route.fullPath, overlayRevision], () => resetNativeBack());
 void router.isReady().then(() => {
   startup.value = false;
 });
@@ -173,6 +196,9 @@ async function logout() {
     ]"
   >
     <AdminMessageAlert v-if="!driver" />
+    <DriverOfferOverlay
+      v-if="verifiedDriverView && route.path !== '/driverDashboard'"
+    />
     <aside v-if="!driver" class="sidebar">
       <RouterLink to="/adminDashboard" class="brand"><BrandLogo /></RouterLink>
       <p class="mt-7 mb-3 text-xs text-muted-foreground">
@@ -261,6 +287,7 @@ async function logout() {
             </DropdownMenuContent>
           </DropdownMenu>
           <Button
+            v-if="!driver"
             variant="ghost"
             size="icon"
             class="size-11"
@@ -270,6 +297,7 @@ async function logout() {
           /></Button>
         </div>
       </header>
+      <CancellationReviewBanner v-if="!driver" />
       <p
         v-if="driver && !networkOnline"
         role="status"
@@ -441,7 +469,8 @@ async function logout() {
   border-bottom: 0;
   background: var(--card);
   border-radius: 1rem 1rem 0 0;
-  padding: 0.65rem 0.5rem max(0.65rem, env(safe-area-inset-bottom));
+  padding: 0.65rem 0.5rem
+    max(0.65rem, var(--native-safe-bottom, env(safe-area-inset-bottom, 0px)));
   z-index: 30;
 }
 .driver-nav a {
@@ -587,7 +616,10 @@ async function logout() {
   }
   .driver-home-workspace .driver-nav {
     padding-top: 0.25rem;
-    padding-bottom: max(0.25rem, env(safe-area-inset-bottom));
+    padding-bottom: max(
+      0.25rem,
+      var(--native-safe-bottom, env(safe-area-inset-bottom, 0px))
+    );
   }
   .driver-home-workspace .driver-nav a {
     padding-block: 0.15rem;
@@ -636,5 +668,45 @@ async function logout() {
 }
 .chat-workspace .driver-nav a {
   padding-block: 0.2rem;
+}
+</style>
+
+<style>
+.driver-workspace .workspace-header {
+  min-height: calc(
+    56px + var(--native-safe-top, env(safe-area-inset-top, 0px))
+  );
+  padding-top: var(--native-safe-top, env(safe-area-inset-top, 0px));
+  padding-left: max(
+    1rem,
+    var(--native-safe-left, env(safe-area-inset-left, 0px))
+  );
+  padding-right: max(
+    1rem,
+    var(--native-safe-right, env(safe-area-inset-right, 0px))
+  );
+}
+.driver-workspace .driver-nav {
+  padding-left: max(
+    0.5rem,
+    var(--native-safe-left, env(safe-area-inset-left, 0px))
+  );
+  padding-right: max(
+    0.5rem,
+    var(--native-safe-right, env(safe-area-inset-right, 0px))
+  );
+}
+.driver-workspace .driver-content {
+  padding-left: max(
+    0.75rem,
+    var(--native-safe-left, env(safe-area-inset-left, 0px))
+  );
+  padding-right: max(
+    0.75rem,
+    var(--native-safe-right, env(safe-area-inset-right, 0px))
+  );
+}
+.driver-map-workspace .driver-content {
+  padding: 0;
 }
 </style>

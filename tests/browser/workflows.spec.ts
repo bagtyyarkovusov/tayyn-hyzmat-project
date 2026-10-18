@@ -303,6 +303,8 @@ test("a driver must explicitly accept after five minutes, then completes a quote
       .getByRole("button", { name: /Мой район/ })
       .click();
     await driver
+      .getByRole("article")
+      .filter({ hasText: "Тестовая улица 10" })
       .getByRole("button", { name: "Принять заказ", exact: true })
       .click();
     await expect(
@@ -839,6 +841,7 @@ test("logout wins over a delayed refresh response and keeps the other actor sign
     .getByRole("link", { name: "Профиль", exact: true })
     .click();
   await reached;
+  await page.getByRole("link", { name: "Профиль", exact: true }).click();
   await page.getByRole("button", { name: "Выйти", exact: true }).click();
   await expect(page).toHaveURL(/driverLogin/);
   release();
@@ -899,6 +902,7 @@ test("GPS reporting continues across driver routes and stops after logout", asyn
         return Number(profile.lastLat);
       })
       .toBe(37.9701);
+    await page.getByRole("link", { name: "Профиль", exact: true }).click();
     await page.getByRole("button", { name: "Выйти", exact: true }).click();
     await expect(page).toHaveURL(/driverLogin/);
     // Native geolocation runs outside the browser timer mock. Let the real
@@ -1043,9 +1047,16 @@ test("dispatcher enters region, phone and price and the region modal closes afte
     );
     await dialog.getByLabel("Стоимость, TMT").fill("15");
     await expect(dialog.getByLabel("Откуда", { exact: true })).toBeVisible();
+    const createdResponse = dispatcher.waitForResponse(
+      (response) =>
+        response.url().endsWith("/admin/orders") &&
+        response.request().method() === "POST" &&
+        response.ok(),
+    );
     await dialog
       .getByRole("button", { name: "Отправить водителям", exact: true })
       .click();
+    const createdOrder = await (await createdResponse).json();
     await expect(dialog).not.toBeVisible();
     await expect(
       driver.getByText("Подача уточняется по телефону", { exact: true }),
@@ -1064,6 +1075,8 @@ test("dispatcher enters region, phone and price and the region modal closes afte
       exact: true,
     });
     await regionOrders
+      .getByRole("article")
+      .filter({ hasText: `#${createdOrder.orderNumber}` })
       .getByRole("button", { name: "Принять заказ", exact: true })
       .click();
     await expect(regionOrders).not.toBeVisible();
@@ -1426,7 +1439,7 @@ test("regional queues and counts recover through updates, reconnect and reload",
       trip.getByText("Прибытие: 20 мин", { exact: true }),
     ).toBeVisible();
     await trip.getByRole("button", { name: "Close", exact: true }).click();
-    await expect(driver.getByLabel("Баланс")).toHaveText("488 TMT");
+    await expect(driver.getByLabel("Баланс")).toHaveText("500 TMT");
     await driver.screenshot({
       path: "test-results/driver-live-trip-strip.png",
       animations: "disabled",
@@ -1803,13 +1816,26 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
     bridge.Capacitor = {
       PluginHeaders: [
         {
+          name: "DriverUi",
+          methods: [
+            "ready",
+            "respondBack",
+            "resetBack",
+            "detach",
+            "theme",
+            "removeListener",
+          ]
+            .map((name) => ({ name, rtype: "promise" }))
+            .concat([{ name: "addListener", rtype: "callback" }]),
+        },
+        {
           name: "DriverNotifications",
           methods: [
             ...[
               "status",
               "requestPermissions",
               "configure",
-              "setEnabled",
+              "reconcileOrders",
               "setPresence",
               "deliver",
               "clear",
@@ -3865,7 +3891,7 @@ test("dispatcher retries a lost wallet response without applying the adjustment 
   expect(ledger.transactions.items[0].balanceAfter).toBe("15");
 });
 
-test("driver cancellation is visible only while waiting for the passenger", async ({
+test("driver cancellation is visible only before marking arrival", async ({
   browser,
 }) => {
   const adminContext = await browser.newContext(),
@@ -3913,11 +3939,11 @@ test("driver cancellation is visible only while waiting for the passenger", asyn
     await expect(trip).toBeVisible();
     await expect(
       trip.getByRole("button", { name: "Отменить заказ", exact: true }),
-    ).toHaveCount(0);
+    ).toBeVisible();
     await trip.getByRole("button", { name: "Я на месте", exact: true }).click();
     await expect(
       trip.getByRole("button", { name: "Отменить заказ", exact: true }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await trip
       .getByRole("button", { name: "Начать поездку", exact: true })
       .click();

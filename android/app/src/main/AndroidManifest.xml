@@ -16,6 +16,7 @@
             android:label="@string/title_activity_main"
             android:theme="@style/AppTheme.NoActionBarLaunch"
             android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
             android:exported="true">
 
             <intent-filter>
@@ -24,6 +25,8 @@
             </intent-filter>
 
         </activity>
+
+        <receiver android:name=".NotificationDismissReceiver" android:exported="false" />
 
         <service android:name=".ShiftService" android:exported="false" android:foregroundServiceType="location" />
         <service

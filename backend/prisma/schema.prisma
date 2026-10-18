@@ -176,6 +176,7 @@ model Driver {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   vehicles  Vehicle[]        @relation("DriverVehicles")
+  assignments OrderAssignment[]
   orders    Order[]
   locations DriverLocation[]
   devices   DriverDevice[]
@@ -335,14 +336,41 @@ model Order {
   cancelledAt  DateTime? @map("cancelled_at")
   cancelReason String?   @map("cancel_reason")
 
+  offerAttemptId String @default(uuid()) @map("offer_attempt_id")
+  offerAttemptKind String @default("order") @map("offer_attempt_kind")
+  cancellationReviewRequired Boolean @default(false) @map("cancellation_review_required")
+  assignments OrderAssignment[]
   transactions Transaction[]
   messages     Message[]
   resolutionAudits OrderResolutionAudit[]
 
+  @@index([status, cancellationReviewRequired, cancelledAt, id])
   @@index([status])
   @@index([driverId])
   @@index([districtId])
   @@map("orders")
+}
+
+// One immutable accepted quote per offer attempt. Holds are durable state,
+// never ledger debits. Driver/order/wallet locks serialize all transitions.
+model OrderAssignment {
+  id String @id @default(uuid())
+  orderId String @map("order_id")
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  driverId String @map("driver_id")
+  driver Driver @relation(fields: [driverId], references: [id])
+  offerAttemptId String @map("offer_attempt_id")
+  quotedAmount Decimal @map("quoted_amount") @db.Decimal(10, 2)
+  fundingState String @map("funding_state")
+  acceptedAt DateTime @default(now()) @map("accepted_at")
+  capturedAt DateTime? @map("captured_at")
+  releasedAt DateTime? @map("released_at")
+  endedAt DateTime? @map("ended_at")
+  endAction String? @map("end_action")
+
+  @@unique([orderId, offerAttemptId])
+  @@index([driverId, fundingState])
+  @@map("order_assignments")
 }
 
 // Explicit dispatcher actions used to resolve a trip that the driver did not
@@ -356,6 +384,9 @@ model OrderResolutionAudit {
   actorId   String   @map("actor_id")
   actor     User     @relation("OrderResolutionActors", fields: [actorId], references: [id])
   action    String
+  offerAttemptId String? @map("offer_attempt_id")
+  nextOfferAttemptId String? @map("next_offer_attempt_id")
+  driverId String? @map("driver_id")
   reason    String
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -388,6 +419,7 @@ model Transaction {
   order        Order?             @relation(fields: [orderId], references: [id])
   type         TransactionType
   amount       Decimal            @db.Decimal(12, 2) // signed: positive = credit, negative = debit
+  heldAfter Decimal? @map("held_after") @db.Decimal(12, 2)
   balanceAfter Decimal            @map("balance_after") @db.Decimal(12, 2)
   currency     String             @default("TMT")
   status       TransactionStatus  @default(COMPLETED)

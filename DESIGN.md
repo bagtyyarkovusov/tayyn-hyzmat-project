@@ -62,7 +62,7 @@ The dispatcher overview uses one compact three-column summary band followed imme
 
 ## Elevation & Depth
 
-Shared shadcn-vue primitives keep their behavior. Panels remain flat and ruled; soft offset shadows distinguish floating dialogs and menus. Use the existing restrained motion, reduced-motion support, 44px driver controls and borderless close icons. Fixed `+993` phone prefixes and formatted digits must fit narrow forms without clipping.
+Shared shadcn-vue primitives keep their behavior. Panels remain flat and ruled; soft offset shadows distinguish floating dialogs and menus. Use the existing restrained motion, reduced-motion support, 44px driver controls and contrasting 48px dialog close targets. Fixed `+993` phone prefixes and formatted digits must fit narrow forms without clipping.
 
 ## Components
 
@@ -70,7 +70,7 @@ Shared shadcn-vue primitives keep their behavior. Panels remain flat and ruled; 
 
 Verification covers both actors, light/dark, desktop/mobile and the driver viewport. A polished visual test does not certify financial integrity, background notification delivery or production readiness; those have separate release gates.
 
-Driver order offers use a single dialog surface. The quote uses a responsive 28–36px price with a smaller TMT unit; large-text settings can increase it further. Header content reserves the borderless close target, and private-offer countdowns occupy their own line so translated or enlarged titles cannot collide. ETA and accept/decline actions retain at least 44px touch targets.
+Driver order offers use a single dialog surface. The quote uses a responsive 36–48px price with a smaller TMT unit; large-text settings can increase it further. Header content reserves the contrasting close target, and private-offer countdowns occupy their own line so translated or enlarged titles cannot collide. ETA and accept/decline actions retain at least 44px touch targets.
 
 ### Glass navigation
 
@@ -83,3 +83,11 @@ Navigation surfaces retain 88–90% opacity and solid text; forms, order cards, 
 An active trip leads the home feed with an ordered, current-step lifecycle, a prominent quote, customer call action and one next-step control. Full route text, navigation, ETA and cancellation remain in the details dialog. A two-line route preview keeps the feed bounded; the details action exposes the complete information. The nine-region overview stays visible below, with smaller scores and tighter spacing during a trip. Each region and action retains a 44px target.
 
 Regional queues use a bounded internal scrolling list and one flat surface. The price leads each order; arrival selection and acceptance remain adjacent. Routine refresh is automatic through order events, region updates, reconnect and foreground return. A failed request exposes a deliberate retry. Taken orders disappear before list reconciliation so a slower response cannot briefly restore a claimed item.
+
+### Driver release 1.20
+
+Offers and regional queues share pickup/destination route icons and show notes with the route. A visible deadline and progress bar support quick decisions; reduced motion disables progress transitions. Functional empty states stay concise. Profile owns logout and contains no notification controls. Android Settings owns future notification changes.
+
+Native system-bar and cutout insets protect the shell, tab bar and dialogs. Shared dialogs and menus register in one opening-order stack, so Android Back invokes the top overlay's ordinary close action before returning other driver tabs to Orders. The native bridge handles keyboard dismissal and root double-Back minimization.
+
+Dispatcher cancellations requiring review remain visible in the shell with order and driver links. Only unresolved cancellations offer reoffer/final-cancel actions. Balances show total, held and available separately. Broadcast history has its own conversation; merged copies in individual conversations carry a broadcast label.

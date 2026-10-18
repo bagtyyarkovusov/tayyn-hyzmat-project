@@ -137,12 +137,20 @@ test("dispatcher creates a private offer and driver explicitly accepts into the 
     await expect(
       trip.getByText("Прибытие: 5 мин", { exact: true }),
     ).toBeVisible();
-    await expect(driver.getByLabel("Баланс")).toHaveText("490 TMT");
+    await expect(driver.getByLabel("Баланс")).toHaveText("500 TMT");
     await driver.screenshot({
       path: test.info().outputPath("private-offer-accepted-mobile.png"),
     });
-    for (const name of ["Я на месте", "Начать поездку", "Завершить поездку"])
-      await trip.getByRole("button", { name, exact: true }).click();
+    await trip.getByRole("button", { name: "Я на месте", exact: true }).click();
+    await expect(driver.getByLabel("Баланс")).toHaveText("500 TMT");
+    await trip
+      .getByRole("button", { name: "Начать поездку", exact: true })
+      .click();
+    await expect(driver.getByLabel("Баланс")).toHaveText("490 TMT");
+    await trip
+      .getByRole("button", { name: "Завершить поездку", exact: true })
+      .click();
+    await expect(driver.getByLabel("Баланс")).toHaveText("490 TMT");
     await expect(trip).not.toBeVisible();
   } finally {
     await close();
@@ -379,7 +387,7 @@ test("a delayed decline response leaves the newer private offer visible", async 
       incoming.getByText("Новое предложение", { exact: true }),
     ).toBeVisible();
     // Delay only transport recovery. The latest visible offer must survive the old response.
-    await driver.route("**/orders/private-offer", async (route) => {
+    await driver.route("**/driver/notifications/inbox", async (route) => {
       recoveryStarted();
       await recoveryGate;
       await route.continue();
@@ -411,6 +419,8 @@ for (const width of [320, 390]) {
         browser,
       }) => {
         const { dispatcher, driver, driverId, close } = await actors(browser);
+        let createdOrderId = "";
+        let token = "";
         try {
           await driver.setViewportSize({ width, height: 740 });
           await driver.emulateMedia({ colorScheme });
@@ -418,8 +428,8 @@ for (const width of [320, 390]) {
             document.documentElement.style.fontSize = "24px";
           });
           await dispatcher.goto("/adminOrders");
-          const token = await dispatcher.evaluate(() =>
-            localStorage.getItem("openride.admin.accessToken"),
+          token = await dispatcher.evaluate(
+            () => localStorage.getItem("openride.admin.accessToken") ?? "",
           );
           const pickup =
             "Улица Махтумкули, дом 123, подъезд со стороны длинного проспекта " +
@@ -438,6 +448,7 @@ for (const width of [320, 390]) {
             },
           );
           expect(created.ok()).toBe(true);
+          createdOrderId = (await created.json()).id;
           const offer = driver.getByRole("dialog", {
             name: "Предложение заказа",
             exact: true,
@@ -538,6 +549,11 @@ for (const width of [320, 390]) {
             },
           );
         } finally {
+          if (createdOrderId)
+            await dispatcher.request.post(
+              `/api/admin/orders/${createdOrderId}/cancel`,
+              { headers: { Authorization: `Bearer ${token}` }, data: {} },
+            );
           await close();
         }
       });

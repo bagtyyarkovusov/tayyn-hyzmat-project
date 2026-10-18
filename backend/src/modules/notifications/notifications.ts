@@ -7,8 +7,9 @@ import rooms from '../../sockets/rooms';
 import { hasFreshGps } from '../driver/gps-eligibility';
 import { lockDeviceSession } from '../driver/shift-ownership';
 import * as fcm from './fcm';
+const { notificationEventId, publicOfferPayload } = require('../orders/order-payload');
 
-export type Event = { id: string; channel: 'chat' | 'orders'; title: string; body: string; expiresAt: string; orderId?: string; messageId?: string };
+export type Event = { id: string; channel: 'chat' | 'orders'; title: string; body: string; expiresAt: string; orderId?: string; order?: unknown; offerAttemptId?: string; serverTime?: string; messageId?: string };
 type CanonicalDelivery = Pick<NotificationDelivery, 'eventId' | 'resourceId' | 'channel' | 'expiresAt' | 'cancelledAt' | 'invalidatedAt'>;
 type Session = { id: string; userId: string; sessionDeviceId?: string; sessionDeviceVersion?: number; sessionCredentialVersion?: number };
 const digest = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -31,13 +32,13 @@ async function ensureInstallation(tx: Prisma.TransactionClient, driver: Session)
   return tx.notificationInstallation.update({ where: { id: row.id }, data: { credentialVersion: driver.sessionCredentialVersion, deviceVersion: driver.sessionDeviceVersion, token: null, secretHash: null, coordinatorEnabled: false } });
 }
 function publicSettings(row: NotificationInstallation) {
-  return { installationId: row.id, enabled: row.enabled, registered: Boolean(row.token), transportConfigured: fcm.configured(), coordinatorEnabled: row.coordinatorEnabled && fcm.configured() };
+  return { installationId: row.id, enabled: true, registered: Boolean(row.token), transportConfigured: fcm.configured(), coordinatorEnabled: row.coordinatorEnabled && fcm.configured() };
 }
 export async function settings(driver: Session) { return prisma.$transaction(async tx => publicSettings(await ensureInstallation(tx, driver))); }
 export async function setEnabled(driver: Session, enabled: boolean) {
   return prisma.$transaction(async tx => {
     const row = await ensureInstallation(tx, driver);
-    return publicSettings(await tx.notificationInstallation.update({ where: { id: row.id }, data: { enabled } }));
+    return publicSettings(await tx.notificationInstallation.update({ where: { id: row.id }, data: { enabled: true } }));
   });
 }
 export async function register(driver: Session, token: string | null, enabled: boolean) {
@@ -45,7 +46,7 @@ export async function register(driver: Session, token: string | null, enabled: b
   const updated = await prisma.$transaction(async tx => {
     const row = await ensureInstallation(tx, driver);
     if (token) await tx.notificationInstallation.updateMany({ where: { token, id: { not: row.id } }, data: { token: null, secretHash: null, coordinatorEnabled: false } });
-    return tx.notificationInstallation.update({ where: { id: row.id }, data: { token, enabled, secretHash: digest(notificationToken), coordinatorEnabled: Boolean(token) && fcm.configured() } });
+    return tx.notificationInstallation.update({ where: { id: row.id }, data: { token, enabled: true, secretHash: digest(notificationToken), coordinatorEnabled: Boolean(token) && fcm.configured() } });
   });
   return { ...publicSettings(updated), notificationToken };
 }
@@ -63,24 +64,24 @@ async function capability(token: string) {
   return row;
 }
 async function canonical(row: NotificationInstallation, delivery: CanonicalDelivery): Promise<Event | null> {
-  if (!row.enabled || delivery.cancelledAt || delivery.invalidatedAt || delivery.expiresAt.getTime() <= Date.now()) return null;
+  if (delivery.cancelledAt || delivery.invalidatedAt || delivery.expiresAt.getTime() <= Date.now()) return null;
   const driver = await liveContext(row);
   if (!driver) return null;
   if (delivery.channel === 'chat') {
     const message = await prisma.message.findUnique({ where: { id: delivery.resourceId } });
-    if (!message || (!message.isBroadcast && message.receiverId !== driver.userId) || message.senderId === driver.userId) return null;
+    if (!message || (message.isBroadcast && (message.sentAt < driver.user.createdAt || !(await prisma.user.findFirst({ where: { id: message.senderId ?? '', role: 'ADMIN' } })))) || (!message.isBroadcast && message.receiverId !== driver.userId) || message.senderId === driver.userId) return null;
     const readAt = driver.lastChatReadAt;
     if (readAt && (message.sentAt < readAt || (message.sentAt.getTime() === readAt.getTime() && (!driver.lastChatReadMessageId || message.id <= driver.lastChatReadMessageId)))) return null;
     return { id: delivery.eventId, channel: 'chat', title: 'Сообщение диспетчера', body: message.body, messageId: message.id, expiresAt: delivery.expiresAt.toISOString() };
   }
   if (!driver.isOnline || !hasFreshGps(driver) || !driver.isAvailable || driver.shiftDeviceId !== row.deviceId || Number(driver.user.balance?.amount ?? 0) <= 0) return null;
   const active = await prisma.order.findFirst({ where: { driverId: driver.id, status: { in: ['ACCEPTED', 'WAITING', 'STARTED'] } }, select: { id: true } });
-  const order = await prisma.order.findUnique({ where: { id: delivery.resourceId } });
-  if (active || !order || order.status !== 'NEW' || order.driverId || order.privateOfferStoppedAt) return null;
+  const order = await prisma.order.findUnique({ where: { id: delivery.resourceId }, include: { district: true } });
+  if (active || !order || notificationEventId(order) !== delivery.eventId || order.status !== 'NEW' || order.driverId || order.privateOfferStoppedAt) return null;
   if (delivery.eventId.startsWith('private:')) {
     if (order.privateOfferDriverId !== driver.id || order.privateOfferExpiresAt?.toISOString() !== delivery.expiresAt.toISOString()) return null;
   } else if (order.privateOfferDriverId || order.districtId !== driver.districtId || order.publicRegionOnlyUntil?.toISOString() !== delivery.expiresAt.toISOString()) return null;
-  return { id: delivery.eventId, channel: 'orders', title: 'Новый заказ', body: delivery.eventId.startsWith('private:') ? 'Личное предложение. Откройте приложение.' : 'Доступен заказ. Откройте приложение.', orderId: order.id, expiresAt: delivery.expiresAt.toISOString() };
+  return { id: delivery.eventId, channel: 'orders', title: 'Новый заказ', body: delivery.eventId.startsWith('private:') ? 'Личное предложение. Откройте приложение.' : 'Доступен заказ. Откройте приложение.', orderId: order.id, order: publicOfferPayload(order), offerAttemptId: order.offerAttemptId, serverTime: new Date().toISOString(), expiresAt: delivery.expiresAt.toISOString() };
 }
 export async function verify(token: string, eventId: string) {
   const row = await capability(token);
@@ -96,9 +97,9 @@ export async function verify(token: string, eventId: string) {
       const message = await prisma.message.findUnique({ where: { id: resourceId }, select: { sentAt: true } });
       if (message) candidate = { eventId, resourceId, channel: 'chat', expiresAt: new Date(message.sentAt.getTime() + CHAT_LIFETIME_MS), cancelledAt: null, invalidatedAt: null };
     } else if ((parts[0] === 'order' || parts[0] === 'private') && resourceId) {
-      const order = await prisma.order.findUnique({ where: { id: resourceId }, select: { publicRegionOnlyUntil: true, privateOfferExpiresAt: true } });
+      const order = await prisma.order.findUnique({ where: { id: resourceId }, select: { id: true, offerAttemptId: true, offerAttemptKind: true, privateOfferDriverId: true, publicRegionOnlyUntil: true, privateOfferExpiresAt: true } });
       const expiresAt = parts[0] === 'private' ? order?.privateOfferExpiresAt : order?.publicRegionOnlyUntil;
-      const expectedId = expiresAt && (parts[0] === 'private' ? `private:${resourceId}:${expiresAt.toISOString()}` : `order:${resourceId}`);
+      const expectedId = order && notificationEventId(order);
       if (expiresAt && eventId === expectedId) candidate = { eventId, resourceId, channel: 'orders', expiresAt, cancelledAt: null, invalidatedAt: null };
     }
   }
@@ -140,15 +141,15 @@ export async function rotateToken(secret: string, token: string) {
 }
 // Called inside the message/order transaction; no sockets or remote services.
 export async function enqueueChat(tx: Prisma.TransactionClient, message: { id: string; receiverId: string | null; isBroadcast: boolean; senderId: string | null; sentAt: Date }) {
-  const installations = await tx.notificationInstallation.findMany({ where: { enabled: true, driver: { userId: message.isBroadcast ? { not: message.senderId ?? '' } : message.receiverId ?? '__none__' } } });
+  const installations = await tx.notificationInstallation.findMany({ where: { driver: { userId: message.isBroadcast ? { not: message.senderId ?? '' } : message.receiverId ?? '__none__' } } });
   const expiresAt = new Date(message.sentAt.getTime() + CHAT_LIFETIME_MS);
   if (installations.length) await tx.notificationDelivery.createMany({ data: installations.map(row => ({ installationId: row.id, eventId: `chat:${message.id}`, channel: 'chat', resourceId: message.id, expiresAt, notBefore: new Date(Date.now() + FALLBACK_MS) })), skipDuplicates: true });
 }
-export async function enqueueOrder(tx: Prisma.TransactionClient, order: { id: string; districtId: string | null; privateOfferDriverId: string | null; privateOfferExpiresAt: Date | null; publicRegionOnlyUntil: Date | null }) {
+export async function enqueueOrder(tx: Prisma.TransactionClient, order: { id: string; districtId: string | null; privateOfferDriverId: string | null; privateOfferExpiresAt: Date | null; publicRegionOnlyUntil: Date | null; offerAttemptId: string; offerAttemptKind: string }) {
   const expiresAt = order.privateOfferExpiresAt ?? order.publicRegionOnlyUntil;
   if (!expiresAt) return;
-  const installations = await tx.notificationInstallation.findMany({ where: { enabled: true, driver: order.privateOfferDriverId ? { id: order.privateOfferDriverId } : { districtId: order.districtId } } });
-  const eventId = order.privateOfferExpiresAt ? `private:${order.id}:${expiresAt.toISOString()}` : `order:${order.id}`;
+  const installations = await tx.notificationInstallation.findMany({ where: { driver: order.privateOfferDriverId ? { id: order.privateOfferDriverId } : { districtId: order.districtId } } });
+  const eventId = notificationEventId(order);
   if (installations.length) await tx.notificationDelivery.createMany({ data: installations.map(row => ({ installationId: row.id, eventId, channel: 'orders', resourceId: order.id, expiresAt, notBefore: new Date(Date.now() + FALLBACK_MS) })), skipDuplicates: true });
 }
 // Persist invalidation with the order mutation. Sending the same opaque ID
@@ -248,4 +249,21 @@ export async function processPending(): Promise<void> {
       }
     }
   } finally { processing = false; }
+}
+
+// Successful response is an authoritative snapshot of current order alerts.
+// It also recovers offers created before this installation registered.
+export async function inbox(driver: Session) {
+  const row = await prisma.$transaction(tx => ensureInstallation(tx, driver));
+  const now = new Date();
+  const orders = await prisma.order.findMany({ where: { status: 'NEW', driverId: null, privateOfferStoppedAt: null,
+    OR: [{ privateOfferDriverId: driver.id, privateOfferExpiresAt: { gt: now } }, { privateOfferDriverId: null, publicRegionOnlyUntil: { gt: now } }] } });
+  const events: Event[] = [];
+  for (const order of orders) {
+    const expiresAt = order.privateOfferExpiresAt ?? order.publicRegionOnlyUntil;
+    if (!expiresAt) continue;
+    const event = await canonical(row, { eventId: notificationEventId(order), resourceId: order.id, channel: 'orders', expiresAt, cancelledAt: null, invalidatedAt: null });
+    if (event) events.push(event);
+  }
+  return { events, serverTime: new Date().toISOString() };
 }

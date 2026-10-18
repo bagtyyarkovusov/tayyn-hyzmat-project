@@ -6,7 +6,7 @@ import { nativeNotifications } from "./nativeNotifications";
 import { syncAlertPermission } from "./alerts";
 
 // Installation preferences survive sign-out and reload. A denial or dismissed
-// OS dialog must be recovered deliberately through GPS/Profile, not on login.
+// OS dialog must be recovered deliberately through OS settings, not on login.
 const attempted = (permission: string) =>
   `tayyn.android.permission-onboarding.${permission}.v1`;
 let pending = Promise.resolve();

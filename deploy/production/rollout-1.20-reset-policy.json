@@ -1,0 +1,56 @@
+{
+  "id": "driver-rollout-1.20",
+  "preserve": {
+    "users": "WHERE role='ADMIN'",
+    "admins": "",
+    "districts": "",
+    "_prisma_migrations": "",
+    "settings": "",
+    "geocoder_budget": ""
+  },
+  "schemas": [
+    {
+      "name": "production-before-1.20",
+      "catalog_sha256": "dc958cba4cfab2971d168990bfe53ba26db608a398b4abb277db4b4f505cee3a",
+      "delete": [
+        "notification_deliveries",
+        "notification_installations",
+        "native_shift_leases",
+        "driver_devices",
+        "driver_locations",
+        "driver_address_state",
+        "messages",
+        "notifications",
+        "order_resolution_audits",
+        "transactions",
+        "orders",
+        "vehicles",
+        "drivers",
+        "balances",
+        "refresh_tokens"
+      ]
+    },
+    {
+      "name": "rollout-1.20",
+      "catalog_sha256": "656fba7bb9bf1bda3c7b542e75eb7fa102462476113debf648a1c0baf749d03d",
+      "delete": [
+        "notification_deliveries",
+        "notification_installations",
+        "native_shift_leases",
+        "driver_devices",
+        "driver_locations",
+        "driver_address_state",
+        "messages",
+        "notifications",
+        "order_resolution_audits",
+        "order_assignments",
+        "transactions",
+        "orders",
+        "vehicles",
+        "drivers",
+        "balances",
+        "refresh_tokens"
+      ]
+    }
+  ]
+}

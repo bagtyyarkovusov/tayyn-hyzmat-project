@@ -84,12 +84,13 @@ async function fixture(browser: Browser) {
 
 async function spyOnBrowserNotifications(
   page: import("@playwright/test").Page,
+  permission: NotificationPermission = "granted",
 ) {
-  await page.addInitScript(() => {
+  await page.addInitScript((permission) => {
     const notices: string[] = [];
     const tray: FakeNotification[] = [];
     class FakeNotification {
-      static permission = "granted" as NotificationPermission;
+      static permission = permission;
       onclick: (() => void) | null = null;
       closed = false;
       constructor(_title: string, options: NotificationOptions) {
@@ -109,29 +110,23 @@ async function spyOnBrowserNotifications(
       configurable: true,
     });
     Object.defineProperty(window, "__notificationTray", { value: tray });
-  });
+  }, permission);
 }
 
-test("one Profile notification switch mutes alerts without blocking the driver's shift", async ({
+test("Profile has no notification settings and denied OS permission does not block a shift", async ({
   browser,
 }) => {
   const { page, close } = await fixture(browser);
   try {
+    await spyOnBrowserNotifications(page, "denied");
     await page.goto("/driverProfile");
-    const toggle = page.getByRole("switch", {
-      name: "Уведомления",
-      exact: true,
-    });
-    await expect(toggle).toHaveAttribute("aria-checked", "true");
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-checked", "false");
-    await page.goto("/driverDashboard");
     await expect(
-      page.getByRole("button", {
-        name: "Включить уведомления и звук",
-        exact: true,
-      }),
+      page.getByRole("button", { name: "Выйти", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("switch", { name: "Уведомления", exact: true }),
     ).toHaveCount(0);
+    await page.getByRole("link", { name: "Заказы", exact: true }).click();
     await page
       .getByRole("button", { name: "Включить GPS", exact: true })
       .click();
@@ -141,8 +136,6 @@ test("one Profile notification switch mutes alerts without blocking the driver's
     await expect(
       page.getByRole("button", { name: "Уйти с линии", exact: true }),
     ).toBeVisible();
-    await page.goto("/driverProfile");
-    await expect(toggle).toHaveAttribute("aria-checked", "false");
   } finally {
     await close();
   }
@@ -236,20 +229,16 @@ for (const screen of ["driverMap", "driverProfile"])
     }
   });
 
-test("muted notifications preserve incoming chat history without previews", async ({
+test("denied OS notifications preserve incoming chat history without previews", async ({
   browser,
 }) => {
   const { page, send, close } = await fixture(browser);
   try {
-    await spyOnBrowserNotifications(page);
+    await spyOnBrowserNotifications(page, "denied");
     await page.goto("/driverProfile");
-    const toggle = page.getByRole("switch", {
-      name: "Уведомления",
-      exact: true,
-    });
-    await expect(toggle).toBeEnabled();
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-checked", "false");
+    await expect(
+      page.getByRole("button", { name: "Выйти", exact: true }),
+    ).toBeVisible();
     await send("Без уведомления, но в истории чата");
     await page.getByRole("link", { name: "Чат", exact: true }).click();
     await expect(
@@ -288,6 +277,19 @@ async function emulateNativeNotificationTray(
     bridge.emitNativeToken = () => tokenListener?.();
     bridge.Capacitor = {
       PluginHeaders: [
+        {
+          name: "DriverUi",
+          methods: [
+            "ready",
+            "respondBack",
+            "resetBack",
+            "detach",
+            "theme",
+            "removeListener",
+          ]
+            .map((name) => ({ name, rtype: "promise" }))
+            .concat([{ name: "addListener", rtype: "callback" }]),
+        },
         {
           name: "DriverShift",
           methods: ["status", "permissions", "stop", "notificationTarget"].map(
@@ -416,8 +418,8 @@ test("logout closes the previous driver's browser previews and removes their cli
     await spyOnBrowserNotifications(page);
     await page.goto("/driverProfile");
     await expect(
-      page.getByRole("switch", { name: "Уведомления", exact: true }),
-    ).toBeEnabled();
+      page.getByRole("button", { name: "Выйти", exact: true }),
+    ).toBeVisible();
     await send("Личное сообщение предыдущему водителю");
     await expect
       .poll(() =>
@@ -456,8 +458,8 @@ test("overlapping native token refreshes leave the installation with a working c
     await emulateNativeNotificationTray(page);
     await page.goto("/driverProfile");
     await expect(
-      page.getByRole("switch", { name: "Уведомления", exact: true }),
-    ).toBeEnabled();
+      page.getByRole("button", { name: "Выйти", exact: true }),
+    ).toBeVisible();
     await expect
       .poll(() =>
         page.evaluate(
@@ -540,19 +542,26 @@ test("overlapping native token refreshes leave the installation with a working c
   }
 });
 
-test("muting notifications survives a delayed native token registration", async ({
+test("navigation preserves a delayed native token registration", async ({
   browser,
 }) => {
-  const { page, settings, close } = await fixture(browser);
+  const { page, close } = await fixture(browser);
   let releaseRegistration = () => {};
   try {
     await emulateNativeNotificationTray(page);
     await page.goto("/driverProfile");
-    const toggle = page.getByRole("switch", {
-      name: "Уведомления",
-      exact: true,
-    });
-    await expect(toggle).toBeEnabled();
+    await expect(
+      page.getByRole("button", { name: "Выйти", exact: true }),
+    ).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as { nativeNotificationToken: string })
+              .nativeNotificationToken,
+        ),
+      )
+      .not.toBe("");
     let notifyHeld!: () => void;
     const held = new Promise<void>((resolve) => {
       notifyHeld = resolve;
@@ -570,21 +579,11 @@ test("muting notifications survives a delayed native token registration", async 
       (window as unknown as { emitNativeToken: () => void }).emitNativeToken(),
     );
     await held;
-    const muted = page.waitForResponse(
-      (response) =>
-        response.url().endsWith("/driver/notifications/settings") &&
-        response.request().method() === "POST" &&
-        response.ok(),
-    );
-    await toggle.click();
-    // The user's mute command is queued behind registration, if necessary.
-    await Promise.race([
-      muted,
-      new Promise((resolve) => setTimeout(resolve, 1000)),
-    ]);
+    await page.getByRole("link", { name: "Чат", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Диспетчер" }),
+    ).toBeVisible();
     releaseRegistration();
-    await expect(toggle).toHaveAttribute("aria-checked", "false");
-    await expect(toggle).toBeEnabled();
     await expect
       .poll(() =>
         page.evaluate(
@@ -594,7 +593,15 @@ test("muting notifications survives a delayed native token registration", async 
         ),
       )
       .toBe(2);
-    await expect.poll(async () => (await settings()).enabled).toBe(false);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as { nativeNotificationToken: string })
+              .nativeNotificationToken,
+        ),
+      )
+      .not.toBe("");
   } finally {
     releaseRegistration();
     await close();

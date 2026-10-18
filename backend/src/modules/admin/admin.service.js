@@ -1,3 +1,4 @@
+const { adminBroadcasts, driverChatVisibility } = require('../chat/visibility');
 const { beforeCursor, markRead } = require('../chat/cursors');
 const { persistMessage } = require('../chat/persist-message');
 const { Prisma } = require('@prisma/client');
@@ -13,7 +14,8 @@ const authService = require('../auth/auth.service');
 const { hashPassword } = require('../../utils/password');
 
 const { MAX_WALLET_AMOUNT } = require('../../utils/money-policy');
-const { lockedBalance } = require('../balance/locked-balance');
+const { orderPayload } = require('../orders/order-payload');
+const { lockedBalance, walletSummary } = require('../balance/locked-balance');
 
 const D = (value) => new Prisma.Decimal(value ?? 0);
 
@@ -38,6 +40,22 @@ function omitPushToken(driver) {
   if (!driver) return driver;
   const { orders, ...rest } = require('../driver/public-profile').publicDriverProfile(driver);
   return { ...rest, accountDeleted: Boolean(rest.user?.deletedAt || rest.user?.status === 'BLOCKED'), hasActiveTrip: Boolean(orders?.length), isAvailable: rest.isAvailable && !orders?.length };
+}
+
+async function withWallets(drivers) {
+  if (!drivers.length) return drivers;
+  const [balances, holds] = await prisma.$transaction(async tx => Promise.all([
+    tx.balance.findMany({ where: { userId: { in: drivers.map(driver => driver.userId) } } }),
+    tx.orderAssignment.groupBy({ by: ['driverId'], where: { driverId: { in: drivers.map(driver => driver.id) }, fundingState: 'HELD' }, _sum: { quotedAmount: true } })
+  ]), { isolationLevel: 'RepeatableRead' });
+  const byUser = new Map(balances.map(balance => [balance.userId, balance]));
+  const byDriver = new Map(holds.map(hold => [hold.driverId, hold._sum.quotedAmount]));
+  return drivers.map(driver => {
+    const balance = byUser.get(driver.userId);
+    if (!balance || !driver.user) return driver;
+    const held = D(byDriver.get(driver.id));
+    return { ...driver, user: { ...driver.user, balance: { ...balance, total: balance.amount, held, available: balance.amount.sub(held) } } };
+  });
 }
 
 async function createDriver({ phone, fullName, password }, actorId) {
@@ -84,7 +102,7 @@ async function listDrivers({ status, page, limit }) {
     }),
     prisma.driver.count({ where })
   ]);
-  return { items: await withUnreadFlag(items.map(omitPushToken)), total, page, limit };
+  return { items: await withUnreadFlag(await withWallets(items.map(omitPushToken))), total, page, limit };
 }
 
 // hasUnreadMessage: has this driver sent a message (to the shared admin
@@ -164,7 +182,7 @@ async function getDriver(driverId) {
     }
   });
   if (!driver) throw ApiError.notFound('Водитель не найден');
-  return omitPushToken(driver);
+  return (await withWallets([omitPushToken(driver)]))[0];
 }
 
 async function approveDriver(driverId, actorId) {
@@ -296,7 +314,8 @@ async function adjustBalance(driverId, { amount, type, note, operationId }, acto
         throw ApiError.conflict('Идентификатор операции уже использован для другого действия');
       }
       const { balance: savedBalance, ...transaction } = previous;
-      return { balance: { ...savedBalance, amount: previous.balanceAfter }, transaction, replayed: true };
+      const held = D(previous.heldAfter);
+      return { balance: { ...savedBalance, amount: previous.balanceAfter, total: previous.balanceAfter, held, available: previous.balanceAfter.sub(held) }, transaction, replayed: true };
     }
     // Same lock order as order mutations: driver, optional order, wallet.
     await tx.$queryRaw`SELECT id FROM drivers WHERE id = ${driverId} FOR UPDATE`;
@@ -306,13 +325,15 @@ async function adjustBalance(driverId, { amount, type, note, operationId }, acto
     // Keep room to return an active trip's actual debit on cancellation.
     // Locking the driver serializes this check with accept/cancel/complete.
     const refundable = await tx.transaction.aggregate({
-      where: { balanceId: balance.id, type: 'PAYMENT', order: { status: { in: ['ACCEPTED', 'WAITING', 'STARTED'] } } },
+      where: { balanceId: balance.id, type: 'PAYMENT', order: { status: { in: ['ACCEPTED', 'WAITING'] }, assignments: { none: {} } } },
       _sum: { amount: true }
     });
     const reservedRefund = D(refundable._sum.amount).abs();
     if (newAmount.add(reservedRefund).gt(MAX_WALLET_AMOUNT)) {
       throw ApiError.badRequest('Превышен максимальный баланс с учётом возможного возврата за поездку');
     }
+    const wallet = await walletSummary(tx, balance);
+    if (newAmount.lt(wallet.held)) throw ApiError.badRequest('Операция расходует удержанные средства заказа');
     if (newAmount.isNegative()) {
       throw ApiError.badRequest('Операция приведёт к отрицательному балансу');
     }
@@ -324,13 +345,14 @@ async function adjustBalance(driverId, { amount, type, note, operationId }, acto
         type,
         amount: D(amount),
         balanceAfter: newAmount,
+        heldAfter: wallet.held,
         note,
         createdBy: actorId,
         operationId
       }
     });
 
-    return { balance: { ...balance, amount: newAmount }, transaction };
+    return { balance: await walletSummary(tx, { ...balance, amount: newAmount }), transaction };
   });
 
   if (result.replayed) return result;
@@ -340,7 +362,7 @@ async function adjustBalance(driverId, { amount, type, note, operationId }, acto
     // панелью") must reflect a balance change without the admin refetching.
     io.to(rooms.driver(driverId)).to(rooms.admins()).emit('balance:updated', {
       driverId,
-      amount: result.balance.amount,
+      ...result.balance,
       reason: type,
       note: note || null
     });
@@ -377,17 +399,17 @@ async function getHistory(driverId, { page, limit }) {
       : Promise.resolve([]),
     balance ? prisma.transaction.count({ where: { balanceId: balance.id } }) : Promise.resolve(0),
     prisma.order.findMany({
-      where: { driverId },
+      where: { OR: [{ driverId }, { assignments: { some: { driverId } } }] },
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * limit,
       take: limit
     }),
-    prisma.order.count({ where: { driverId } })
+    prisma.order.count({ where: { OR: [{ driverId }, { assignments: { some: { driverId } } }] } })
   ]);
 
   return {
     driver: { id: driver.id, fullName: driver.user.fullName, phone: driver.user.archivedPhone || driver.user.phone, status: driver.status },
-    balance,
+    balance: (await withWallets([driver]))[0].user.balance ?? null,
     transactions: { items: transactions, total: transactionsTotal, page, limit },
     orders: { items: orders, total: ordersTotal, page, limit }
   };
@@ -419,13 +441,10 @@ async function sendMessage({ driverId, broadcast, title, body, clientMessageId }
   return message;
 }
 
-// The chat thread with one driver: any Message where they were either the
-// sender or the receiver (an admin-broadcast message never targets a single
-// driver by receiverId, so it doesn't show up here - that's intentional,
-// broadcasts aren't part of a 1:1 conversation view).
+// Merge private messages and broadcasts the account could have received.
 async function getDriverMessages(driverId, { page, limit, beforeMessageId }) {
   const driver = await findDriverOrThrow(driverId);
-  const where = { OR: [{ senderId: driver.userId }, { receiverId: driver.userId }] };
+  const { conversation: where } = await driverChatVisibility(driver.userId);
 
   const older = await beforeCursor(where, beforeMessageId);
   const [items, total] = await Promise.all([
@@ -441,6 +460,16 @@ async function getDriverMessages(driverId, { page, limit, beforeMessageId }) {
   return { items: items.reverse(), total, page, limit };
 }
 
+async function getBroadcastMessages({ page, limit, beforeMessageId }) {
+  const where = adminBroadcasts();
+  const older = await beforeCursor(where, beforeMessageId);
+  const [items, total] = await Promise.all([
+    prisma.message.findMany({ where: { AND: [where, older] }, orderBy: [{ sentAt: 'desc' }, { id: 'desc' }], skip: beforeMessageId ? 0 : (page - 1) * limit, take: limit }),
+    prisma.message.count({ where })
+  ]);
+  return { items: items.reverse(), total, page, limit };
+}
+
 const ORDER_STATUS_GROUPS = {
   waiting: 'NEW',
   active: { in: ['NEW', 'ACCEPTED', 'WAITING', 'STARTED'] },
@@ -453,8 +482,9 @@ const ORDER_STATUS_GROUPS = {
   cancelled: 'CANCELLED'
 };
 
-async function listOrders({ status, page, limit, customerPhone, driverPhone, orderNumber }) {
+async function listOrders({ status, page, limit, customerPhone, driverPhone, orderNumber, cancellationReviewRequired }) {
   const where = {
+    ...(cancellationReviewRequired ? { cancellationReviewRequired: true } : {}),
     ...(status && status !== "all"
       ? { status: ORDER_STATUS_GROUPS[status] }
       : {}),
@@ -472,15 +502,14 @@ async function listOrders({ status, page, limit, customerPhone, driverPhone, ord
       },
       select: { driver: { select: { id: true } } },
     });
-    where.driverId = {
-      in: users.flatMap(({ driver }) => (driver ? [driver.id] : [])),
-    };
+    const ids = users.flatMap(({ driver }) => (driver ? [driver.id] : []));
+    where.OR = [{ driverId: { in: ids } }, { assignments: { some: { driverId: { in: ids } } } }];
   }
 
   const [items, total] = await Promise.all([
     prisma.order.findMany({
       where,
-      orderBy: { createdAt: "desc" },
+      orderBy: status === "cancelled" ? [{ cancellationReviewRequired: "desc" }, { cancelledAt: "desc" }, { id: "desc" }] : [{ createdAt: "desc" }, { id: "desc" }],
       skip: (page - 1) * limit,
       take: limit,
       include: {
@@ -492,8 +521,9 @@ async function listOrders({ status, page, limit, customerPhone, driverPhone, ord
           },
         },
         district: true,
+        assignments: { orderBy: [{ acceptedAt: 'asc' }, { id: 'asc' }], include: { driver: { select: { id: true, user: { select: { fullName: true, phone: true, archivedPhone: true } } } } } },
         resolutionAudits: {
-          orderBy: { createdAt: "desc" },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           take: 1,
           include: { actor: { select: { fullName: true } } },
         },
@@ -505,7 +535,8 @@ async function listOrders({ status, page, limit, customerPhone, driverPhone, ord
   const now = Date.now();
   return {
     items: items.map((order) => ({
-      ...order,
+      ...orderPayload(order),
+      assignments: order.assignments.map(assignment => ({ ...assignment, driver: require("../driver/public-profile").publicDriverProfile(assignment.driver) })),
       driver: require("../driver/public-profile").publicDriverProfile(
         order.driver,
       ),
@@ -654,6 +685,7 @@ module.exports = {
   getHistory,
   sendMessage,
   getDriverMessages,
+  getBroadcastMessages,
   listOrders,
   getActivity,
   updateVehicle,

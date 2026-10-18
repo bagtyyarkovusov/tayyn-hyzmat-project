@@ -9,12 +9,14 @@ import {
   ToastTitle,
   ToastViewport,
 } from "reka-ui";
+import { consumeDriverNotice } from "../useDriver";
 import { Button } from "@/shared/ui/button";
 
 const props = defineProps<{
   blockers: string[];
   error: string;
   notice: string;
+  noticeEventId?: string;
   attempt: number;
 }>();
 const open = ref(false);
@@ -24,8 +26,9 @@ const notification = ref(0);
 const seenMessages = new Set<string>();
 let lastAttempt = -1;
 watch(
-  () => [props.error, props.notice, props.attempt] as const,
-  ([error, notice, attempt]) => {
+  () =>
+    [props.error, props.notice, props.attempt, props.noticeEventId] as const,
+  ([error, notice, attempt, eventId]) => {
     const newAttempt = attempt !== lastAttempt;
     if (newAttempt) {
       seenMessages.clear();
@@ -42,6 +45,11 @@ watch(
     // Background refreshes can clear and repeat the same failure. Only a new
     // message or an explicit driver retry should create another notification.
     if (seenMessages.has(key)) return;
+    if (
+      !error &&
+      !consumeDriverNotice(eventId || `notice:${attempt}:${notice}`)
+    )
+      return;
     seenMessages.add(key);
     text.value = message;
     destructive.value = Boolean(error);
@@ -96,7 +104,7 @@ watch(
     </ToastRoot>
     <ToastViewport
       label="Сообщения водителю ({hotkey})"
-      class="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] left-1/2 z-[60] flex w-[calc(100%-1rem)] max-w-xl -translate-x-1/2 flex-col outline-none"
+      class="fixed bottom-[calc(5.5rem+var(--native-safe-bottom,env(safe-area-inset-bottom,0px)))] left-1/2 z-[60] flex w-[calc(100%-1rem)] max-w-xl -translate-x-1/2 flex-col outline-none"
     />
   </ToastProvider>
 </template>

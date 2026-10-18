@@ -24,15 +24,25 @@ public final class NotificationDelivery {
     return localNow + remaining;
   }
 
-  /** Canonical events may be acknowledged silently when chat is visible or alerts are muted. */
+  /** A local close may happen before verification finishes or a row exists. */
+  public synchronized void dismiss(java.util.Set<String> ids, long now) {
+    Map<String, Long> seen = store.load();
+    for (String id : ids) {
+      Long previous = seen.get(id);
+      seen.put(id, Math.max(previous == null ? 0L : previous, now + 86400000L));
+    }
+    store.save(seen);
+  }
+
+  /** Canonical chat events may be acknowledged silently while chat is visible. */
   public synchronized boolean shouldDisplay(String id, String channel, long expiresAt, long now,
-      boolean enabled, boolean chatVisible) {
+      boolean chatVisible) {
     Map<String, Long> seen = store.load();
     for (Iterator<Map.Entry<String, Long>> it = seen.entrySet().iterator(); it.hasNext();)
       if (it.next().getValue() <= now) it.remove();
     boolean unseen = !seen.containsKey(id);
     if (expiresAt > now) seen.put(id, expiresAt);
     store.save(seen);
-    return unseen && expiresAt > now && enabled && !("chat".equals(channel) && chatVisible);
+    return unseen && expiresAt > now && !("chat".equals(channel) && chatVisible);
   }
 }
