@@ -31,7 +31,7 @@ monitoring VDS checks -> Gmail SMTP with verified TLS -> personal Gmail recipien
 
 The purchased hosts, agreed domain and installed release are recorded below. DNS, trusted TLS, reboot-persistent management access and the application deployment are verified. Keep private keys, API keys and passwords out of this inventory.
 
-The agreed production origin is `https://tayynhyzmat.bagtyyar.dev`. Preserve the existing root-domain site. Use a separate monitoring hostname only if the monitor has a web UI that must be exposed. Do not publish PostgreSQL or Docker's control socket.
+The new production origin is `https://taxi.tayynhyzmat.com`; the owner retired `tayynhyzmat.bagtyyar.dev`. Certificate issuance and the live configuration switch are in progress. Preserve the existing root-domain site. Use a separate monitoring hostname only if the monitor has a web UI that must be exposed. Do not publish PostgreSQL or Docker's control socket.
 
 ## Operational inventory
 
@@ -128,7 +128,7 @@ A clean signed production APK was rebuilt from source commit `3b055c31` with the
 
 ## Namecheap DNS and TLS
 
-At Namecheap, create an `A` record for the production hostname pointing to the main VPS public IPv4 address. Add an `AAAA` record only after IPv6 is configured and tested; a broken AAAA record can make some phones fail before IPv4 is tried. Point a separate monitoring hostname to Standard S only if needed. Keep DNS TTL low during cutover, then raise it after verification.
+At Namecheap, in the `tayynhyzmat.com` zone, use an `A` record with Host `taxi`, value `216.250.8.238` and Automatic TTL. Manual certificate validation uses a TXT record with Host `_acme-challenge.taxi` in that same zone and the active Certbot challenge value. Add an `AAAA` record only after IPv6 is configured and tested; a broken AAAA record can make some phones fail before IPv4 is tried. Point a separate monitoring hostname to Standard S only if needed. Keep DNS TTL low during cutover, then raise it after verification.
 
 The selected external-certificate Caddy configuration terminates TLS and proxies `/` to nginx web, while `/api`, `/health` and `/socket.io` go directly to the API. This keeps one trusted proxy before Express. Place the publicly trusted certificate and matching private key at `TLS_CERT_PATH` and `TLS_KEY_PATH` on the main VPS with restricted permissions. Verify port 443, the trusted chain, WebSocket upgrade, CORS origin and mobile network access before calling deployment ready. Check the port-80 redirect separately; the present network restriction means it cannot be promised to all clients. DNS-01 avoids inbound CA validation but still requires reachable ACME services and authoritative DNS. Keep an existing management SSH session and provider-console recovery while changing networking.
 
@@ -245,8 +245,8 @@ python3 scripts/production-readiness.py \
   --project-name tayyn-production \
   --compose-file deploy/production/compose.production.yaml \
   --network --offline --email-transport smtp \
-  --api-url https://tayynhyzmat.bagtyyar.dev/api \
-  --web-url https://tayynhyzmat.bagtyyar.dev \
+  --api-url https://taxi.tayynhyzmat.com/api \
+  --web-url https://taxi.tayynhyzmat.com \
   --json > readiness-report.json
 ```
 

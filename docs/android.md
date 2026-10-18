@@ -41,15 +41,15 @@ The artifact is `android/app/build/outputs/apk/debug/TayynHyzmat-debug.apk`. A d
 
 The production APK uses application ID `tayyn.hyzmat.production`, registered in the existing Firebase project `tayyn-hyzmat`. The debug APK keeps `io.openride.driver.test`. Java classes and the Android namespace remain `io.openride.driver`; these internal names do not determine which app Android installs. Capacitor's app ID matches the production application ID, and the manifest's FileProvider authority follows the selected variant automatically.
 
-Place the matching Firebase Android configuration in ignored `android/app/src/release/google-services.json`, mode `0600`. Keep the compatible test configuration in `android/app/src/debug/google-services.json`. These client files configure the APK; the separate Firebase Admin service-account credential belongs only on the production backend and must never enter Android assets or an APK. The current candidate version is `1.18`, code `19`.
+Place the matching Firebase Android configuration in ignored `android/app/src/release/google-services.json`, mode `0600`. Keep the compatible test configuration in `android/app/src/debug/google-services.json`. These client files configure the APK; the separate Firebase Admin service-account credential belongs only on the production backend and must never enter Android assets or an APK. The current candidate version is `1.19`, code `20`.
 
 This new production package has a newly generated production signing identity, separate from earlier test/legacy keys. The ignored `android/keystore/tayyn-hyzmat-production.jks` and `android/keystore/keystore.properties` are local build secrets. The keystore uses independent strong store and key passwords. Both files have mode `0600`, inside a `0700` directory. A protected local duplicate and owner instructions are under ignored `.local/vps-bootstrap/keys/android-production/`. The owner must copy both files to encrypted offline storage; two copies on the same Mac do not protect against loss of that machine. Never put these signing files on either VPS, in Git or in an APK. Preserve this key for every future production update. Losing it prevents in-place updates to already installed production APKs.
 
 Build the production candidate only after its backend certificate, API and migrations are verified:
 
 ```sh
-export VITE_API_URL=https://tayynhyzmat.bagtyyar.dev/api
-export VITE_SOCKET_URL=https://tayynhyzmat.bagtyyar.dev
+export VITE_API_URL=https://taxi.tayynhyzmat.com/api
+export VITE_SOCKET_URL=https://taxi.tayynhyzmat.com
 pnpm android:assembleRelease
 ```
 

@@ -1,6 +1,6 @@
 # Production setup and updates
 
-Production uses `https://tayynhyzmat.bagtyyar.dev` on the main VPS, `216.250.8.238`. The monitoring VPS is `216.250.9.242`. Railway remains a test environment. Do not copy its database into production.
+The new production origin is `https://taxi.tayynhyzmat.com` on the main VPS, `216.250.8.238`. The monitoring VPS is `216.250.9.242`. Railway remains a test environment. Do not copy its database into production.
 
 This guide separates settings that survive updates from the release files we replace. The first application installation is still in progress; completed checks and remaining gates are recorded in [the handoff](production-handoff.md).
 
@@ -119,7 +119,7 @@ Never automatically restore an older database. That could discard trips, balance
 
 The main VPS reached the production Let's Encrypt directory, but HTTP-01 failed when CA secondary validation could not reach port 80. A direct Mac port-80 probe also timed out. TLS-ALPN-01 through Caddy on port 443 also failed secondary validation. Public connectivity is incomplete across network paths; a successful local probe does not establish CA reachability. Repeating failed requests can consume CA limits.
 
-The selected first-install path is manual DNS-01 with external certificate files. Issuance succeeded after the owner added the TXT record. The certificate expires 2027-01-15. Runtime now selects `TLS_MODE=external`, `TLS_CERT_PATH=/etc/letsencrypt/live/tayynhyzmat.bagtyyar.dev/fullchain.pem` and `TLS_KEY_PATH=/etc/letsencrypt/live/tayynhyzmat.bagtyyar.dev/privkey.pem`. App operations uses only `compose.production.yaml`. For renewal, the Namecheap TXT Host is `_acme-challenge.tayynhyzmat` in the `bagtyyar.dev` zone. Use the new active Certbot value and verify public DNS before continuing; an old value cannot complete a new challenge.
+The selected first-install path is manual DNS-01 with external certificate files. Issuance succeeded after the owner added the TXT record. The old hostname certificate expires on 2027-01-15; the new hostname needs its own issuance and expiry verification. The new runtime configuration selects `TLS_MODE=external`, `TLS_CERT_PATH=/etc/letsencrypt/live/taxi.tayynhyzmat.com/fullchain.pem` and `TLS_KEY_PATH=/etc/letsencrypt/live/taxi.tayynhyzmat.com/privkey.pem`. App operations uses only `compose.production.yaml`. For renewal, the Namecheap TXT Host is `_acme-challenge.taxi` in the `tayynhyzmat.com` zone. Use the new active Certbot value and verify public DNS before continuing; an old value cannot complete a new challenge.
 
 After successful issuance, record the certificate's hostname, expiry and installed paths in the handoff. Keep certificate/key files root-controlled, set the runtime `TLS_CERT_PATH` and `TLS_KEY_PATH`, then run the reviewed initial deployment. Later certificate replacement must be followed by recreating only `proxy` so file bind mounts reopen the new files. Use the current release's env/image configuration and `--no-deps`; do not restart the database or change management SSH on port 2222 for renewal.
 
