@@ -25,3 +25,18 @@ Use server-supplied `notificationEventId`, never construct `order:<id>`. Public 
 ## Compatibility and isolation
 
 Old already-paid assigned trips retain their actual debit; starting cannot debit again, and pre-start admin/driver cancellation refunds the historical debit once. New accepted quotes are snapshotted in assignment history. All writes use driver, order, wallet lock order. Schema changes are additive; no migration resets data. Only disposable PostgreSQL tests run here; production reset belongs to operations.
+
+## Backend verification, 2026-10-18
+
+Implementation commits are `b7597d19a1ffaf6a822f2e9c6e2fcfd2ac5ceba4` and `688bc785e6834fd0fa6198230bf125db77672f2d`, based on `0bc68d8`. The second commit delivers driver cancellation to every signed-in driver installation as well as admins.
+
+- `pnpm --filter openride-backend typecheck` passed, including backend build and test types.
+- `pnpm --filter openride-backend test:unit` passed all 7 tests.
+- `pnpm --filter openride-backend test:integration` passed all 177 tests with no skips in 114.75 seconds. The repository runner applied all migrations to a fresh PostgreSQL 17 container, then removed only that container and its disposable storage.
+- `pnpm format:check` and `git diff --check` passed. No build tooling or Docker startup files changed.
+
+The initial funding regression failed against `0bc68d8`: accepting 40 TMT reduced a 500 balance to 460 when 500 was required. The cancellation socket regression failed with `Missing order:cancelled` before the driver-room fix, then passed for both the initiating installation and a second installation. The final full run includes both regressions.
+
+HTTP/Socket tests cover quote snapshots, exact funds, held-fund withdrawal/adjustment protection, competing accept/arrive/start/cancel requests, capture rollback after a ledger failure, duplicate resolutions, priority before pagination, same-order reoffer, old versus new canonical identities, inbox recovery, FCM fallback identity, preserved driver/quote history, legacy already-paid ACCEPTED/WAITING/STARTED trips, and broadcast cutoff/private-reply isolation. Old tests requiring acceptance debits, refunds for holds, WAITING driver cancellation or muting were intentionally updated to the approved behavior.
+
+No shared or production data was read or changed by fixtures/tests. This is backend verification, not evidence of production rollout or physical-phone delivery. FCM HTTP is the external test seam; authenticated application HTTP, sockets, order transactions and PostgreSQL are real. Host storage was low during this work; no shared Docker resources were pruned.
