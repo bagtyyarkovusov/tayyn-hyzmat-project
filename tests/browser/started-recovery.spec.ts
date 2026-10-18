@@ -10,10 +10,10 @@ let fixtureOrderId = "";
 test.afterEach(async () => {
   const prisma = new PrismaClient();
   try {
-    if (fixtureUserId)
-      await prisma.user.deleteMany({ where: { id: fixtureUserId } });
     if (fixtureOrderId)
       await prisma.order.deleteMany({ where: { id: fixtureOrderId } });
+    if (fixtureUserId)
+      await prisma.user.deleteMany({ where: { id: fixtureUserId } });
   } finally {
     await prisma.$disconnect();
     fixtureUserId = "";

@@ -39,6 +39,26 @@ let destinationMarker: any = null;
 let alive = true;
 let following = true;
 let locatePending = false;
+let gestureOrigin: { x: number; y: number } | undefined;
+let gestureMoved = false;
+function beginGesture(event: PointerEvent) {
+  gestureOrigin = { x: event.clientX, y: event.clientY };
+  gestureMoved = false;
+}
+function moveGesture(event: PointerEvent) {
+  if (
+    gestureOrigin &&
+    Math.hypot(
+      event.clientX - gestureOrigin.x,
+      event.clientY - gestureOrigin.y,
+    ) > 8
+  )
+    gestureMoved = true;
+}
+function endGesture() {
+  gestureOrigin = undefined;
+  gestureMoved = false;
+}
 function stopFollowing() {
   following = false;
 }
@@ -156,9 +176,23 @@ async function init() {
       zoom: 12,
       controls: [],
     });
-    map.events.add("actionbegin", (event: any) => {
-      const action = event.get("type");
-      if (action === "drag" || action === "multiTouch") stopFollowing();
+    // Yandex actionbegin exposes an action object, not a gesture type.
+    // Require pointer movement plus an actual center change; taps and our
+    // programmatic GPS recentering alone must not suspend follow.
+    container.value.addEventListener("pointerdown", beginGesture, true);
+    container.value.addEventListener("pointermove", moveGesture, true);
+    window.addEventListener("pointerup", endGesture);
+    window.addEventListener("pointercancel", endGesture);
+    map.events.add("boundschange", (event: any) => {
+      const before = event.get("oldCenter");
+      const after = event.get("newCenter");
+      if (
+        gestureMoved &&
+        before &&
+        after &&
+        (before[0] !== after[0] || before[1] !== after[1])
+      )
+        stopFollowing();
     });
     draw();
   } catch (e) {
@@ -195,6 +229,10 @@ watch(
 onMounted(() => void init());
 onUnmounted(() => {
   alive = false;
+  container.value?.removeEventListener("pointerdown", beginGesture, true);
+  container.value?.removeEventListener("pointermove", moveGesture, true);
+  window.removeEventListener("pointerup", endGesture);
+  window.removeEventListener("pointercancel", endGesture);
   ownMarker = null;
   pickupMarker = null;
   destinationMarker = null;

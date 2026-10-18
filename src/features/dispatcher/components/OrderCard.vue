@@ -25,7 +25,9 @@ const ageLabel = (seconds?: number | null) => {
 };
 </script>
 <template>
-  <article class="rounded-xl border bg-card p-4 sm:p-5">
+  <article
+    class="min-w-0 rounded-xl border bg-card p-4 sm:p-5 [overflow-wrap:anywhere]"
+  >
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div class="flex items-center gap-2">
         <Badge variant="secondary">{{ statusLabel(order.status) }}</Badge
@@ -43,7 +45,9 @@ const ageLabel = (seconds?: number | null) => {
     >
       Отменён водителем · требуется решение
     </p>
-    <div class="my-4 grid grid-cols-[20px_1fr] items-center gap-x-2 gap-y-1">
+    <div
+      class="my-4 grid grid-cols-[20px_minmax(0,1fr)] items-center gap-x-2 gap-y-1"
+    >
       <MapPin class="size-4 text-primary" />
       <p class="font-medium">
         {{ order.pickupAddress || "Подача уточняется по телефону" }}

@@ -104,9 +104,9 @@ async function fixture(
       events = {
         add: (
           name: string,
-          callback: (event: { get: (key: string) => string }) => void,
+          callback: (event: { get: (key: string) => number[] }) => void,
         ) => {
-          if (name === "actionbegin") {
+          if (name === "boundschange") {
             let origin: { x: number; y: number } | undefined;
             this.node.addEventListener("pointerdown", (event) => {
               origin = { x: event.clientX, y: event.clientY };
@@ -121,7 +121,10 @@ async function fixture(
                   8
               ) {
                 origin = undefined;
-                callback({ get: () => "drag" });
+                callback({
+                  get: (key) =>
+                    key === "oldCenter" ? [37.961, 58.321] : [37.963, 58.323],
+                });
               }
             });
           }

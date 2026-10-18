@@ -39,7 +39,11 @@ const eta = ref(10);
     <p
       class="offer-price flex flex-wrap items-baseline gap-x-2 font-semibold leading-none tabular-nums"
     >
-      <span>{{ money(state.incoming.priceEstimated).slice(0, -4) }}</span>
+      <span class="min-w-0 break-words [overflow-wrap:anywhere]">{{
+        money(state.incoming.priceEstimated)
+          .slice(0, -4)
+          .replace(/[\u00a0\u202f]/g, " ")
+      }}</span>
       <span class="text-base font-medium text-muted-foreground">{{
         " TMT"
       }}</span>

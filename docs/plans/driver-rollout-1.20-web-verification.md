@@ -36,3 +36,13 @@ Preserve each commit once during parent integration:
 | Backend verification `aa005e9` | `ab0c182`         |
 
 The backend verification note records the owner's final 177/177 isolated integrations and 7/7 unit tests. Native verification records 21 Gradle tests, debug/release assembly and lint. These are collaborator results, separate from this checkout's frontend run. Parent owns independent review, release builds and deployment.
+
+## Review and broader-run follow-up
+
+The map listener now uses documented `boundschange` center values together with a moved pointer gesture. Yandex's `actionbegin` supplies an action object, so the earlier gesture-type assumption was removed. The map browser regression passes with the corrected external SDK fixture.
+
+Broadcast pagination keeps loaded older messages and the reader's scroll position during live sends. A real 33-message API/browser regression passes. Enlarged 320px prices wrap without clipping; long dispatcher addresses no longer widen the grid. The complete private-offer/started-recovery targeted run passes 13/13, including light/dark at 320/390px and delayed decline versus a newer offer. Three affected workflow cases pass separately, and regional reconnect/reload passes separately. Browser fixtures now use the authoritative inbox endpoint, preserve the approved hold-until-start balance assertions and clean orders before drivers to respect assignment foreign keys.
+
+The initial broad run found these failures before their fixes, including follow-on queue pollution from failed fixture cleanup. It is retained as diagnostic evidence, not described as a full passing run. Typecheck and formatting pass after the follow-up; modern plus retained legacy build passed before the follow-up. Final broader coverage remains pending at this commit.
+
+The release-note draft originally `9abd556` is carried as `f9bdd55`.

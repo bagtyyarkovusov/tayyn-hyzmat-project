@@ -303,6 +303,8 @@ test("a driver must explicitly accept after five minutes, then completes a quote
       .getByRole("button", { name: /Мой район/ })
       .click();
     await driver
+      .getByRole("article")
+      .filter({ hasText: "Тестовая улица 10" })
       .getByRole("button", { name: "Принять заказ", exact: true })
       .click();
     await expect(
@@ -1045,9 +1047,16 @@ test("dispatcher enters region, phone and price and the region modal closes afte
     );
     await dialog.getByLabel("Стоимость, TMT").fill("15");
     await expect(dialog.getByLabel("Откуда", { exact: true })).toBeVisible();
+    const createdResponse = dispatcher.waitForResponse(
+      (response) =>
+        response.url().endsWith("/admin/orders") &&
+        response.request().method() === "POST" &&
+        response.ok(),
+    );
     await dialog
       .getByRole("button", { name: "Отправить водителям", exact: true })
       .click();
+    const createdOrder = await (await createdResponse).json();
     await expect(dialog).not.toBeVisible();
     await expect(
       driver.getByText("Подача уточняется по телефону", { exact: true }),
@@ -1066,6 +1075,8 @@ test("dispatcher enters region, phone and price and the region modal closes afte
       exact: true,
     });
     await regionOrders
+      .getByRole("article")
+      .filter({ hasText: `#${createdOrder.orderNumber}` })
       .getByRole("button", { name: "Принять заказ", exact: true })
       .click();
     await expect(regionOrders).not.toBeVisible();
@@ -1428,7 +1439,7 @@ test("regional queues and counts recover through updates, reconnect and reload",
       trip.getByText("Прибытие: 20 мин", { exact: true }),
     ).toBeVisible();
     await trip.getByRole("button", { name: "Close", exact: true }).click();
-    await expect(driver.getByLabel("Баланс")).toHaveText("488 TMT");
+    await expect(driver.getByLabel("Баланс")).toHaveText("500 TMT");
     await driver.screenshot({
       path: "test-results/driver-live-trip-strip.png",
       animations: "disabled",

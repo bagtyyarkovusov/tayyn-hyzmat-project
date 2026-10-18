@@ -63,13 +63,41 @@ const {
   loading: broadcastsLoading,
   error: broadcastsError,
   load: loadBroadcasts,
-} = useResource(
-  async () =>
-    (
-      await adminApi.get<Page<Message>>("/admin/messages/broadcasts", {
-        params: { limit: 30 },
-      })
-    ).data,
+} = useResource<Page<Message>>(
+  async (): Promise<Page<Message>> => {
+    const { data } = await adminApi.get<Page<Message>>(
+      "/admin/messages/broadcasts",
+      { params: { limit: 30 } },
+    );
+    const anchor = broadcasts.value.items.at(-1)?.id;
+    while (
+      anchor &&
+      !data.items.some((message) => message.id === anchor) &&
+      data.items.length < data.total
+    ) {
+      const more = await adminApi.get<Page<Message>>(
+        "/admin/messages/broadcasts",
+        { params: { beforeMessageId: data.items[0]?.id, limit: 30 } },
+      );
+      if (!alive || !more.data.items.length) break;
+      data.items.unshift(...more.data.items);
+    }
+    return {
+      ...data,
+      items: [
+        ...new Map(
+          [...broadcasts.value.items, ...data.items].map((message) => [
+            message.id,
+            message,
+          ]),
+        ).values(),
+      ].sort(
+        (a, b) =>
+          Date.parse(a.sentAt) - Date.parse(b.sentAt) ||
+          a.id.localeCompare(b.id),
+      ),
+    };
+  },
   { items: [], total: 0, page: 1, limit: 30 },
   ["admin:message"],
 );
@@ -237,6 +265,9 @@ watch(
   },
 );
 watch(thread, () => void updated());
+watch(broadcasts, () => {
+  if (allDrivers.value) void updated();
+});
 async function send(all = false) {
   const text = (all ? broadcastBody.value : body.value).trim();
   if (!text || pending.value) return;

@@ -781,3 +781,56 @@ test("dispatcher balance exposes held funds without debiting an acceptance", asy
     await f.close();
   }
 });
+
+test("broadcast history preserves earlier pages and reading position during live sends", async ({
+  browser,
+}) => {
+  const f = await fixture(browser);
+  const admin = await f.context.newPage();
+  try {
+    const tag = `history-${crypto.randomUUID()}`;
+    for (let i = 0; i < 33; i++)
+      await f.adminPost("/admin/messages", {
+        broadcast: true,
+        body: `${tag}-${i}`,
+        clientMessageId: crypto.randomUUID(),
+      });
+    await admin.goto("/adminChat?broadcast=1");
+    const history = admin.getByRole("region", {
+      name: "Отправленные всем водителям",
+      exact: true,
+    });
+    await expect(history.getByText(`${tag}-32`, { exact: true })).toBeVisible();
+    await history.evaluate((el) => {
+      el.scrollTop = 0;
+    });
+    await history
+      .getByRole("button", {
+        name: "Загрузить более ранние сообщения",
+        exact: true,
+      })
+      .click();
+    await expect(history.getByText(`${tag}-0`, { exact: true })).toBeAttached();
+    await history.evaluate((el) => {
+      el.scrollTop = 100;
+    });
+    const before = await history.evaluate((el) => el.scrollTop);
+    await f.adminPost("/admin/messages", {
+      broadcast: true,
+      body: `${tag}-live`,
+      clientMessageId: crypto.randomUUID(),
+    });
+    await expect(
+      history.getByText(`${tag}-live`, { exact: true }),
+    ).toBeAttached();
+    expect(await history.getByText(`${tag}-0`, { exact: true }).count()).toBe(
+      1,
+    );
+    expect(
+      Math.abs((await history.evaluate((el) => el.scrollTop)) - before),
+    ).toBeLessThan(3);
+  } finally {
+    await admin.close();
+    await f.close();
+  }
+});
