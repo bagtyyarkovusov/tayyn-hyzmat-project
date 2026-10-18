@@ -37,20 +37,20 @@ The new production origin is `https://taxi.tayynhyzmat.com`; the owner retired `
 
 Fill this in during provisioning. An empty field is a deployment gate, not permission to use Railway as production.
 
-| Item                                  | Agreed value / provisioned value                                                                                                         |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Main host                             | Standard L, `216.250.8.238`, `tayynhyzmat`; Ubuntu 24.04.4 amd64 verified; key-only SSH port 2222 verified after reboot                  |
-| Monitoring host                       | Standard S, `216.250.9.242`, selected and authenticated; Ubuntu 24.04.4 amd64 verified. DC2 test host `216.250.13.190` remains untouched |
-| DNS owner                             | Namecheap; `bagtyyar.dev`                                                                                                                |
-| Production HTTPS origin               | `https://tayynhyzmat.bagtyyar.dev`; DNS, trusted TLS and health/login checks verified; certificate expires 2027-01-15                         |
-| Monitoring HTTPS origin               | Pending, or private access only                                                                                                          |
-| Alert recipient                       | `bagtyyarkowusow.dev@gmail.com`                                                                                                          |
-| Resend verified sender                | Production sender domain pending; `onboarding@resend.dev` permitted for initial tests to the confirmed Resend account email only         |
-| Current/previous production release   | `/opt/tayyn/current` → `vps-2-68c2f354c4374fdcaed850a6af6378f8af63ab4a`; bundle run `39037794659`                                      |
-| Main runtime configuration            | `/etc/tayyn/app.env`                                                                                                                     |
-| Monitor runtime configuration         | `/etc/tayyn/operations.json` and `/etc/tayyn/monitor-secrets.json`                                                                       |
-| Backup storage and private key holder | Hourly encrypted archive on main + verified relay on monitor; private age identity remains on the owner Mac                                 |
-| Last restore test and alert test      | 2026-10-18 UTC disposable PG17 restore + tamper rejection; monitor initialization email sent and healthy check verified                 |
+| Item                                  | Agreed value / provisioned value                                                                                                             |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Main host                             | Standard L, `216.250.8.238`, `tayynhyzmat`; Ubuntu 24.04.4 amd64 verified; key-only SSH port 2222 verified after reboot                      |
+| Monitoring host                       | Standard S, `216.250.9.242`, selected and authenticated; Ubuntu 24.04.4 amd64 verified. DC2 test host `216.250.13.190` remains untouched     |
+| DNS owner                             | Namecheap; `tayynhyzmat.com`                                                                                                                 |
+| Production HTTPS origin               | Target `https://taxi.tayynhyzmat.com`; A record verified, certificate/config switch pending. Retired origin remains configured until cutover |
+| Monitoring HTTPS origin               | Pending, or private access only                                                                                                              |
+| Alert recipient                       | `bagtyyarkowusow.dev@gmail.com`                                                                                                              |
+| Resend verified sender                | Production sender domain pending; `onboarding@resend.dev` permitted for initial tests to the confirmed Resend account email only             |
+| Current/previous production release   | `/opt/tayyn/current` → `vps-2-68c2f354c4374fdcaed850a6af6378f8af63ab4a`; bundle run `39037794659`                                            |
+| Main runtime configuration            | `/etc/tayyn/app.env`                                                                                                                         |
+| Monitor runtime configuration         | `/etc/tayyn/operations.json` and `/etc/tayyn/monitor-secrets.json`                                                                           |
+| Backup storage and private key holder | Hourly encrypted archive on main + verified relay on monitor; private age identity remains on the owner Mac                                  |
+| Last restore test and alert test      | 2026-10-18 UTC disposable PG17 restore + tamper rejection; monitor initialization email sent and healthy check verified                      |
 
 ### Purchased-host checks, 2026-10-17
 
@@ -125,6 +125,12 @@ The relayed archive was copied to the owner Mac and its SHA-256 was checked agai
 A pinned acceptance probe completed admin login, overview read and an authenticated WebSocket connection. The original helper's unpinned hostname request was blocked by the current Mac gateway, while the same checks passed with the documented pinned origin probe. A real dispatcher-driver workflow and FCM delivery on the target Infinix remain pending; no driver or order was seeded for this check. The Yandex carryover was skipped because the Moscow quota day had already rolled over.
 
 A clean signed production APK was rebuilt from source commit `3b055c31` with the verified production endpoints. It is `TayynHyzmat-production-1.18-code19.apk`, application ID `tayyn.hyzmat.production`, version 1.18/code 19, SHA-256 `462d4bd67391122fdb29a624741ba7aa881f061e234b2fbff3ca7945f5426caa`, and signing certificate SHA-256 `a675842c5d0c2bfb62b08c02aff99687b66c8580180591a4ebf8169716d240b6`. Physical Android 14 lock-screen, Doze, force-stop, GPS, Yandex and splash checks remain open.
+
+### Domain release preparation, 2026-10-18
+
+Issue #129 tracks the move to `taxi.tayynhyzmat.com`. The authoritative Namecheap A record points to `216.250.8.238`. The protected staged runtime file changes only `DOMAIN`, `CORS_ORIGIN`, `TLS_CERT_PATH` and `TLS_KEY_PATH`; native allowed origins, credentials and the existing backend Yandex Referer are preserved. Compose validation passed. Apply only after the new certificate is issued and verified, with an encrypted pre-change backup and rollback on failed HTTPS health. Recreate only API and proxy using the installed images, then update the monitor URL and check authenticated API/WebSocket access.
+
+Signed APK `TayynHyzmat-production-1.19-code20.apk` was built from clean commit `08162520fab2a55942bb11a68b4ca3452f14073c`. Its API is `https://taxi.tayynhyzmat.com/api` and socket origin is `https://taxi.tayynhyzmat.com`. Version 1.19/code 20 retains application ID `tayyn.hyzmat.production` and signing certificate SHA-256 `a675842c5d0c2bfb62b08c02aff99687b66c8580180591a4ebf8169716d240b6`, allowing an update over code 19. Artifact SHA-256 is `a4b29c6b7d19a8a9d4519a92ca8a275a31e9a0c121d44a97b3b825085936fc4f`. Build, typecheck, lint, signature and embedded-endpoint inspection passed. Delivery is held until live HTTPS acceptance; physical-phone checks remain pending.
 
 ## Namecheap DNS and TLS
 

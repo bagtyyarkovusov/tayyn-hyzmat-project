@@ -2,7 +2,7 @@
 
 The new production origin is `https://taxi.tayynhyzmat.com` on the main VPS, `216.250.8.238`. The monitoring VPS is `216.250.9.242`. Railway remains a test environment. Do not copy its database into production.
 
-This guide separates settings that survive updates from the release files we replace. The first application installation is still in progress; completed checks and remaining gates are recorded in [the handoff](production-handoff.md).
+This guide separates settings that survive updates from the release files we replace. The first application installation is complete. The domain migration is staged pending its new certificate; completed checks and remaining gates are recorded in [the handoff](production-handoff.md).
 
 ## What we have verified
 
@@ -28,7 +28,7 @@ git -c core.sshCommand="ssh -F /Users/bagtyyar/Projects/tayyn-hyzmat-project/.lo
 
 GitHub Settings → Deploy keys lists it as `Tayyn operator Mac release access 2026-10-17`. Rotate or remove it there if the operator computer is lost. This key can write only this repository and is separate from production-server and backup keys.
 
-The Namecheap A record is host `tayynhyzmat`, value `216.250.8.238`. Preserve the root-domain website. No AAAA record is needed until IPv6 works. DNS now resolves. HTTP-01 and TLS-ALPN-01 failed CA secondary validation. Manual DNS-01 then succeeded after the owner's TXT change; the certificate expires 2027-01-15. Unattended renewal is not established.
+In the Namecheap `tayynhyzmat.com` zone, the A record is host `taxi`, value `216.250.8.238`. Preserve the root-domain website. No AAAA record is needed until IPv6 works. The new A record is verified. The retired hostname used manual DNS-01 after HTTP-01 and TLS-ALPN-01 failed CA secondary validation. The new hostname requires its own certificate before switching live configuration. Unattended renewal is not established.
 
 Gmail SMTP sends from `tkmdevelopers@gmail.com` to `bagtyyarkowusow.dev@gmail.com`. TLS, authentication and an actual setup email were tested from the monitoring VPS. The owner confirmed Inbox receipt. Its Google App Password is stored only in protected configuration. Resend remains an optional transport; it was unreachable from these hosts.
 
