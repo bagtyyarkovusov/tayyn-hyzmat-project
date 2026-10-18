@@ -106,9 +106,11 @@ export function closeOrderAlerts(eventIds?: string[]) {
   }
   notification = null;
 }
-export function reconcileOrderAlerts(eventIds: string[]) {
+export function reconcileOrderAlerts(eventIds: string[], serverTime?: string) {
   if (nativeAndroid)
-    void nativeNotifications.reconcileOrders({ eventIds }).catch(() => {});
+    void nativeNotifications
+      .reconcileOrders({ eventIds, serverTime })
+      .catch(() => {});
   if (attempt && !eventIds.includes(attempt)) closeOrderAlerts([attempt]);
 }
 export interface OfferAlertAttempt {
@@ -123,11 +125,9 @@ export function notifyOrder(order: Order, offer?: OfferAlertAttempt) {
   for (const [id, expiry] of seenAttempts)
     if (expiry <= now) seenAttempts.delete(id);
   const expiry = Date.parse(offer.expiresAt);
-  const remaining = Math.min(
-    20000,
-    offer.remainingMs ?? expiry - now,
-    expiry - now,
-  );
+  // Canonical remaining time already accounts for server clock skew. Local
+  // wall time is only a fallback for callers without that measurement.
+  const remaining = Math.min(20000, offer.remainingMs ?? expiry - now);
   if (
     !Number.isFinite(remaining) ||
     remaining <= 0 ||
@@ -136,20 +136,15 @@ export function notifyOrder(order: Order, offer?: OfferAlertAttempt) {
     return;
   closeOrderAlerts();
   attempt = offer.eventId;
-  seenAttempts.set(offer.eventId, expiry);
+  seenAttempts.set(offer.eventId, now + remaining);
   // Schedule before play resolves, so a pending autoplay promise cannot
   // extend the canonical deadline or restart after local dismissal.
   deadline = setTimeout(() => closeOrderAlerts([offer.eventId]), remaining);
   const sound = player();
   sound.loop = false;
-  void sound
-    .play()
-    .then(() => {
-      if (attempt !== offer.eventId) sound.pause();
-    })
-    .catch(() => {
-      state.soundReady = false;
-    });
+  void sound.play().catch(() => {
+    state.soundReady = false;
+  });
   if (
     document.hidden &&
     typeof Notification !== "undefined" &&

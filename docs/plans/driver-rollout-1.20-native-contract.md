@@ -23,7 +23,7 @@ The module automatically supplies theme changes to native system bars. Native em
 
 `notifyOrder(order, { eventId, expiresAt, remainingMs? })` accepts the canonical event ID and deadline. Browser music is finite and capped at 20 seconds/server remaining time. Android uses only native system notification audio, never the WebView audio player. `closeOrderAlerts(eventIds?: string[])` stops matching attempts only when IDs are provided; absent IDs intentionally clears all order alerts for logout/shift loss. Use exact IDs for X, Back, accept, expiry, invalidation and replacement. Late invalidation for A must never clear fresh attempt B.
 
-`reconcileOrderAlerts(eventIds: string[])` clears only vanished order IDs after a successful authoritative inbox. Do not call with [] on network failure. Native shift polling also performs this reconciliation. `nativeNotifications.clear` already accepts exact `eventIds`.
+`reconcileOrderAlerts(eventIds: string[], serverTime?: string)` clears only vanished order IDs after a successful authoritative inbox. Do not call with [] on network failure. Pass the authoritative response serverTime so native preserves attempts verified after that snapshot. Native shift polling also performs this reconciliation. `nativeNotifications.clear` already accepts exact `eventIds`.
 
 Native notification policy stores seen IDs across transports/reload for the canonical deadline and never parses an order UUID from the event ID. Reoffers need distinct backend event IDs and an explicit `expiresAt` plus `serverTime`. Notify this agent when the backend contract note is available.
 

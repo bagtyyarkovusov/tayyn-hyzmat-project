@@ -13,7 +13,10 @@ interface DriverNotificationsPlugin {
     userId: string;
     deviceId: string;
   }): Promise<void>;
-  reconcileOrders(options: { eventIds: string[] }): Promise<void>;
+  reconcileOrders(options: {
+    eventIds: string[];
+    serverTime?: string;
+  }): Promise<void>;
   setPresence(options: {
     chatVisible: boolean;
     foreground: boolean;
