@@ -12,9 +12,7 @@ import { driverApi, apiBase, errorMessage } from "@/shared/api";
 import { nativeAndroid } from "./nativeShift";
 import { nativeNotifications } from "./nativeNotifications";
 import {
-  enableOrderAlerts,
   syncAlertPermission,
-  setAlertsEnabled,
   resetAlerts,
   notifyChat,
   closeChatAlerts,
@@ -22,11 +20,9 @@ import {
 
 interface Settings {
   installationId: string;
-  enabled: boolean;
   transportConfigured: boolean;
 }
 const state = reactive({
-  enabled: true,
   loading: false,
   error: "",
   installationId: "",
@@ -54,8 +50,7 @@ function nativeOperation(current: number, action: () => Promise<void>) {
 }
 
 // Registration rotates the server capability. Keep its HTTP request and native
-// installation together, and order preference writes behind that same work so
-// a delayed registration cannot restore an older enabled value.
+// installation together, with installation setup to reject stale account responses.
 function configurationOperation(current: number, action: () => Promise<void>) {
   const next = configurationOperations
     .catch(() => {})
@@ -186,7 +181,6 @@ async function configureNativeInstallation(current: number) {
     Settings & { notificationToken: string }
   >("/driver/notifications/registration", {
     token: native.token ?? null,
-    enabled: state.enabled,
   });
   if (current !== generation || !driverSession.state.user) return;
   state.installationId = data.installationId;
@@ -198,7 +192,6 @@ async function configureNativeInstallation(current: number) {
       notificationToken: data.notificationToken,
       userId,
       deviceId: localStorage.getItem("openride.driver.deviceId") ?? "",
-      enabled: state.enabled,
     }),
   );
   if (current !== generation) return;
@@ -231,41 +224,10 @@ export async function loadNotificationSettings() {
       !driverSession.state.user
     )
       return;
-    Object.assign(state, data);
-    setAlertsEnabled(data.enabled);
+    state.installationId = data.installationId;
+    state.transportConfigured = data.transportConfigured;
     await configureNative(current);
     if (current === generation) syncAlertPermission();
-  } catch (error) {
-    if (current === generation && request === operation)
-      state.error = errorMessage(error);
-  } finally {
-    if (current === generation && request === operation) state.loading = false;
-  }
-}
-export async function toggleNotifications() {
-  if (state.loading || !driverSession.state.user) return;
-  const current = generation;
-  const request = ++operation;
-  const enabled = !state.enabled;
-  state.loading = true;
-  state.error = "";
-  try {
-    if (enabled) await enableOrderAlerts();
-    if (current !== generation || request !== operation) return;
-    await configurationOperation(current, async () => {
-      if (request !== operation) return;
-      const { data } = await driverApi.post<Settings>(
-        "/driver/notifications/settings",
-        { enabled },
-      );
-      if (current !== generation || request !== operation) return;
-      state.enabled = data.enabled;
-      setAlertsEnabled(data.enabled);
-      if (nativeAndroid)
-        await nativeOperation(current, () =>
-          nativeNotifications.setEnabled({ enabled: data.enabled }),
-        );
-    });
   } catch (error) {
     if (current === generation && request === operation)
       state.error = errorMessage(error);
@@ -304,7 +266,6 @@ export function useDriverNotifications(
       generation++;
       operation++;
       resetAlerts();
-      state.enabled = true;
       state.installationId = "";
       state.error = "";
       state.loading = false;
