@@ -2,7 +2,7 @@
 
 The new production origin is `https://taxi.tayynhyzmat.com` on the main VPS, `216.250.8.238`. The monitoring VPS is `216.250.9.242`. Railway remains a test environment. Do not copy its database into production.
 
-This guide separates settings that survive updates from the release files we replace. The first application installation is complete. The domain migration is staged pending its new certificate; completed checks and remaining gates are recorded in [the handoff](production-handoff.md).
+This guide separates settings that survive updates from the release files we replace. The first application installation is complete. The domain migration to `taxi.tayynhyzmat.com` is complete; completed checks and remaining gates are recorded in [the handoff](production-handoff.md).
 
 ## What we have verified
 
@@ -28,7 +28,7 @@ git -c core.sshCommand="ssh -F /Users/bagtyyar/Projects/tayyn-hyzmat-project/.lo
 
 GitHub Settings → Deploy keys lists it as `Tayyn operator Mac release access 2026-10-17`. Rotate or remove it there if the operator computer is lost. This key can write only this repository and is separate from production-server and backup keys.
 
-In the Namecheap `tayynhyzmat.com` zone, the A record is host `taxi`, value `216.250.8.238`. Preserve the root-domain website. No AAAA record is needed until IPv6 works. The new A record is verified. The retired hostname used manual DNS-01 after HTTP-01 and TLS-ALPN-01 failed CA secondary validation. The new hostname requires its own certificate before switching live configuration. Unattended renewal is not established.
+In the Namecheap `tayynhyzmat.com` zone, the A record is host `taxi`, value `216.250.8.238`. Preserve the root-domain website. No AAAA record is needed until IPv6 works. The new A record is verified. The retired hostname used manual DNS-01 after HTTP-01 and TLS-ALPN-01 failed CA secondary validation. The new hostname certificate was issued and installed on 2026-10-18, expires 2027-01-16, and trusted HTTPS/authenticated WebSocket acceptance passed. Unattended renewal is not established.
 
 Gmail SMTP sends from `tkmdevelopers@gmail.com` to `bagtyyarkowusow.dev@gmail.com`. TLS, authentication and an actual setup email were tested from the monitoring VPS. The owner confirmed Inbox receipt. Its Google App Password is stored only in protected configuration. Resend remains an optional transport; it was unreachable from these hosts.
 
@@ -119,9 +119,9 @@ Never automatically restore an older database. That could discard trips, balance
 
 The main VPS reached the production Let's Encrypt directory, but HTTP-01 failed when CA secondary validation could not reach port 80. A direct Mac port-80 probe also timed out. TLS-ALPN-01 through Caddy on port 443 also failed secondary validation. Public connectivity is incomplete across network paths; a successful local probe does not establish CA reachability. Repeating failed requests can consume CA limits.
 
-The selected first-install path is manual DNS-01 with external certificate files. Issuance succeeded after the owner added the TXT record. The old hostname certificate expires on 2027-01-15; the new hostname needs its own issuance and expiry verification. The new runtime configuration selects `TLS_MODE=external`, `TLS_CERT_PATH=/etc/letsencrypt/live/taxi.tayynhyzmat.com/fullchain.pem` and `TLS_KEY_PATH=/etc/letsencrypt/live/taxi.tayynhyzmat.com/privkey.pem`. App operations uses only `compose.production.yaml`. For renewal, the Namecheap TXT Host is `_acme-challenge.taxi` in the `tayynhyzmat.com` zone. Use the new active Certbot value and verify public DNS before continuing; an old value cannot complete a new challenge.
+The selected first-install path is manual DNS-01 with external certificate files. Issuance succeeded after the owner added the TXT record. The active `taxi.tayynhyzmat.com` certificate expires on 2027-01-16. The new runtime configuration selects `TLS_MODE=external`, `TLS_CERT_PATH=/etc/letsencrypt/live/taxi.tayynhyzmat.com/fullchain.pem` and `TLS_KEY_PATH=/etc/letsencrypt/live/taxi.tayynhyzmat.com/privkey.pem`. App operations uses only `compose.production.yaml`. For renewal, the Namecheap TXT Host is `_acme-challenge.taxi` in the `tayynhyzmat.com` zone. Use the new active Certbot value and verify public DNS before continuing; an old value cannot complete a new challenge.
 
-After successful issuance, record the certificate's hostname, expiry and installed paths in the handoff. Keep certificate/key files root-controlled, set the runtime `TLS_CERT_PATH` and `TLS_KEY_PATH`, then run the reviewed initial deployment. Later certificate replacement must be followed by recreating only `proxy` so file bind mounts reopen the new files. Use the current release's env/image configuration and `--no-deps`; do not restart the database or change management SSH on port 2222 for renewal.
+After successful issuance, record the certificate's hostname, expiry and installed paths in the handoff. Keep certificate/key files root-controlled, set the runtime `TLS_CERT_PATH` and `TLS_KEY_PATH`, then recreate the proxy with the installed release configuration. Later certificate replacement must be followed by recreating only `proxy` so file bind mounts reopen the new files. Use the current release's env/image configuration and `--no-deps`; resolve relative bind mounts from its `deploy/production` directory, matching the existing Compose project directory. Do not restart the database or change management SSH on port 2222 for renewal.
 
 Manual DNS-01 needs an operator for each renewal. A generic `certbot renew` timer cannot complete its TXT challenge without an authentication hook. Do not claim unattended renewal or depend on a timer merely being enabled. Keep expiry monitoring and an operator reminder well ahead of expiry until a tested DNS automation method exists.
 
