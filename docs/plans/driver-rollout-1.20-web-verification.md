@@ -60,3 +60,14 @@ Owned diagnostic logs, error-context reports, screenshots and the controlled-dia
 A further transport regression held a real successful acceptance response for attempt A, cancelled A through the driver API, reoffered the same order through the dispatcher API, then released A after B was visible. Before the fix B disappeared. Acceptance now dismisses only its response's exact notification event and preserves a newer incoming/active assignment until canonical refresh. The regression passes.
 
 The native Back case also checks short landscape with an asymmetric 72px cutout. Dialog horizontal centering now accounts for unequal safe insets, keeping the close control within usable bounds. Both targeted cases pass. [Enlarged 320px high-price evidence](../evidence/driver-rollout-1.20/incoming-large-price-320.png) confirms wrapping rather than clipping. No physical-device claim is implied.
+
+## Final local result
+
+- The final disposable browser run passed **187/187 in 7.5 minutes**, with no failures or skips. It includes the controlled-overlay, pagination-retry, incoming-layout, Back, cancellation, funding, chat privacy and map regressions.
+- The later acceptance-response/cutout focused run passed **2/2**. The acceptance case was added after broad test collection, so the current suite contains 188 cases. No further broad repeat was needed after the passing run.
+- `pnpm typecheck`, `pnpm format:check` and `pnpm build` passed after the final code changes at `387e02d`. Build includes modern and retained legacy output. `git diff --check` passed.
+- The draft integration PR is [#132](https://github.com/bagtyyarkovusov/tayyn-hyzmat-project/pull/132). The release checkout was verified clean and fast-forwarded from the approved specification through all carried collaborator/UI commits, preserving history once. No main merge or deployment occurred.
+
+Passing-run temporary Playwright artifacts cleared about 600 MiB automatically on exit, in addition to the earlier 76 MiB reclaimed. The generated frontend distribution was removed after preserving its successful build log. Final logs and both red regression traces remain in `.local/release1.20-validation/`; named screenshots remain committed. All disposable containers created by the completed runs removed themselves. An older container of uncertain ownership was inventoried and left untouched. Shared caches, dependencies and other worktrees were not cleaned.
+
+Remaining parent release gates are operations/reset review, integrated signed APK/device verification, physical keyboard/system-bar/audio behavior and live vendor-map rendering. Backend/native owner evidence remains separate from local web verification. This note does not mark those gates complete.
