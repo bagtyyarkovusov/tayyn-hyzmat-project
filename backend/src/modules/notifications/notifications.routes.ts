@@ -25,6 +25,7 @@ function bearer(req: any) {
 
 // Mounted after authenticate/requireRole/requireApprovedDriver in routes/index.
 export const authenticatedRoutes = Router();
+authenticatedRoutes.get('/inbox', asyncHandler(async (req: any, res: any) => res.json(await service.inbox(req.driver))));
 authenticatedRoutes.get('/settings', asyncHandler(async (req: any, res: any) => {
   res.json(await service.settings(req.driver));
 }));

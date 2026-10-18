@@ -205,7 +205,7 @@ test('notification registration belongs to the approved signed-in installation a
   assert.equal(foreign.status, 200);
   assert.equal(foreign.data.event, null);
   assert.equal((await request('/driver/notifications/settings', driverToken, { enabled: false })).status, 200);
-  assert.equal((await request('/driver/notifications/settings', driverToken)).data.enabled, false);
+  assert.equal((await request('/driver/notifications/settings', driverToken)).data.enabled, true);
 });
 
 test('dispatcher chat creates one preview event per signed-in device without shift or GPS', async () => {
@@ -280,7 +280,7 @@ test('an accepted FCM transport retries the same unread event until native ackno
   });
 });
 
-test('chat read synchronises exact events across devices and a muted installation can still start a shift', async () => {
+test('chat read synchronises exact events and legacy mute requests no longer disable delivery', async () => {
   const driver = await prisma.driver.findFirstOrThrow({ where: { user: { phone: '+99360000101' } } });
   const registration = await request('/driver/notifications/registration', driverToken, { token: null, enabled: true });
   const chat = await request('/admin/messages', adminToken, { driverId: driver.id, body: 'Read on another screen' });
@@ -291,8 +291,8 @@ test('chat read synchronises exact events across devices and a muted installatio
   assert.ok(sync.eventIds.includes(`chat:${chat.data.id}`));
   assert.equal((await request('/native-notifications/event', registration.data.notificationToken, { eventId: `chat:${chat.data.id}` })).data.event, null);
   assert.equal((await request('/driver/notifications/settings', driverToken, { enabled: false })).status, 200);
-  const muted = await request('/admin/messages', adminToken, { driverId: driver.id, body: 'No muted notification' });
-  assert.equal(await prisma.notificationDelivery.count({ where: { eventId: `chat:${muted.data.id}` } }), 0);
+  const muted = await request('/admin/messages', adminToken, { driverId: driver.id, body: 'Legacy mute does not suppress notification' });
+  assert.equal(await prisma.notificationDelivery.count({ where: { eventId: `chat:${muted.data.id}` } }), 1);
   assert.equal((await request('/driver/status', driverToken, { isOnline: false })).status, 200);
   assert.equal((await request('/driver/location', driverToken, { lat: 37.96, lng: 58.32 })).status, 403);
   assert.equal((await startShift(driverToken)).status, 200);
@@ -319,7 +319,7 @@ test('a competing claim invalidates a delivered order push with the same opaque 
   await withFakeFcm(async sent => {
     const registration = await request('/driver/notifications/registration', driverToken, { token: 'synthetic-order-invalidation-token', enabled: true });
     const created = await order();
-    const eventId = `order:${created.id}`;
+    const eventId = created.notificationEventId;
     assert.equal((await request('/native-notifications/event', registration.data.notificationToken, { eventId })).data.event.orderId, created.id);
     await new Promise(resolve => setTimeout(resolve, 4200));
     assert.equal((await request('/orders/accept', otherToken, { orderId: created.id })).status, 200);
@@ -619,21 +619,20 @@ test('competing drivers cannot both claim the same order', async () => {
   assert.equal(currentOrders.filter(response => response.data?.id === created.id).length, 1);
 });
 
-test('cancelling a claimed order refunds the synthetic charge and rejects a second cancellation', async () => {
+test('cancelling a claimed order releases the hold and rejects a second cancellation', async () => {
   const created = await order();
   const body = { orderId: created.id };
   assert.equal((await request('/orders/accept', driverToken, body)).status, 200);
-  assert.equal((await request('/orders/waiting', driverToken, body)).status, 200);
   assert.equal((await request('/orders/cancel', driverToken, body)).data.status, 'CANCELLED');
   assert.equal((await request('/orders/cancel', driverToken, body)).status, 409);
   const balance = await request('/driver/balance', driverToken);
   assert.equal(balance.data.amount, '500');
 });
 
-test('dispatcher cancellation refunds the quoted charge with matching ledger entries only once', async () => {
+test('dispatcher cancellation releases held funds without payment or refund entries', async () => {
   const created = await order();
   assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 200);
-  assert.equal((await request('/driver/balance', driverToken)).data.amount, '490');
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
   const cancelled = await request(`/admin/orders/${created.id}/cancel`, adminToken, { reason: 'Synthetic cancellation' });
   assert.equal(cancelled.status, 200);
   assert.equal(cancelled.data.status, 'CANCELLED');
@@ -641,18 +640,7 @@ test('dispatcher cancellation refunds the quoted charge with matching ledger ent
   assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
   const history = await request('/driver/history', driverToken);
   assert.equal(history.status, 200);
-  assert.equal(history.data.transactions.total, 2);
-  const entries = history.data.transactions.items.map((entry: {
-    orderId: string; type: string; amount: string; balanceAfter: string; note: string;
-  }) => ({ orderId: entry.orderId, type: entry.type, amount: entry.amount, balanceAfter: entry.balanceAfter, note: entry.note }));
-  assert.deepEqual(entries.find((entry: { type: string }) => entry.type === 'PAYMENT'), {
-    orderId: created.id, type: 'PAYMENT', amount: '-10', balanceAfter: '490',
-    note: `Заказ #${created.orderNumber}: цена поездки списана при принятии`
-  });
-  assert.deepEqual(entries.find((entry: { type: string }) => entry.type === 'REFUND'), {
-    orderId: created.id, type: 'REFUND', amount: '10', balanceAfter: '500',
-    note: `Заказ #${created.orderNumber}: возврат за отменённую поездку`
-  });
+  assert.equal(history.data.transactions.total, 0);
 });
 
 test('dispatcher can explicitly resolve a stuck started trip with an audit reason', async () => {
@@ -693,7 +681,6 @@ for (const price of [null, 0, -10]) {
     const body = { orderId: created.id };
     assert.equal((await request('/orders/accept', driverToken, body)).status, 200);
     assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
-    assert.equal((await request('/orders/waiting', driverToken, body)).status, 200);
     assert.equal((await request('/orders/cancel', driverToken, body)).status, 200);
     assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
     assert.equal((await request('/driver/history', driverToken)).data.transactions.total, 0);
@@ -943,23 +930,22 @@ test('explicit shift stop revokes its credential and a later replay cannot offli
   assert.equal((await request('/driver/profile', auth.data.accessToken)).data.isOnline, true);
 });
 for (const scenario of ['driver-driver', 'admin-admin', 'driver-admin']) {
-  test(`cancellation stress: ${scenario} refunds exactly once across 20 races`, async () => {
+  test(`cancellation stress: ${scenario} releases exactly once across 20 races`, async () => {
     const failures: unknown[] = [];
     for (let round = 0; round < 20; round++) {
       const before = Number((await request('/driver/balance', driverToken)).data.amount);
       const created = await order();
       const body = { orderId: created.id };
       assert.equal((await request('/orders/accept', driverToken, body)).status, 200);
-      assert.equal((await request('/orders/waiting', driverToken, body)).status, 200);
       const driverCancel = () => request('/orders/cancel', driverToken, body);
       const adminCancel = () => request(`/admin/orders/${created.id}/cancel`, adminToken, {});
       const responses = await Promise.all(scenario === 'driver-driver' ? [driverCancel(), driverCancel()] : scenario === 'admin-admin' ? [adminCancel(), adminCancel()] : [driverCancel(), adminCancel()]);
       const after = Number((await request('/driver/balance', driverToken)).data.amount);
       const history = (await request('/driver/history', driverToken)).data;
       const refunds = history.transactions.items.filter((entry: {orderId: string; type: string}) => entry.orderId === created.id && entry.type === 'REFUND').length;
-      if (after !== before || refunds !== 1 || responses.filter(r => r.status === 200).length !== 1) failures.push({round, statuses: responses.map(r => r.status), before, after, refunds});
+      if (after !== before || refunds !== 0 || responses.filter(r => r.status === 200).length !== 1) failures.push({round, statuses: responses.map(r => r.status), before, after, refunds});
     }
-    assert.equal(failures.length, 0, 'concurrent cancellation must refund once and have one winner');
+    assert.equal(failures.length, 0, 'concurrent cancellation must release once without a ledger refund and have one winner');
   });
 }
 
@@ -967,7 +953,6 @@ test('cancellation flow: closes without requeue, frees driver, and forbids drive
   const created = await order();
   const body = { orderId: created.id };
   assert.equal((await request('/orders/accept', driverToken, body)).status, 200);
-  assert.equal((await request('/orders/waiting', driverToken, body)).status, 200);
   assert.equal((await request('/orders/cancel', driverToken, body)).status, 200);
   assert.equal((await request('/orders/current', driverToken)).data, null);
   assert.equal((await request('/driver/profile', driverToken)).data.isAvailable, true);
@@ -992,7 +977,7 @@ test('cancellation stress: competing start and cancel cannot resurrect a cancell
     const body = {orderId:created.id};
     assert.equal((await request('/orders/accept', driverToken, body)).status, 200);
     assert.equal((await request('/orders/waiting', driverToken, body)).status, 200);
-    const responses = await Promise.all([request('/orders/start', driverToken, body), request('/orders/cancel', driverToken, body)]);
+    const responses = await Promise.all([request('/orders/start', driverToken, body), request(`/admin/orders/${created.id}/cancel`, adminToken, {})]);
     const current = (await request('/orders/current', driverToken)).data;
     const balance = Number((await request('/driver/balance', driverToken)).data.amount);
     if (responses.filter(r=>r.status===200).length !== 1 || (current?.status === 'STARTED' && balance !== 490) || (!current && balance !== 500)) failures.push({round,statuses:responses.map(r=>r.status),current:current?.status ?? null,balance});
@@ -1001,7 +986,7 @@ test('cancellation stress: competing start and cancel cannot resurrect a cancell
 });
 
 
-test('concurrent claims of different orders keep one active trip and one debit', async () => {
+test('concurrent claims of different orders keep one active trip and one hold', async () => {
   for (let round = 0; round < 20; round++) {
     const first = await order();
     const second = await order();
@@ -1010,14 +995,13 @@ test('concurrent claims of different orders keep one active trip and one debit',
     const current = (await request('/orders/current', driverToken)).data;
     assert.ok([first.id, second.id].includes(current.id));
     assert.equal((await request('/driver/profile', driverToken)).data.isAvailable, false);
-    assert.equal((await request('/driver/balance', driverToken)).data.amount, '490');
-    assert.equal((await request('/orders/waiting', driverToken, { orderId: current.id })).status, 200);
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
     assert.equal((await request('/orders/cancel', driverToken, { orderId: current.id })).status, 200);
     assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
   }
 });
 
-test('cancellation wins once over repeated arrival and emits one committed refund', async () => {
+test('cancellation wins once over repeated arrival and emits one committed release', async () => {
   const client = await socket(adminToken);
   const created = await order();
   const body = { orderId: created.id };
@@ -1026,11 +1010,11 @@ test('cancellation wins once over repeated arrival and emits one committed refun
   const cancelled: string[] = [];
   const refunds: string[] = [];
   client.on('order:cancelled', event => { if (event.id === created.id) cancelled.push(event.id); });
-  client.on('balance:updated', event => { if (event.orderId === created.id && event.reason === 'REFUND') refunds.push(event.orderId); });
+  client.on('balance:updated', event => { if (event.orderId === created.id && event.reason === 'RELEASE') refunds.push(event.orderId); });
   const responses = await Promise.all([
     request('/orders/waiting', driverToken, body),
-    request('/orders/cancel', driverToken, body),
-    request('/orders/cancel', driverToken, body)
+    request(`/admin/orders/${created.id}/cancel`, adminToken, {}),
+    request(`/admin/orders/${created.id}/cancel`, adminToken, {})
   ]);
   assert.equal(responses.filter(response => response.status === 200 && response.data.status === 'CANCELLED').length, 1);
   assert.equal((await request('/orders/current', driverToken)).data, null);
@@ -1077,8 +1061,7 @@ test('a claim racing dispatcher cancellation never leaves an unpaid active trip'
     if (current) {
       assert.equal(current.id, created.id);
       assert.equal(current.status, 'ACCEPTED');
-      assert.equal(balance, '490');
-      assert.equal((await request('/orders/waiting', driverToken, { orderId: created.id })).status, 200);
+      assert.equal(balance, '500');
       assert.equal((await request('/orders/cancel', driverToken, { orderId: created.id })).status, 200);
     } else {
       assert.equal(balance, '500');
@@ -1151,7 +1134,7 @@ for (const mode of ['public', 'private']) {
   });
 }
 
-test('topups racing order charges and refunds reconcile through public history', async () => {
+test('topups racing order holds and releases reconcile through public history', async () => {
   const driver = (await request('/driver/profile', driverToken)).data;
   for (let round = 0; round < 20; round++) {
     const created = await order();
@@ -1160,8 +1143,7 @@ test('topups racing order charges and refunds reconcile through public history',
       request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 1, type: 'TOPUP' })
     ]);
     assert.ok(responses.every(response => response.status === 200));
-    assert.equal((await request('/driver/balance', driverToken)).data.amount, String(491 + round * 2));
-    assert.equal((await request('/orders/waiting', driverToken, { orderId: created.id })).status, 200);
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, String(501 + round * 2));
     const cancelled = await Promise.all([
       request('/orders/cancel', driverToken, { orderId: created.id }),
       request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 1, type: 'TOPUP' })
@@ -1170,9 +1152,9 @@ test('topups racing order charges and refunds reconcile through public history',
     assert.equal((await request('/driver/balance', driverToken)).data.amount, String(502 + round * 2));
   }
   const history = (await request('/driver/history?limit=100', driverToken)).data.transactions;
-  assert.equal(history.total, 80);
-  assert.equal(history.items.filter((entry: { type: string }) => entry.type === 'PAYMENT').length, 20);
-  assert.equal(history.items.filter((entry: { type: string }) => entry.type === 'REFUND').length, 20);
+  assert.equal(history.total, 40);
+  assert.equal(history.items.filter((entry: { type: string }) => entry.type === 'PAYMENT').length, 0);
+  assert.equal(history.items.filter((entry: { type: string }) => entry.type === 'REFUND').length, 0);
   assert.equal(history.items.reduce((sum: number, entry: { amount: string }) => sum + Number(entry.amount), 0), 40);
 });
 
@@ -1189,24 +1171,26 @@ test('concurrent withdrawals recheck funds without creating a forbidden ledger e
   assert.equal(history.items[0].balanceAfter, '100');
 });
 
-test('a failed ledger insert rolls back the claim and wallet before a safe retry', async () => {
+test('a failed ledger insert rolls back the start and wallet before a safe retry', async () => {
   const created = await order();
   const client = await socket(adminToken);
   const payments: unknown[] = [];
-  client.on('balance:updated', event => { if (event.orderId === created.id) payments.push(event); });
+  client.on('balance:updated', event => { if (event.orderId === created.id && event.reason === 'PAYMENT') payments.push(event); });
+  assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 200);
+  assert.equal((await request('/orders/waiting', driverToken, { orderId: created.id })).status, 200);
   // A storage-boundary failure fixture, confined to this disposable schema.
   await prisma.$executeRawUnsafe('ALTER TABLE transactions ADD CONSTRAINT fail_test_payment CHECK (amount <> -10)');
   try {
-    assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 500);
+    assert.equal((await request('/orders/start', driverToken, { orderId: created.id })).status, 500);
     assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
-    assert.equal((await request('/orders/current', driverToken)).data, null);
-    assert.equal((await request('/driver/profile', driverToken)).data.isAvailable, true);
+    assert.equal((await request('/orders/current', driverToken)).data.status, 'WAITING');
+    assert.equal((await request('/driver/profile', driverToken)).data.isAvailable, false);
     assert.equal((await request('/driver/history', driverToken)).data.transactions.total, 0);
     assert.equal(payments.length, 0);
   } finally {
     await prisma.$executeRawUnsafe('ALTER TABLE transactions DROP CONSTRAINT fail_test_payment');
   }
-  assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 200);
+  assert.equal((await request('/orders/start', driverToken, { orderId: created.id })).status, 200);
   assert.equal((await request('/driver/balance', driverToken)).data.amount, '490');
   const history = (await request('/driver/history', driverToken)).data.transactions;
   assert.equal(history.total, 1);
@@ -1216,7 +1200,7 @@ test('a failed ledger insert rolls back the claim and wallet before a safe retry
   client.disconnect();
 });
 
-test('private offers reserve cross-region orders without disclosing phone or charging until acceptance', async () => {
+test('private offers reserve cross-region orders and acceptance holds without charging', async () => {
   const driver = (await request('/driver/profile', otherToken)).data;
   const result = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: driver.id });
   assert.equal(result.status, 201);
@@ -1234,7 +1218,7 @@ test('private offers reserve cross-region orders without disclosing phone or cha
   assert.equal(accepted.data.clientPhone, '+99365000000');
   assert.equal(accepted.data.districtId, regionId);
   assert.equal((await request('/driver/profile', otherToken)).data.districtId, driver.districtId);
-  assert.equal((await request('/driver/balance', otherToken)).data.amount, '490');
+  assert.equal((await request('/driver/balance', otherToken)).data.amount, '500');
 });
 
 test('a declined private offer stays exclusive until expiry and an old response cannot decline a newer reservation', async () => {
@@ -1366,7 +1350,7 @@ test('one driver cannot claim two different orders concurrently and a pending of
   const second = await order();
   const results = await Promise.all([first, second].map(item => request('/orders/accept', driverToken, { orderId: item.id })));
   assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
-  assert.equal((await request('/driver/balance', driverToken)).data.amount, '490');
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
   const driver = (await request('/driver/profile', otherToken)).data;
   const pending = await order();
   assert.equal((await request(`/admin/orders/${pending.id}/private-offer`, adminToken, { driverId: driver.id })).status, 200);
@@ -1388,7 +1372,7 @@ test('competing reservations and public claims have one winner and never double 
     request('/orders/private-offer/accept', otherToken, { orderId: reserved.id, privateOfferExpiresAt: reserved.privateOfferExpiresAt })
   ]);
   assert.deepEqual(claims.map(result => result.status).sort(), [200, 409, 409]);
-  assert.equal((await request('/driver/balance', otherToken)).data.amount, '490');
+  assert.equal((await request('/driver/balance', otherToken)).data.amount, '500');
   assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
   assert.equal((await request(`/admin/orders/${first.id === reserved.id ? second.id : first.id}/private-offer`, adminToken, { driverId: driver.id })).status, 409);
 });
@@ -1518,7 +1502,7 @@ test('changing driver login phone revokes old sessions and keeps approved device
   const restored = await request('/driver/profile', recovered.data.accessToken);
   assert.equal(restored.data.currentDeviceId, undefined);
   assert.equal(restored.data.isOnline, false);
-  assert.equal((await request('/driver/balance', recovered.data.accessToken)).data.amount, '490');
+  assert.equal((await request('/driver/balance', recovered.data.accessToken)).data.amount, '500');
   assert.equal((await request('/orders/current', recovered.data.accessToken)).data.id, created.id);
   const rejected = connect(base, { auth: { token: session.data.accessToken }, transports: ['websocket'], reconnection: false });
   clients.push(rejected);
@@ -1610,7 +1594,7 @@ test('credential reset revokes a private offer session while the new login can r
   assert.equal(recovered.data.clientPhone, undefined);
   assert.equal((await request('/driver/balance', token)).data.amount, '500');
   assert.equal((await request('/orders/private-offer/accept', token, { orderId: recovered.data.id, privateOfferExpiresAt: recovered.data.privateOfferExpiresAt })).status, 200);
-  assert.equal((await request('/driver/balance', token)).data.amount, '490');
+  assert.equal((await request('/driver/balance', token)).data.amount, '500');
   assert.equal((await request('/orders/current', token)).data.id, created.data.id);
   otherToken = token;
 });
@@ -1648,18 +1632,22 @@ test('native private offer replay preserves the persisted deadline and acceptanc
   const first = await request('/native-shift/tick', started.data.shiftToken, fix());
   const event = first.data.events.find((item: { orderId?: string }) => item.orderId === offered.data.id);
   assert.equal(event.expiresAt, offered.data.privateOfferExpiresAt);
-  assert.equal(event.id, `private:${offered.data.id}:${offered.data.privateOfferExpiresAt}`);
+  assert.equal(event.id, offered.data.notificationEventId);
   assert.equal(JSON.stringify(first.data.events).includes('+99365000000'), false);
   const replay = await request('/native-shift/tick', started.data.shiftToken, fix());
-  assert.deepEqual(replay.data.events.find((item: { orderId?: string }) => item.orderId === offered.data.id), event);
+  const replayEvent = replay.data.events.find((item: { orderId?: string }) => item.orderId === offered.data.id);
+  assert.equal(replayEvent.id, event.id);
+  assert.equal(replayEvent.expiresAt, event.expiresAt);
+  assert.equal(replayEvent.offerAttemptId, event.offerAttemptId);
+  assert.ok(replayEvent.serverTime);
   const recovered = await request('/orders/private-offer', token);
   assert.equal(recovered.data.privateOfferExpiresAt, event.expiresAt);
   assert.equal((await request('/orders/private-offer/accept', token, { orderId: offered.data.id, privateOfferExpiresAt: event.expiresAt })).status, 200);
   const accepted = await request('/native-shift/tick', started.data.shiftToken, fix());
   assert.equal(accepted.data.events.some((item: { orderId?: string }) => item.orderId === offered.data.id), false);
-  assert.equal((await request('/driver/balance', token)).data.amount, '490');
+  assert.equal((await request('/driver/balance', token)).data.amount, '500');
 });
-test('private confirmation and cancellation preserve credits with one charge and refund', async () => {
+test('private confirmation and cancellation preserve credits with one hold release and no debit', async () => {
   const driver = (await request('/driver/profile', otherToken)).data;
   const created = await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: '+99365000000', privateOfferDriverId: driver.id });
   assert.equal(created.status, 201);
@@ -1670,7 +1658,7 @@ test('private confirmation and cancellation preserve credits with one charge and
     request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 1, type: 'TOPUP' })
   ]);
   assert.deepEqual(accepted.map(response => response.status).sort(), [200, 200, 409]);
-  assert.equal((await request('/driver/balance', otherToken)).data.amount, '491');
+  assert.equal((await request('/driver/balance', otherToken)).data.amount, '501');
   const cancelled = await Promise.all([
     request('/orders/cancel', otherToken, { orderId: created.data.id }),
     request(`/admin/orders/${created.data.id}/cancel`, adminToken, {}),
@@ -1679,9 +1667,9 @@ test('private confirmation and cancellation preserve credits with one charge and
   assert.deepEqual(cancelled.map(response => response.status).sort(), [200, 200, 409]);
   assert.equal((await request('/driver/balance', otherToken)).data.amount, '502');
   const history = (await request('/driver/history', otherToken)).data.transactions;
-  assert.equal(history.total, 4);
-  assert.equal(history.items.filter((entry: { type: string }) => entry.type === 'PAYMENT').length, 1);
-  assert.equal(history.items.filter((entry: { type: string }) => entry.type === 'REFUND').length, 1);
+  assert.equal(history.total, 2);
+  assert.equal(history.items.filter((entry: { type: string }) => entry.type === 'PAYMENT').length, 0);
+  assert.equal(history.items.filter((entry: { type: string }) => entry.type === 'REFUND').length, 0);
   assert.equal(history.items.reduce((sum: number, entry: { amount: string }) => sum + Number(entry.amount), 0), 2);
 });
 
@@ -1968,9 +1956,8 @@ test('an exact quoted balance accepts once and zero balance preserves trip contr
   await prisma.balance.update({ where: { userId: driver.userId }, data: { amount: 30 } });
   const created = await order(30);
   assert.equal((await request('/orders/accept', driverToken, { orderId: created.id, arrivalMinutes: 5 })).status, 200);
-  assert.equal((await request('/driver/balance', driverToken)).data.amount, '0');
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '30');
   assert.equal((await request('/driver/status', driverToken, { isOnline: false })).status, 200);
-  assert.equal((await request('/driver/status', driverToken, { isOnline: true })).status, 403);
   assert.equal((await request('/orders/current', driverToken)).data.id, created.id);
   for (const action of ['waiting', 'start', 'complete']) {
     assert.equal((await request(`/orders/${action}`, driverToken, { orderId: created.id })).status, 200);
@@ -1987,8 +1974,8 @@ test('concurrent distinct thirty TMT claims cannot overdraw thirty-five TMT', as
   const first = await order(30), second = await order(30);
   const results = await Promise.all([first, second].map(item => request('/orders/accept', driverToken, { orderId: item.id, arrivalMinutes: 5 })));
   assert.deepEqual(results.map(item => item.status).sort(), [200, 409]);
-  assert.equal((await request('/driver/balance', driverToken)).data.amount, '5');
-  assert.equal((await request('/driver/history', driverToken)).data.transactions.total, 1);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '35');
+  assert.equal((await request('/driver/history', driverToken)).data.transactions.total, 0);
   assert.equal((await request(`/orders/available?districtId=${regionId}`, otherToken)).data.length, 1);
 });
 
@@ -2156,7 +2143,11 @@ test('public orders reach all regions immediately while only the original region
   const popup = await regionalPopup;
   assert.equal(popup.id, created.data.id);
   assert.equal(popup.clientPhone, undefined);
-  assert.deepEqual(await globalUpdate, { orderId: created.data.id, districtId: regionId });
+  const update = await globalUpdate as any;
+  assert.equal(update.orderId, created.data.id);
+  assert.equal(update.districtId, regionId);
+  assert.equal(update.notificationEventId, created.data.notificationEventId);
+  assert.equal(update.offerAttemptId, created.data.offerAttemptId);
   const removedRegional = nextSocketEvent<{ orderId: string }>(regional, 'order:taken');
   const removedOutside = nextSocketEvent<{ orderId: string }>(outside, 'order:taken');
   const claims = await Promise.all([driverToken, otherToken].map(token => request('/orders/accept', token, { orderId: created.data.id })));
@@ -2374,21 +2365,21 @@ test('a started trip cannot be dispatcher-cancelled or refunded even while manua
 });
 
 
-test('driver cancellation is restricted to waiting and refunds once without abandoning an accepted or started ride', async () => {
+test('driver cancels before arrival without a reason and cannot cancel WAITING or STARTED', async () => {
   const created = await order();
   const body = { orderId: created.id };
   assert.equal((await request('/orders/accept', driverToken, body)).status, 200);
-  assert.equal((await request('/orders/cancel', driverToken, body)).status, 409);
-  assert.equal((await request('/orders/current', driverToken)).data.status, 'ACCEPTED');
-  assert.equal((await request('/driver/balance', driverToken)).data.amount, '490');
-  assert.equal((await request('/orders/waiting', driverToken, body)).status, 200);
   const results = await Promise.all([1, 2].map(() => request('/orders/cancel', driverToken, body)));
   assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
   assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
   assert.equal((await request('/orders/current', driverToken)).data, null);
   const next = await order();
-  for (const action of ['accept', 'waiting', 'start']) assert.equal((await request(`/orders/${action}`, driverToken, { orderId: next.id })).status, 200);
-  assert.equal((await request('/orders/cancel', driverToken, { orderId: next.id })).status, 409);
+  const nextBody = { orderId: next.id };
+  for (const action of ['accept', 'waiting']) assert.equal((await request(`/orders/${action}`, driverToken, nextBody)).status, 200);
+  assert.equal((await request('/orders/cancel', driverToken, nextBody)).status, 409);
+  assert.equal((await request('/orders/current', driverToken)).data.status, 'WAITING');
+  assert.equal((await request('/orders/start', driverToken, nextBody)).status, 200);
+  assert.equal((await request('/orders/cancel', driverToken, nextBody)).status, 409);
   assert.equal((await request('/orders/current', driverToken)).data.status, 'STARTED');
 });
 
@@ -2430,17 +2421,17 @@ test('cent amounts match balance, history and socket and wallet overflow leaves 
 });
 
 
-test('topups preserve headroom for an active trip refund', async () => {
+test('topups respect total limit while hold release does not require refund headroom', async () => {
   const driver = await prisma.driver.findFirstOrThrow({ where: { user: { phone: '+99360000101' } } });
   const created = await order(30);
   assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 200);
   assert.equal((await request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 9999999529.99, type: 'TOPUP' })).status, 400);
-  assert.equal((await request('/driver/balance', driverToken)).data.amount, '470');
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
   assert.equal((await request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 9999999499.99, type: 'TOPUP' })).status, 200);
   assert.equal((await request(`/admin/orders/${created.id}/cancel`, adminToken, { reason: 'Synthetic headroom proof' })).status, 200);
   assert.equal((await request('/driver/balance', driverToken)).data.amount, '9999999999.99');
   const history = await request(`/admin/drivers/${driver.id}/history`, adminToken);
-  assert.equal(history.data.transactions.total, 3);
+  assert.equal(history.data.transactions.total, 1);
 });
 
 test('deactivating a driver preserves ledger and completed attribution while revoking access', async () => {
@@ -2492,7 +2483,7 @@ test('deactivation refuses an active trip and preserves its balance and driver l
     await prisma.order.update({ where: { id: created.id }, data: { status } });
     const response = await fetch(`${base}/admin/drivers/${driver.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${adminToken}` } });
     assert.equal(response.status, 409);
-    assert.equal((await request('/driver/balance', driverToken)).data.amount, '470');
+    assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
     assert.equal((await request('/orders/current', driverToken)).data.driverId, driver.id);
   }
 });
@@ -2800,7 +2791,7 @@ test('dispatcher sign out everywhere revokes both installations and preserves th
   const profile = await request('/driver/profile', recovered.data.accessToken);
   assert.equal(profile.data.status, 'APPROVED');
   assert.equal(profile.data.isOnline, false);
-  assert.equal((await request('/driver/balance', recovered.data.accessToken)).data.amount, '490');
+  assert.equal((await request('/driver/balance', recovered.data.accessToken)).data.amount, '500');
   assert.equal((await request('/orders/current', recovered.data.accessToken)).data.id, job.id);
   assert.equal((await request('/orders/waiting', recovered.data.accessToken, { orderId: job.id })).status, 200, 'the assigned trip can be recovered without a shift');
 });
@@ -2866,7 +2857,7 @@ test('a permanently deleted phone can apply again without recovering the old bal
   const completed = await order(12);
   for (const action of ['accept', 'waiting', 'start', 'complete']) assert.equal((await request(`/orders/${action}`, oldLogin.data.accessToken, { orderId: completed.id })).status, 200);
   const cancelled = await order(18);
-  for (const action of ['accept', 'waiting', 'cancel']) assert.equal((await request(`/orders/${action}`, oldLogin.data.accessToken, { orderId: cancelled.id })).status, 200);
+  for (const action of ['accept', 'cancel']) assert.equal((await request(`/orders/${action}`, oldLogin.data.accessToken, { orderId: cancelled.id })).status, 200);
   const beforeToday = (await request('/admin/overview/today', adminToken)).data;
   const beforeTotals = (await request('/admin/overview', adminToken)).data;
   const beforeLedger = (await request(`/admin/drivers/${oldId}/history`, adminToken)).data;
@@ -2973,6 +2964,7 @@ test("global sequential order numbers are stable across concurrent creation, que
   const found = await request(`/admin/orders?orderNumber=${next.orderNumber}`, adminToken);
   assert.equal(found.data.total, 1);
   assert.equal(found.data.items[0].id, next.id);
+  for (const action of ["waiting", "start"]) assert.equal((await request(`/orders/${action}`, driverToken, { orderId: next.id })).status, 200);
   const history = await request("/driver/history", driverToken);
   assert.equal(
     history.data.orders.items.find(
@@ -2988,7 +2980,7 @@ test("global sequential order numbers are stable across concurrent creation, que
     history.data.transactions.items.some(
       (item: { note: string }) =>
         item.note ===
-        `Заказ #${next.orderNumber}: цена поездки списана при принятии`,
+        `Заказ #${next.orderNumber}: цена поездки списана при начале`,
     ),
   );
 });
@@ -3091,4 +3083,306 @@ test('order-number migration backfills chronology, preserves UUID relations and 
     assert.deepEqual(await tx.$queryRawUnsafe("SELECT order_number FROM orders WHERE id = 'after-delete'"), [{ order_number: 4 }]);
     await tx.$executeRawUnsafe(`DROP SCHEMA "${schema}" CASCADE`);
   });
+});
+
+test('release 1.20 holds the quote at accept, preserves it on arrival and captures it exactly once on start', async () => {
+  const profile = (await request('/driver/profile', driverToken)).data;
+  const created = await order(40);
+  const admin = await socket(adminToken);
+  const money: any[] = [];
+  admin.on('balance:updated', payload => money.push(payload));
+  assert.equal((await request('/orders/accept', driverToken, { orderId: created.id })).status, 200);
+  const held = (await request(`/admin/drivers/${profile.id}`, adminToken)).data.user.balance;
+  assert.equal(held.amount, '500');
+  assert.equal(held.total, '500');
+  assert.equal(held.held, '40');
+  assert.equal(held.available, '460');
+  assert.deepEqual((await request(`/admin/drivers/${profile.id}/history`, adminToken)).data.transactions.items, []);
+  assert.equal((await request('/orders/waiting', driverToken, { orderId: created.id })).status, 200);
+  assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
+  // Metadata cannot change the accepted quote.
+  await prisma.order.update({ where: { id: created.id }, data: { priceEstimated: 99 } });
+  const starts = await Promise.all([1, 2].map(() => request('/orders/start', driverToken, { orderId: created.id })));
+  assert.deepEqual(starts.map(r => r.status).sort(), [200, 409]);
+  const captured = (await request(`/admin/drivers/${profile.id}`, adminToken)).data.user.balance;
+  assert.equal(captured.amount, '460');
+  assert.equal(captured.held, '0');
+  assert.equal(captured.available, '460');
+  const payments = (await request(`/admin/drivers/${profile.id}/history`, adminToken)).data.transactions.items;
+  assert.equal(payments.length, 1);
+  assert.equal(payments[0].type, 'PAYMENT');
+  assert.equal(payments[0].amount, '-40');
+  assert.equal((await request('/orders/complete', driverToken, { orderId: created.id })).data.priceFinal, '40');
+  assert.equal(money.filter(e => e.reason === 'PAYMENT').length, 1);
+  assert.equal(money.some(e => e.reason === 'HOLD' && e.amount === '500'), true);
+});
+
+test('held funds survive rejected reductions and an exact available withdrawal, then capture safely', async () => {
+  const driver = (await request('/driver/profile', driverToken)).data;
+  const job = await order(40);
+  assert.equal((await request('/orders/accept', driverToken, { orderId: job.id })).status, 200);
+  for (const type of ['WITHDRAWAL', 'ADJUSTMENT']) {
+    const denied = await request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: -461, type });
+    assert.equal(denied.status, 400);
+  }
+  const exact = await request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: -460, type: 'WITHDRAWAL' });
+  assert.equal(exact.status, 200);
+  assert.equal(exact.data.balance.total, '40');
+  assert.equal(exact.data.balance.held, '40');
+  assert.equal(exact.data.balance.available, '0');
+  for (const action of ['waiting', 'start']) assert.equal((await request(`/orders/${action}`, driverToken, { orderId: job.id })).status, 200);
+  const balance = (await request(`/admin/drivers/${driver.id}`, adminToken)).data.user.balance;
+  assert.equal(balance.total, '0');
+  assert.equal(balance.held, '0');
+  assert.equal(balance.available, '0');
+  assert.deepEqual((await request('/driver/history', driverToken)).data.transactions.items.map((row: any) => row.type).sort(), ['PAYMENT', 'WITHDRAWAL']);
+});
+
+test('acceptance racing an admin reduction either reserves funds or rejects without an uncovered hold', async () => {
+  const driver = (await request('/driver/profile', driverToken)).data;
+  for (const type of ['WITHDRAWAL', 'ADJUSTMENT']) {
+    for (let round = 0; round < 6; round++) {
+      const job = await order(40);
+      const results = await Promise.all([
+        request('/orders/accept', driverToken, { orderId: job.id }),
+        request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: -480, type })
+      ]);
+      const wallet = (await request(`/admin/drivers/${driver.id}`, adminToken)).data.user.balance;
+      if (results[0].status === 200) {
+        assert.equal(results[1].status, 400);
+        assert.deepEqual([wallet.total, wallet.held, wallet.available], ['500', '40', '460']);
+        assert.equal((await request('/orders/cancel', driverToken, { orderId: job.id })).status, 200);
+      } else {
+        assert.equal(results[0].status, 403);
+        assert.equal(results[1].status, 200);
+        assert.deepEqual([wallet.total, wallet.held, wallet.available], ['20', '0', '20']);
+        assert.equal((await request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 480, type: 'TOPUP' })).status, 200);
+        assert.equal((await request(`/admin/orders/${job.id}/cancel`, adminToken, {})).status, 200);
+      }
+    }
+  }
+});
+
+test('arrival racing driver cancel leaves either a retained WAITING hold or one actionable cancellation', async () => {
+  const driver = (await request('/driver/profile', driverToken)).data;
+  for (let round = 0; round < 12; round++) {
+    const job = await order(40);
+    const body = { orderId: job.id };
+    assert.equal((await request('/orders/accept', driverToken, body)).status, 200);
+    const results = await Promise.all([request('/orders/waiting', driverToken, body), request('/orders/cancel', driverToken, body)]);
+    assert.deepEqual(results.map(r => r.status).sort(), [200, 409]);
+    const wallet = (await request(`/admin/drivers/${driver.id}`, adminToken)).data.user.balance;
+    assert.equal(wallet.total, '500');
+    if (results[0].status === 200) {
+      assert.equal(wallet.held, '40');
+      assert.equal((await request('/orders/current', driverToken)).data.status, 'WAITING');
+      assert.equal((await request(`/admin/orders/${job.id}/cancel`, adminToken, {})).status, 200);
+    } else {
+      assert.equal(wallet.held, '0');
+      assert.equal((await request('/orders/current', driverToken)).data, null);
+      assert.equal(results[1].data.cancellationReviewRequired, true);
+    }
+  }
+  assert.equal((await request('/driver/history', driverToken)).data.transactions.total, 0);
+});
+
+test('start racing dispatcher cancel commits only a capture or hold release and never a refund', async () => {
+  const driver = (await request('/driver/profile', driverToken)).data;
+  for (let round = 0; round < 12; round++) {
+    const job = await order(40);
+    const body = { orderId: job.id };
+    for (const action of ['accept', 'waiting']) assert.equal((await request(`/orders/${action}`, driverToken, body)).status, 200);
+    const results = await Promise.all([request('/orders/start', driverToken, body), request(`/admin/orders/${job.id}/cancel`, adminToken, {})]);
+    assert.deepEqual(results.map(r => r.status).sort(), [200, 409]);
+    const wallet = (await request(`/admin/drivers/${driver.id}`, adminToken)).data.user.balance;
+    const entries = (await request('/driver/history?limit=100', driverToken)).data.transactions.items.filter((row: any) => row.orderId === job.id);
+    assert.equal(wallet.held, '0');
+    if (results[0].status === 200) {
+      assert.equal(wallet.total, '460');
+      assert.deepEqual(entries.map((row: any) => [row.type, row.amount]), [['PAYMENT', '-40']]);
+      assert.equal((await request('/orders/complete', driverToken, body)).status, 200);
+      assert.equal((await request(`/admin/drivers/${driver.id}/balance`, adminToken, { amount: 40, type: 'TOPUP' })).status, 200);
+    } else {
+      assert.equal(wallet.total, '500');
+      assert.deepEqual(entries, []);
+    }
+  }
+});
+
+test('driver cancellation recovery is durable, sorted before pagination, and final cancellation removes all actions', async () => {
+  const admin = await socket(adminToken);
+  const driver = (await request('/driver/profile', driverToken)).data;
+  const actionable: any[] = [];
+  for (let index = 0; index < 2; index++) {
+    const job = await order(40);
+    assert.equal((await request('/orders/accept', driverToken, { orderId: job.id })).status, 200);
+    const banner = nextSocketEvent<any>(admin, 'order:cancelled');
+    const cancellation = await request('/orders/cancel', driverToken, { orderId: job.id });
+    assert.equal(cancellation.status, 200);
+    const event = await banner;
+    assert.equal(event.orderNumber, job.orderNumber);
+    assert.equal(event.driverId, driver.id);
+    assert.equal(event.driver.user.fullName, driver.user.fullName);
+    assert.equal(event.notificationEventId, job.notificationEventId);
+    assert.equal(event.offerAttemptId, job.offerAttemptId);
+    assert.equal(event.cancellationReviewRequired, true);
+    actionable.push(job);
+    await prisma.order.update({ where: { id: job.id }, data: { cancelledAt: new Date(`2020-01-0${index + 1}T00:00:00Z`) } });
+  }
+  for (let index = 0; index < 3; index++) {
+    const terminal = await order();
+    const result = await request(`/admin/orders/${terminal.id}/cancel`, adminToken, {});
+    assert.equal(result.status, 200);
+    assert.equal(result.data.cancellationReviewRequired, false);
+    assert.deepEqual(result.data.resolutionActions, []);
+  }
+  const recovered = (await request('/admin/orders/cancellation-review?limit=1', adminToken)).data;
+  assert.equal(recovered.total, 2);
+  assert.equal(recovered.items[0].id, actionable[1].id);
+  assert.deepEqual(recovered.items[0].resolutionActions, ['REOFFER', 'FINAL_CANCEL']);
+  const firstPage = (await request('/admin/orders?status=cancelled&limit=1', adminToken)).data;
+  const secondPage = (await request('/admin/orders?status=cancelled&limit=1&page=2', adminToken)).data;
+  assert.equal(firstPage.items[0].id, actionable[1].id);
+  assert.equal(secondPage.items[0].id, actionable[0].id);
+  const results = await Promise.all([1, 2].map(() => request(`/admin/orders/${actionable[1].id}/final-cancel`, adminToken, {})));
+  assert.deepEqual(results.map(r => r.status).sort(), [200, 409]);
+  assert.deepEqual(results.find(r => r.status === 200)!.data.resolutionActions, []);
+  assert.equal((await request(`/admin/orders/${actionable[1].id}/reoffer`, adminToken, {})).status, 409);
+  assert.equal((await request('/admin/orders/cancellation-review', adminToken)).data.total, 1);
+  assert.equal((await request('/orders/available', driverToken)).data.length, 0);
+  assert.equal((await request('/driver/history', driverToken)).data.transactions.total, 0);
+  assert.equal((await request('/admin/orders/cancellation-review', driverToken)).status, 403);
+});
+
+test('reoffer preserves order and assignment history but has a fresh canonical attempt across HTTP socket inbox native and FCM', async () => {
+  await withFakeFcm(async sent => {
+    const driver = (await request('/driver/profile', driverToken)).data;
+    const recipient = await socket(driverToken);
+    const registered = await request('/driver/notifications/registration', driverToken, { token: 'synthetic-reoffer-token', enabled: true });
+    const original = await order(40);
+    const originalInbox = (await request('/driver/notifications/inbox', driverToken)).data;
+    assert.equal(originalInbox.events[0].id, original.notificationEventId);
+    assert.equal(originalInbox.events[0].order.clientPhone, undefined);
+    assert.equal(originalInbox.events[0].order.orderNumber, original.orderNumber);
+    assert.ok(originalInbox.serverTime);
+    assert.equal((await request('/orders/accept', driverToken, { orderId: original.id })).status, 200);
+    assert.equal((await request('/orders/cancel', driverToken, { orderId: original.id })).status, 200);
+    const popup = nextSocketEvent<any>(recipient, 'order:new');
+    const results = await Promise.all([1, 2].map(() => request(`/admin/orders/${original.id}/reoffer`, adminToken, {})));
+    assert.deepEqual(results.map(r => r.status).sort(), [200, 409]);
+    const reopened = results.find(r => r.status === 200)!.data;
+    assert.equal(reopened.id, original.id);
+    assert.equal(reopened.orderNumber, original.orderNumber);
+    assert.equal(reopened.districtId, original.districtId);
+    assert.equal(reopened.status, 'NEW');
+    assert.equal(reopened.driverId, null);
+    assert.equal(reopened.acceptedAt, null);
+    assert.equal(reopened.arrivedAt, null);
+    assert.equal(reopened.cancelledAt, null);
+    assert.notEqual(reopened.offerAttemptId, original.offerAttemptId);
+    assert.notEqual(reopened.notificationEventId, original.notificationEventId);
+    assert.ok(Date.parse(reopened.expiresAt) - Date.parse(reopened.serverTime) <= 20_000);
+    assert.ok(Date.parse(reopened.expiresAt) - Date.parse(reopened.serverTime) > 18_000);
+    assert.equal((await popup).notificationEventId, reopened.notificationEventId);
+    const inbox = (await request('/driver/notifications/inbox', driverToken)).data;
+    assert.deepEqual(inbox.events.map((event: any) => event.id), [reopened.notificationEventId]);
+    const old = await request('/native-notifications/event', registered.data.notificationToken, { eventId: original.notificationEventId });
+    assert.equal(old.data.event, null);
+    const fresh = await request('/native-notifications/event', registered.data.notificationToken, { eventId: reopened.notificationEventId });
+    assert.equal(fresh.data.event.id, reopened.notificationEventId);
+    assert.equal(fresh.data.event.offerAttemptId, reopened.offerAttemptId);
+    assert.equal(fresh.data.event.expiresAt, reopened.expiresAt);
+    assert.ok(fresh.data.event.serverTime);
+    // Old acknowledgements and invalidation must never acknowledge the new attempt.
+    assert.equal((await request('/driver/notifications/ack', driverToken, { eventId: original.notificationEventId })).status, 204);
+    await new Promise(resolve => setTimeout(resolve, 4200));
+    assert.ok(sent.some(row => row.data.eventId === reopened.notificationEventId));
+    assert.equal((await request('/orders/available', driverToken)).data[0].notificationEventId, reopened.notificationEventId);
+    const history = (await request(`/admin/orders?orderNumber=${original.orderNumber}`, adminToken)).data.items[0];
+    assert.equal(history.assignments.length, 1);
+    assert.equal(history.assignments[0].driverId, driver.id);
+    assert.equal(history.assignments[0].quotedAmount, '40');
+    assert.equal(history.assignments[0].endAction, 'DRIVER_CANCELLED');
+    const taken = nextSocketEvent<any>(recipient, 'order:taken');
+    // The former driver remains eligible and the next assignment is distinct.
+    assert.equal((await request('/orders/accept', driverToken, { orderId: original.id })).status, 200);
+    assert.equal((await taken).notificationEventId, reopened.notificationEventId);
+    assert.deepEqual((await request('/driver/notifications/inbox', driverToken)).data.events, []);
+    const full = (await request(`/admin/orders?orderNumber=${original.orderNumber}`, adminToken)).data.items[0];
+    assert.equal(full.assignments.length, 2);
+    assert.deepEqual(full.assignments.map((a: any) => a.fundingState).sort(), ['HELD', 'RELEASED']);
+    assert.equal((await request('/driver/history', driverToken)).data.transactions.total, 0);
+  });
+});
+
+for (const state of ['ACCEPTED', 'WAITING', 'STARTED'] as const) {
+  test(`legacy already-paid ${state} trip is not held or charged again after upgrade`, async () => {
+    const driver = (await request('/driver/profile', driverToken)).data;
+    const job = await order(99);
+    // Explicit pre-upgrade fixture: 30 was paid at acceptance, quote metadata
+    // later changed. No new assignment row exists in the old schema.
+    await prisma.order.update({ where: { id: job.id }, data: { status: state, driverId: driver.id, acceptedAt: new Date(), arrivedAt: state === 'ACCEPTED' ? null : new Date(), startedAt: state === 'STARTED' ? new Date() : null } });
+    await prisma.driver.update({ where: { id: driver.id }, data: { isAvailable: false } });
+    const wallet = await prisma.balance.update({ where: { userId: driver.userId }, data: { amount: 470 } });
+    await prisma.transaction.create({ data: { balanceId: wallet.id, orderId: job.id, type: 'PAYMENT', amount: -30, balanceAfter: 470 } });
+    assert.equal((await request(`/admin/drivers/${driver.id}`, adminToken)).data.user.balance.held, '0');
+    if (state === 'ACCEPTED') {
+      assert.equal((await request('/orders/cancel', driverToken, { orderId: job.id })).status, 200);
+      assert.equal((await request('/driver/balance', driverToken)).data.amount, '500');
+      assert.equal((await request('/orders/cancel', driverToken, { orderId: job.id })).status, 409);
+      const entries = (await request('/driver/history', driverToken)).data.transactions.items;
+      assert.deepEqual(entries.map((row: any) => [row.type, row.amount]).sort(), [['PAYMENT', '-30'], ['REFUND', '30']]);
+      assert.equal((await request(`/admin/orders/${job.id}/reoffer`, adminToken, {})).status, 200);
+      const row = (await request(`/admin/orders?orderNumber=${job.orderNumber}`, adminToken)).data.items[0];
+      assert.equal(row.assignments[0].quotedAmount, '30');
+      assert.equal(row.assignments[0].driverId, driver.id);
+    } else {
+      if (state === 'WAITING') assert.equal((await request('/orders/start', driverToken, { orderId: job.id })).status, 200);
+      assert.equal((await request('/orders/complete', driverToken, { orderId: job.id })).status, 200);
+      assert.equal((await request('/driver/balance', driverToken)).data.amount, '470');
+      assert.equal((await request('/driver/history', driverToken)).data.transactions.total, 1);
+    }
+  });
+}
+
+test('broadcast history and merged conversations exclude private replies and broadcasts predating account creation', async () => {
+  await prisma.message.deleteMany();
+  await prisma.driver.updateMany({ data: { lastChatReadAt: null, lastChatReadMessageId: null } });
+  const driver = (await request('/driver/profile', driverToken)).data;
+  const other = (await request('/driver/profile', otherToken)).data;
+  const admin = await prisma.user.findFirstOrThrow({ where: { role: 'ADMIN' } });
+  const createdAt = new Date('2026-10-18T12:00:00Z');
+  const oldCreatedAt = (await prisma.user.findUniqueOrThrow({ where: { id: driver.userId } })).createdAt;
+  await prisma.user.update({ where: { id: driver.userId }, data: { createdAt } });
+  const old = await prisma.message.create({ data: { senderId: admin.id, isBroadcast: true, body: 'Before registration', sentAt: new Date('2026-10-18T11:59:59Z') } });
+  const boundary = await prisma.message.create({ data: { senderId: admin.id, isBroadcast: true, body: 'At registration', sentAt: createdAt } });
+  try {
+    const broadcast = await request('/admin/messages', adminToken, { broadcast: true, body: 'Dispatch broadcast' });
+    const ownReply = await request('/driver/messages', driverToken, { body: 'Private driver reply' });
+    const foreignReply = await request('/driver/messages', otherToken, { body: 'Other private reply' });
+    const ownAdmin = await request('/admin/messages', adminToken, { driverId: driver.id, body: 'Private dispatcher reply' });
+    const foreignAdmin = await request('/admin/messages', adminToken, { driverId: other.id, body: 'Other dispatcher reply' });
+    const history = (await request('/admin/messages/broadcasts?limit=100', adminToken)).data;
+    assert.deepEqual(history.items.map((m: any) => m.id), [old.id, boundary.id, broadcast.data.id]);
+    assert.equal(history.total, 3);
+    const merged = (await request(`/admin/drivers/${driver.id}/messages?limit=100`, adminToken)).data;
+    assert.deepEqual(merged.items.map((m: any) => m.id), [boundary.id, broadcast.data.id, ownReply.data.id, ownAdmin.data.id]);
+    assert.equal(merged.items.filter((m: any) => m.isBroadcast).length, 2);
+    const own = (await request('/driver/messages?limit=100', driverToken)).data;
+    assert.deepEqual(own.items.map((m: any) => m.id), merged.items.map((m: any) => m.id));
+    assert.equal(own.unread, 3);
+    assert.equal((await request('/driver/messages/read', driverToken, { throughMessageId: old.id })).status, 400);
+    const otherView = (await request('/driver/messages?limit=100', otherToken)).data;
+    assert.equal(otherView.items.some((m: any) => [ownReply.data.id, ownAdmin.data.id].includes(m.id)), false);
+    assert.equal(own.items.some((m: any) => [foreignReply.data.id, foreignAdmin.data.id].includes(m.id)), false);
+    assert.equal((await request('/admin/messages/broadcasts', driverToken)).status, 403);
+    const paged = (await request('/admin/messages/broadcasts?limit=1', adminToken)).data;
+    assert.equal(paged.items[0].id, broadcast.data.id);
+    const older = (await request(`/admin/messages/broadcasts?limit=2&beforeMessageId=${broadcast.data.id}`, adminToken)).data;
+    assert.deepEqual(older.items.map((m: any) => m.id), [old.id, boundary.id]);
+    const installation = await request('/driver/notifications/registration', driverToken, { token: null });
+    assert.equal((await request('/native-notifications/event', installation.data.notificationToken, { eventId: `chat:${old.id}` })).data.event, null);
+  } finally {
+    await prisma.user.update({ where: { id: driver.userId }, data: { createdAt: oldCreatedAt } });
+  }
 });

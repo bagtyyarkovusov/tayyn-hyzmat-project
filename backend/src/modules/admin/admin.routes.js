@@ -72,6 +72,7 @@ router.get(
 router.post('/messages', validate({ body: messageSchema }), controller.sendMessage);
 // Global "new message" badge (AdminNav.vue) - separate from a specific
 // driver's thread, see admin.service.js#listUnreadDriverIds.
+router.get('/messages/broadcasts', validate({ query: historyQuerySchema }), asyncHandler(async (req, res) => res.json(await require('./admin.service').getBroadcastMessages(req.query))));
 router.get('/messages/unread', controller.unreadDriverIds);
 router.get(
   '/drivers/:id/messages',
@@ -92,6 +93,9 @@ router.post(
 // so this is currently the only way an order enters the system at all.
 router.post('/orders/:id/private-offer', validate({ params: orderIdParamSchema, body: privateOfferSchema }), controller.privateOffer);
 router.post('/orders', validate({ body: createOrderSchema }), controller.createOrder);
+router.get('/orders/cancellation-review', validate({ query: historyQuerySchema }), asyncHandler(async (req, res) => res.json(await require('./admin.service').listOrders({ ...req.query, status: 'cancelled', cancellationReviewRequired: true }))));
+router.post('/orders/:id/reoffer', validate({ params: orderIdParamSchema, body: z.object({}).strict() }), asyncHandler(async (req, res) => res.json(await require('../orders/orders.service').resolveCancellation(req.params.id, req.user.id, 'REOFFER'))));
+router.post('/orders/:id/final-cancel', validate({ params: orderIdParamSchema, body: z.object({}).strict() }), asyncHandler(async (req, res) => res.json(await require('../orders/orders.service').resolveCancellation(req.params.id, req.user.id, 'FINAL_CANCEL'))));
 router.get('/orders', validate({ query: listOrdersQuerySchema }), controller.listOrders);
 // Dispatcher cancellation is available only before STARTED; completion is audited separately.
 router.post('/orders/:id/cancel', validate({ params: orderIdParamSchema, body: blockSchema }), controller.cancelOrder);

@@ -1,3 +1,4 @@
+const { driverChatVisibility } = require('../chat/visibility');
 const { afterCursor, beforeCursor, markRead } = require('../chat/cursors');
 const { persistMessage } = require('../chat/persist-message');
 const prisma = require('../../lib/prisma');
@@ -207,13 +208,13 @@ async function getHistory(driver, { page, limit }) {
       : Promise.resolve([]),
     balance ? prisma.transaction.count({ where: { balanceId: balance.id } }) : Promise.resolve(0),
     prisma.order.findMany({
-      where: { driverId: driver.id },
+      where: { OR: [{ driverId: driver.id }, { assignments: { some: { driverId: driver.id } } }] },
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * limit,
       take: limit,
       include: { district: true }
     }),
-    prisma.order.count({ where: { driverId: driver.id } })
+    prisma.order.count({ where: { OR: [{ driverId: driver.id }, { assignments: { some: { driverId: driver.id } } }] } })
   ]);
 
   // History never exposes customer contact; the call action belongs to active trips.
@@ -225,9 +226,7 @@ async function getHistory(driver, { page, limit }) {
 }
 
 async function getMessages(driver, { page, limit, beforeMessageId }) {
-  const where = {
-    OR: [{ senderId: driver.userId }, { receiverId: driver.userId }, { isBroadcast: true }]
-  };
+  const { conversation: where, incoming } = await driverChatVisibility(driver.userId);
 
   // Anything the admin sent (i.e. not written by this driver) after they
   // last opened their chat. Returned alongside the messages so the app can
@@ -239,7 +238,7 @@ async function getMessages(driver, { page, limit, beforeMessageId }) {
     // all drivers at once. Broadcasts count too - "сообщение всем
     // водителям" is still a message they need to see, and lastChatReadAt
     // being per-driver keeps that correct for each of them individually.
-    OR: [{ receiverId: driver.userId }, { isBroadcast: true }],
+    ...incoming,
     NOT: { senderId: driver.userId },
     AND: [afterCursor(driver.lastChatReadAt, driver.lastChatReadMessageId)]
   };
@@ -262,7 +261,8 @@ async function getMessages(driver, { page, limit, beforeMessageId }) {
 // Called when the driver actually opens their chat screen - everything the
 // admin sent up to now counts as seen.
 async function markChatRead(driver, throughMessageId) {
-  await markRead(driver.id, { OR: [{ receiverId: driver.userId }, { isBroadcast: true }] }, throughMessageId, 'lastChatReadAt', 'lastChatReadMessageId');
+  const { incoming } = await driverChatVisibility(driver.userId);
+  await markRead(driver.id, incoming, throughMessageId, 'lastChatReadAt', 'lastChatReadMessageId');
   // Reading is account-wide. A second signed-in device must clear its native
   // notification ledger too, while exact event IDs protect newer alerts.
   try {
@@ -271,7 +271,7 @@ async function markChatRead(driver, throughMessageId) {
     const messages = await prisma.message.findMany({
       where: {
         NOT: { senderId: driver.userId },
-        AND: [{ OR: [{ receiverId: driver.userId }, { isBroadcast: true }] }, { OR: [
+        AND: [incoming, { OR: [
           { sentAt: { lt: current.lastChatReadAt } },
           ...(current.lastChatReadMessageId ? [{ sentAt: current.lastChatReadAt, id: { lte: current.lastChatReadMessageId } }] : [])
         ] }],

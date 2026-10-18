@@ -67,7 +67,7 @@ const listOrders = asyncHandler(async (req, res) => {
 });
 
 const cancelOrder = asyncHandler(async (req, res) => {
-  const order = await ordersService.adminCancel(req.params.id, req.body.reason);
+  const order = await ordersService.adminCancel(req.params.id, req.body.reason, req.user.id);
   res.json(order);
 });
 

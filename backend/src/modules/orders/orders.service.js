@@ -6,7 +6,9 @@ const rooms = require('../../sockets/rooms');
 const logger = require('../../config/logger');
 const districtsService = require('../districts/districts.service');
 const { haversineDistanceKm } = require('../../utils/geo');
-const { recordOrderCharge } = require('./order-charge');
+const { holdOrderQuote, captureOrderQuote, releaseOrderQuote, acceptedPrice } = require('./order-charge');
+const { orderPayload, invalidation } = require('./order-payload');
+const { randomUUID } = require('node:crypto');
 const { lockedBalance } = require('../balance/locked-balance');
 const { assertShiftControl, lockDeviceSession } = require('../driver/shift-ownership');
 const { assertOrderEligibility } = require('../driver/gps-eligibility');
@@ -82,6 +84,8 @@ const ACTIVE_DRIVER_ORDER_STATUSES = ['ACCEPTED', 'WAITING', 'STARTED'];
 const AVAILABLE_ORDER_SELECT = {
   id: true,
   orderNumber: true,
+  offerAttemptId: true,
+  offerAttemptKind: true,
   pickupLat: true,
   pickupLng: true,
   pickupAddress: true,
@@ -117,7 +121,7 @@ async function listAvailable(driver, districtId, scope = 'district') {
   if (!driver.isAvailable) return [];
 
   const targetDistrictId = districtId || driver.districtId;
-  return prisma.order.findMany({
+  const items = await prisma.order.findMany({
     where: {
       driverId: null,
       status: 'NEW',
@@ -132,6 +136,7 @@ async function listAvailable(driver, districtId, scope = 'district') {
     orderBy: { createdAt: 'asc' },
     select: AVAILABLE_ORDER_SELECT
   });
+  return items.map(orderPayload);
 }
 
 // The driver's in-progress order, if any - needed so reloading the app (or
@@ -144,7 +149,7 @@ async function lockDriver(tx, driverId) {
 
 function safePrivateOffer(order) {
   return {
-    ...Object.fromEntries(Object.keys(AVAILABLE_ORDER_SELECT).map(key => [key, order[key]])),
+    ...orderPayload(Object.fromEntries(Object.keys(AVAILABLE_ORDER_SELECT).map(key => [key, order[key]]))),
     privateOfferRemainingMs: order.privateOfferExpiresAt ? Math.max(0, order.privateOfferExpiresAt.getTime() - Date.now()) : 0
   };
 }
@@ -198,8 +203,8 @@ async function expirePrivateOffers() {
 async function publishPrivateRelease(order, audience = 'global') {
   await refreshOrderRecipients();
   safeEmit(io => {
-    if (order.privateOfferDriverId) io.to(rooms.driver(order.privateOfferDriverId)).emit('order:private-offer-ended', { orderId: order.id, privateOfferExpiresAt: order.privateOfferExpiresAt });
-    if (audience === 'global') io.to(rooms.publicOrders()).emit('order:available', { orderId: order.id, districtId: order.districtId });
+    if (order.privateOfferDriverId) io.to(rooms.driver(order.privateOfferDriverId)).emit('order:private-offer-ended', invalidation(order));
+    if (audience === 'global') io.to(rooms.publicOrders()).emit('order:available', { ...invalidation(order), districtId: order.districtId });
     io.to(rooms.admins()).emit('order:updated', { ...order, privateOfferDriverId: null, privateOfferExpiresAt: null });
   });
   await districtsService.broadcastDistrictStats();
@@ -214,13 +219,15 @@ async function getPrivateOffer(driver) {
 }
 
 async function offerPrivately(orderId, driverId, broadcastAfterPrivateExpiry = true) {
+  let removedOffer;
   await expirePrivateOffers();
   const order = await prisma.$transaction(async tx => {
     await lockDriver(tx, driverId);
     const existing = await lockOrder(tx, orderId);
+    removedOffer = invalidation(existing);
     const driver = await assertPrivateOfferDriver(tx, driverId, existing.priceEstimated);
     assertOrderEligibility(driver);
-    const changed = await tx.order.updateMany({ where: { id: orderId, status: 'NEW', driverId: null, privateOfferDriverId: null }, data: { privateOfferDriverId: driverId, privateOfferExpiresAt: new Date(Date.now() + 20_000), privateOfferStoppedAt: null, publicRegionOnlyUntil: null, publicReleasedGloballyAt: null, broadcastAfterPrivateExpiry } });
+    const changed = await tx.order.updateMany({ where: { id: orderId, status: 'NEW', driverId: null, privateOfferDriverId: null }, data: { offerAttemptId: randomUUID(), offerAttemptKind: 'private', privateOfferDriverId: driverId, privateOfferExpiresAt: new Date(Date.now() + 20_000), privateOfferStoppedAt: null, publicRegionOnlyUntil: null, publicReleasedGloballyAt: null, broadcastAfterPrivateExpiry } });
     if (!changed.count) throw ApiError.conflict('Заказ уже принят или предложен другому водителю');
     await notifications.invalidateOrder(tx, orderId);
     const updated = await tx.order.findUnique({ where: { id: orderId }, include: { district: true } });
@@ -230,11 +237,11 @@ async function offerPrivately(orderId, driverId, broadcastAfterPrivateExpiry = t
   notifications.wake();
   safeEmit(io => {
     io.to(rooms.driver(driverId)).emit('order:private-offer', safePrivateOffer(order));
-    io.to(rooms.drivers()).except(rooms.driver(driverId)).emit('order:taken', { orderId });
-    io.to(rooms.admins()).emit('order:updated', order);
+    io.to(rooms.drivers()).except(rooms.driver(driverId)).emit('order:taken', removedOffer);
+    io.to(rooms.admins()).emit('order:updated', orderPayload(order));
   });
   await districtsService.broadcastDistrictStats();
-  return order;
+  return orderPayload(order);
 }
 
 async function declinePrivateOffer(orderId, driver, privateOfferExpiresAt) {
@@ -253,18 +260,18 @@ async function declinePrivateOffer(orderId, driver, privateOfferExpiresAt) {
   // Decline frees the driver but does not shorten the order's exclusive deadline.
   // The expiry sweep applies the dispatcher's public fallback setting.
   safeEmit(io => {
-    io.to(rooms.driver(driver.id)).emit('order:private-offer-ended', { orderId, privateOfferExpiresAt });
-    io.to(rooms.admins()).emit('order:updated', order);
+    io.to(rooms.driver(driver.id)).emit('order:private-offer-ended', invalidation(order));
+    io.to(rooms.admins()).emit('order:updated', orderPayload(order));
   });
   await districtsService.broadcastDistrictStats();
   return { orderId };
 }
 
 async function getCurrent(driver) {
-  return prisma.order.findFirst({
+  return orderPayload(await prisma.order.findFirst({
     where: { driverId: driver.id, status: { in: ACTIVE_DRIVER_ORDER_STATUSES } },
     include: { district: true }
-  });
+  }));
 }
 
 // Mutations lock driver then order before rechecking committed state.
@@ -272,7 +279,7 @@ async function lockOrder(tx, orderId) {
   await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} FOR UPDATE`;
   const order = await tx.order.findUnique({ where: { id: orderId } });
   if (!order) throw ApiError.notFound('Заказ не найден');
-  return order;
+  return orderPayload(order);
 }
 
 async function accept(orderId, driver, etaMinutes, privateOfferExpiresAt) {
@@ -329,30 +336,19 @@ async function accept(orderId, driver, etaMinutes, privateOfferExpiresAt) {
     const acceptedOrder = await tx.order.findUnique({ where: { id: orderId }, include: { district: true } });
     await notifications.invalidateOrder(tx, orderId);
 
-    // The order's quoted price is charged to the driver's balance right
-    // here, at accept - not the old model (see complete() below), which
-    // deducted a distance-driven commission only once the ride finished.
-    // Refunded in full by cancel()/adminCancel() if the order doesn't end
-    // up completed (see there for why "was ever charged" == "has a
-    // driverId" is the right refund condition).
-    const balanceAfter = await recordOrderCharge(tx, acceptedOrder, driver.userId, 'PAYMENT');
+    const wallet = await holdOrderQuote(tx, acceptedOrder, driver.id, driver.userId);
+    return { order: orderPayload(acceptedOrder), wallet };
 
-    return { order: acceptedOrder, balanceAfter };
   });
 
   safeEmit((io) => {
-    io.to(rooms.driver(driver.id)).emit('order:private-offer-ended', { orderId: order.order.id, privateOfferExpiresAt });
+    io.to(rooms.driver(driver.id)).emit('order:private-offer-ended', invalidation(order.order));
     io.to(rooms.admins()).emit('order:accepted', order.order);
     io.to(rooms.order(order.order.id)).emit('order:accepted', order.order);
-    io.to(rooms.drivers()).emit('order:taken', { orderId: order.order.id });
-    if (order.balanceAfter !== null) {
-      io.to(rooms.driver(driver.id)).to(rooms.admins()).emit('balance:updated', {
-        driverId: driver.id,
-        amount: order.balanceAfter,
-        reason: 'PAYMENT',
-        orderId: order.order.id
-      });
-    }
+    io.to(rooms.drivers()).emit('order:taken', invalidation(order.order));
+    io.to(rooms.driver(driver.id)).to(rooms.admins()).emit('balance:updated', {
+      driverId: driver.id, ...order.wallet, reason: 'HOLD', orderId: order.order.id
+    });
   });
 
   await districtsService.broadcastDistrictStats();
@@ -385,7 +381,7 @@ async function markWaiting(orderId, driver) {
       where: { id: orderId },
       data: { status: 'WAITING', arrivedAt: new Date() }
     });
-    return updated;
+    return orderPayload(updated);
   });
 
   safeEmit((io) => {
@@ -417,24 +413,21 @@ async function startTrip(orderId, driver) {
       where: { id: orderId },
       data: { status: 'STARTED', startedAt, waitFee }
     });
-    return updated;
+    const wallet = await captureOrderQuote(tx, order, driver.userId);
+    return { order: orderPayload(updated), wallet };
   });
 
   safeEmit((io) => {
-    io.to(rooms.admins()).emit('order:started', updated);
-    io.to(rooms.order(updated.id)).emit('order:started', updated);
+    io.to(rooms.admins()).emit('order:started', updated.order);
+    io.to(rooms.order(updated.order.id)).emit('order:started', updated.order);
+    if (updated.wallet) io.to(rooms.driver(driver.id)).to(rooms.admins()).emit('balance:updated', {
+      driverId: driver.id, ...updated.wallet, reason: 'PAYMENT', orderId
+    });
   });
-
-  return updated;
+  return updated.order;
 }
 
-// "Завершить заказ" - money no longer changes hands here. The driver was
-// already charged the order's quoted price up front, at accept() - see the
-// comment there. distanceKm/waitFee are kept purely as trip metadata (still
-// useful for an admin to see how far/long a ride actually was) with no
-// effect on the balance any more; priceFinal is set to what was actually
-// charged (priceEstimated) rather than a distance-derived number, so it
-// doesn't misleadingly suggest a second amount was billed.
+// Completion preserves the captured quote and never charges again.
 async function complete(orderId, driver) {
   const updatedOrder = await prisma.$transaction(async (tx) => {
     await lockDeviceSession(tx, driver);
@@ -449,10 +442,11 @@ async function complete(orderId, driver) {
     const distanceKm = await calculateDistanceKm(driver.id, order.startedAt, completedAt, tx);
     const updated = await tx.order.update({
       where: { id: orderId },
-      data: { status: 'COMPLETED', completedAt, distanceKm: D(distanceKm), priceFinal: order.priceEstimated }
+      data: { status: 'COMPLETED', completedAt, distanceKm: D(distanceKm), priceFinal: await acceptedPrice(tx, order) }
     });
     await tx.driver.update({ where: { id: driver.id }, data: { isAvailable: true } });
-    return updated;
+    await tx.orderAssignment.updateMany({ where: { orderId, offerAttemptId: order.offerAttemptId }, data: { endedAt: completedAt, endAction: 'COMPLETED' } });
+    return orderPayload(updated);
   });
 
   safeEmit((io) => {
@@ -465,14 +459,7 @@ async function complete(orderId, driver) {
   return updatedOrder;
 }
 
-// Cancellation is available only while WAITING. Once a trip has STARTED, cancelling would abandon a
-// passenger mid-ride, which needs different handling than this endpoint.
-//
-// A driver who took this order was already charged its price at accept()
-// (see there) - cancelling it (whichever side is at fault: passenger
-// no-show, driver couldn't make it, etc.) means the ride never happened, so
-// that charge is refunded in full here. Shared with adminCancel() below via
-// recordOrderCharge.
+// Driver cancellation releases pre-arrival funds and creates dispatcher review work.
 async function cancel(orderId, driver, reason) {
   const result = await prisma.$transaction(async (tx) => {
     await lockDeviceSession(tx, driver);
@@ -480,30 +467,27 @@ async function cancel(orderId, driver, reason) {
     assertShiftControl(await tx.driver.findUniqueOrThrow({ where: { id: driver.id } }), driver.sessionDeviceId);
     const order = await lockOrder(tx, orderId);
     assertOwnedByDriver(order, driver);
-    if (order.status !== 'WAITING') {
+    if (order.status !== 'ACCEPTED') {
       throw ApiError.conflict('Невозможно отменить заказ в текущем статусе', { status: order.status });
     }
     const updated = await tx.order.update({
       where: { id: orderId },
-      data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: reason || null }
+      data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: reason || null, cancellationReviewRequired: true },
+      include: { driver: { include: { user: { select: { fullName: true, phone: true } } } } }
     });
     await notifications.invalidateOrder(tx, orderId);
     await tx.driver.update({ where: { id: driver.id }, data: { isAvailable: true } });
-    const balanceAfter = await recordOrderCharge(tx, order, driver.userId, 'REFUND');
-    return { order: updated, balanceAfter };
+    const released = await releaseOrderQuote(tx, order, driver.userId, 'DRIVER_CANCELLED');
+    await tx.orderResolutionAudit.create({ data: { orderId, actorId: driver.userId, action: 'DRIVER_CANCELLED', offerAttemptId: order.offerAttemptId, driverId: driver.id, reason: reason || '' } });
+    return { order: orderPayload(updated), ...released };
   });
 
   safeEmit((io) => {
     io.to(rooms.admins()).emit('order:cancelled', result.order);
     io.to(rooms.order(result.order.id)).emit('order:cancelled', result.order);
-    if (result.balanceAfter !== null) {
-      io.to(rooms.driver(driver.id)).to(rooms.admins()).emit('balance:updated', {
-        driverId: driver.id,
-        amount: result.balanceAfter,
-        reason: 'REFUND',
-        orderId: result.order.id
-      });
-    }
+    io.to(rooms.driver(driver.id)).to(rooms.admins()).emit('balance:updated', {
+      driverId: driver.id, ...result.wallet, reason: result.reason, orderId
+    });
   });
 
   await districtsService.broadcastDistrictStats();
@@ -537,11 +521,11 @@ async function createOrder(data) {
       await assertPrivateOfferDriver(tx, privateOfferDriverId, publicData.priceEstimated);
     }
     const created = await tx.order.create({
-      data: { ...publicData, pickupLat, pickupLng, districtId, status: 'NEW', broadcastAfterPrivateExpiry: privateOfferDriverId ? publicData.broadcastAfterPrivateExpiry : true, publicRegionOnlyUntil: privateOfferDriverId ? null : new Date(Date.now() + 20_000), publicReleasedGloballyAt: privateOfferDriverId ? null : new Date(), ...(privateOfferDriverId ? { privateOfferDriverId, privateOfferExpiresAt: new Date(Date.now() + 20_000) } : {}) },
+      data: { ...publicData, pickupLat, pickupLng, districtId, status: 'NEW', broadcastAfterPrivateExpiry: privateOfferDriverId ? publicData.broadcastAfterPrivateExpiry : true, publicRegionOnlyUntil: privateOfferDriverId ? null : new Date(Date.now() + 20_000), publicReleasedGloballyAt: privateOfferDriverId ? null : new Date(), ...(privateOfferDriverId ? { offerAttemptKind: 'private', privateOfferDriverId, privateOfferExpiresAt: new Date(Date.now() + 20_000) } : {}) },
       include: { district: true }
     });
     await notifications.enqueueOrder(tx, created);
-    return created;
+    return orderPayload(created);
   });
   notifications.wake();
 
@@ -561,10 +545,10 @@ async function createOrder(data) {
   }
   const deliverable = await prisma.order.findUnique({ where: { id: order.id } });
   safeEmit((io) => {
-    if (!deliverable || deliverable.status !== 'NEW' || deliverable.driverId || deliverable.privateOfferStoppedAt || deliverable.privateOfferDriverId !== order.privateOfferDriverId || deliverable.privateOfferExpiresAt?.getTime() !== order.privateOfferExpiresAt?.getTime()) return;
+    if (!deliverable || deliverable.offerAttemptId !== order.offerAttemptId || deliverable.status !== 'NEW' || deliverable.driverId || deliverable.privateOfferStoppedAt || deliverable.privateOfferDriverId !== order.privateOfferDriverId || deliverable.privateOfferExpiresAt?.getTime() !== order.privateOfferExpiresAt?.getTime()) return;
     if (order.privateOfferDriverId) io.to(rooms.driver(order.privateOfferDriverId)).emit('order:private-offer', safePrivateOffer(order));
     else {
-      io.to(rooms.publicOrders()).emit('order:available', { orderId: order.id, districtId: order.districtId });
+      io.to(rooms.publicOrders()).emit('order:available', { ...invalidation(order), districtId: order.districtId });
       if (order.districtId) io.to(rooms.district(order.districtId)).emit('order:new', { ...orderWithoutPhone, publicOfferRemainingMs: Math.max(0, order.publicRegionOnlyUntil.getTime() - Date.now()) });
     }
     io.to(rooms.admins()).emit('order:new', order);
@@ -572,12 +556,11 @@ async function createOrder(data) {
 
   await districtsService.broadcastDistrictStats();
 
-  return order;
+  return orderPayload(order);
 }
 
-// Dispatcher cancellation is a pre-start recovery action. It refunds the debit
-// and frees the driver. A started drive must use audited completion instead.
-async function adminCancel(orderId, reason) {
+// Dispatcher cancellation releases pre-start funds. Started trips require audited completion.
+async function adminCancel(orderId, reason, actorId) {
   // Read only to choose the lock order. Revalidate after locking: a concurrent
   // claim of a NEW order must not be cancelled using its stale unassigned state.
   const observed = await prisma.order.findUnique({ where: { id: orderId } });
@@ -597,29 +580,23 @@ async function adminCancel(orderId, reason) {
       data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: reason || null }
     });
     await notifications.invalidateOrder(tx, orderId);
-    let balanceAfter = null;
+    let released = null;
     if (order.driverId) {
       const driver = await tx.driver.update({ where: { id: order.driverId }, data: { isAvailable: true } });
-      balanceAfter = await recordOrderCharge(tx, order, driver.userId, 'REFUND');
+      released = await releaseOrderQuote(tx, order, driver.userId, 'ADMIN_CANCELLED');
     }
-    return { order: updated, balanceAfter, wasUnaccepted: order.status === 'NEW' };
+    await tx.orderResolutionAudit.create({ data: { orderId, actorId, action: 'ADMIN_CANCELLED', offerAttemptId: order.offerAttemptId, driverId: order.driverId, reason: reason || '' } });
+    return { order: orderPayload(updated), released, wasUnaccepted: order.status === 'NEW' };
   });
   const order = result.order;
 
   safeEmit((io) => {
-    if (result.order.privateOfferDriverId) io.to(rooms.driver(result.order.privateOfferDriverId)).emit('order:private-offer-ended', { orderId, privateOfferExpiresAt: result.order.privateOfferExpiresAt });
+    if (result.order.privateOfferDriverId) io.to(rooms.driver(result.order.privateOfferDriverId)).emit('order:private-offer-ended', invalidation(result.order));
     io.to(rooms.admins()).emit('order:cancelled', result.order);
     io.to(rooms.order(result.order.id)).emit('order:cancelled', result.order);
     if (order.driverId) {
       io.to(rooms.driver(order.driverId)).emit('order:cancelled', result.order);
-      if (result.balanceAfter !== null) {
-        io.to(rooms.driver(order.driverId)).to(rooms.admins()).emit('balance:updated', {
-          driverId: order.driverId,
-          amount: result.balanceAfter,
-          reason: 'REFUND',
-          orderId: result.order.id
-        });
-      }
+      if (result.released) io.to(rooms.driver(order.driverId)).to(rooms.admins()).emit('balance:updated', { driverId: order.driverId, ...result.released.wallet, reason: result.released.reason, orderId });
     }
     // The order was still just broadcast to every driver in the district as
     // an unaccepted "Новый заказ" popup (see createOrder) - order:taken is
@@ -627,13 +604,54 @@ async function adminCancel(orderId, reason) {
     // uses to close that popup, so this reuses it rather than needing a new
     // frontend event handler for "admin pulled it before anyone answered".
     if (result.wasUnaccepted) {
-      io.to(rooms.drivers()).emit('order:taken', { orderId: result.order.id });
+      io.to(rooms.drivers()).emit('order:taken', invalidation(result.order));
     }
   });
 
   await districtsService.broadcastDistrictStats();
 
   return result.order;
+}
+
+// Resolve a persisted cancellation once. The driver lock comes first even
+// though reoffer clears current assignment; the historical assignment remains.
+async function resolveCancellation(orderId, actorId, action) {
+  const observed = await prisma.order.findUnique({ where: { id: orderId } });
+  if (!observed) throw ApiError.notFound('Заказ не найден');
+  const order = await prisma.$transaction(async tx => {
+    if (observed.driverId) await lockDriver(tx, observed.driverId);
+    const current = await lockOrder(tx, orderId);
+    if (current.driverId !== observed.driverId || current.status !== 'CANCELLED' || !current.cancellationReviewRequired) {
+      throw ApiError.conflict('Отмена уже обработана. Обновите список');
+    }
+    await notifications.invalidateOrder(tx, orderId);
+    const data = action === 'REOFFER' ? {
+      status: 'NEW', cancellationReviewRequired: false, offerAttemptId: randomUUID(), offerAttemptKind: 'order',
+      driverId: null, vehicleId: null, acceptedAt: null, arrivedAt: null, startedAt: null, completedAt: null,
+      cancelledAt: null, cancelReason: null, etaMinutes: null, priceFinal: null, waitFee: null, distanceFee: null,
+      distanceKm: null, durationMin: null, privateOfferDriverId: null, privateOfferExpiresAt: null,
+      privateOfferStoppedAt: null, publicRegionOnlyUntil: new Date(Date.now() + 20_000),
+      publicReleasedGloballyAt: new Date(), broadcastAfterPrivateExpiry: true
+    } : { cancellationReviewRequired: false };
+    const updated = await tx.order.update({ where: { id: orderId }, data, include: { district: true } });
+    await tx.orderResolutionAudit.create({ data: { orderId, actorId, action, offerAttemptId: current.offerAttemptId, nextOfferAttemptId: action === 'REOFFER' ? updated.offerAttemptId : null, driverId: current.driverId, reason: '' } });
+    if (action === 'REOFFER') await notifications.enqueueOrder(tx, updated);
+    return orderPayload(updated);
+  });
+  notifications.wake();
+  if (action === 'REOFFER') await refreshOrderRecipients();
+  safeEmit(io => {
+    io.to(rooms.admins()).emit(action === 'REOFFER' ? 'order:reoffered' : 'order:cancellation-resolved', order);
+    if (action === 'REOFFER') {
+      const { clientPhone, ...safeOrder } = order;
+      void clientPhone;
+      io.to(rooms.publicOrders()).emit('order:available', { ...invalidation(order), districtId: order.districtId });
+      if (order.districtId) io.to(rooms.district(order.districtId)).emit('order:new', { ...safeOrder, publicOfferRemainingMs: Math.max(0, order.publicRegionOnlyUntil.getTime() - Date.now()) });
+      io.to(rooms.admins()).emit('order:new', order);
+    }
+  });
+  await districtsService.broadcastDistrictStats();
+  return order;
 }
 
 // A started trip is never completed by a clock. If the driver loses the app
@@ -648,6 +666,8 @@ async function forceResolveStarted(orderId, actorId, reason) {
     if (observed.driverId) await lockDriver(tx, observed.driverId);
     const order = await lockOrder(tx, orderId);
     if (order.driverId !== observed.driverId) throw ApiError.conflict('Заказ изменился. Повторите завершение');
+    const funding = await tx.orderAssignment.findUnique({ where: { orderId_offerAttemptId: { orderId, offerAttemptId: order.offerAttemptId } } });
+    if (funding?.fundingState === 'HELD') throw ApiError.conflict('Средства поездки ещё не списаны');
     if (order.status !== 'STARTED') {
       throw ApiError.conflict('Принудительно завершить можно только начатую поездку', { status: order.status });
     }
@@ -656,17 +676,18 @@ async function forceResolveStarted(orderId, actorId, reason) {
       data: {
         status: 'COMPLETED',
         completedAt,
-        priceFinal: order.priceFinal ?? order.priceEstimated
+        priceFinal: order.priceFinal ?? await acceptedPrice(tx, order)
       },
       include: { driver: { include: { user: { select: { fullName: true, phone: true, archivedPhone: true } } } }, district: true }
     });
     if (order.driverId) {
       await tx.driver.update({ where: { id: order.driverId }, data: { isAvailable: true } });
     }
+    await tx.orderAssignment.updateMany({ where: { orderId, offerAttemptId: order.offerAttemptId }, data: { endedAt: completedAt, endAction: 'FORCE_COMPLETED' } });
     await tx.orderResolutionAudit.create({
-      data: { orderId, actorId, action: 'FORCE_COMPLETED', reason }
+      data: { orderId, actorId, action: 'FORCE_COMPLETED', offerAttemptId: order.offerAttemptId, driverId: order.driverId, reason }
     });
-    return { ...updated, driver: require('../driver/public-profile').publicDriverProfile(updated.driver) };
+    return orderPayload({ ...updated, driver: require('../driver/public-profile').publicDriverProfile(updated.driver) });
   });
 
   safeEmit((io) => {
@@ -692,6 +713,7 @@ module.exports = {
   cancel,
   adminCancel,
   forceResolveStarted,
+  resolveCancellation,
   NEEDS_COMPLETION_AFTER_MS,
   createOrder,
   // exported for tests/tooling - pure functions, no I/O
