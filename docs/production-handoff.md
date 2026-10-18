@@ -4,7 +4,7 @@ This is the operational handoff for the first VPS release. Start with the [setup
 
 ## Current status
 
-The first production release is installed on the main VPS from the verified clean-source bundle described below. The Railway services and `apk-test` environments remain test environments; their databases and credentials must not be copied into production. HTTPS health, admin login, authenticated WebSocket access, encrypted backup/relay, monitor checks and a disposable restore have now been verified. Real dispatcher-driver workflow, physical-phone delivery and merge of the deployment PR remain open gates; the clean signed APK has been rebuilt below.
+The first production release is installed on the main VPS from the verified clean-source bundle described below. The Railway services and `apk-test` environments remain test environments; their databases and credentials must not be copied into production. HTTPS health, admin login, authenticated WebSocket access, encrypted backup/relay, monitor checks and a disposable restore have now been verified. The new domain cutover and signed APK 1.19/code 20 are verified below. Real dispatcher-driver workflow and physical-phone delivery remain open gates.
 
 The bootstrap began with one approved admin and the nine versioned saved regions. Current authenticated overview evidence reports two drivers, one active order and four completed trips; these records were not created by this handoff session. Do not seed synthetic drivers, orders, chats, balances, or Railway records into production.
 
@@ -31,7 +31,7 @@ monitoring VDS checks -> Gmail SMTP with verified TLS -> personal Gmail recipien
 
 The purchased hosts, agreed domain and installed release are recorded below. DNS, trusted TLS, reboot-persistent management access and the application deployment are verified. Keep private keys, API keys and passwords out of this inventory.
 
-The agreed production origin is `https://tayynhyzmat.bagtyyar.dev`. Preserve the existing root-domain site. Use a separate monitoring hostname only if the monitor has a web UI that must be exposed. Do not publish PostgreSQL or Docker's control socket.
+The new production origin is `https://taxi.tayynhyzmat.com`; the owner retired `tayynhyzmat.bagtyyar.dev`. Certificate issuance, live configuration switch, authenticated API/WebSocket acceptance and independent monitoring passed on 2026-10-18. Preserve the existing root-domain site. Use a separate monitoring hostname only if the monitor has a web UI that must be exposed. Do not publish PostgreSQL or Docker's control socket.
 
 ## Operational inventory
 
@@ -41,16 +41,16 @@ Fill this in during provisioning. An empty field is a deployment gate, not permi
 | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | Main host                             | Standard L, `216.250.8.238`, `tayynhyzmat`; Ubuntu 24.04.4 amd64 verified; key-only SSH port 2222 verified after reboot                  |
 | Monitoring host                       | Standard S, `216.250.9.242`, selected and authenticated; Ubuntu 24.04.4 amd64 verified. DC2 test host `216.250.13.190` remains untouched |
-| DNS owner                             | Namecheap; `bagtyyar.dev`                                                                                                                |
-| Production HTTPS origin               | `https://tayynhyzmat.bagtyyar.dev`; DNS, trusted TLS and health/login checks verified; certificate expires 2027-01-15                         |
+| DNS owner                             | Namecheap; `tayynhyzmat.com`                                                                                                             |
+| Production HTTPS origin               | `https://taxi.tayynhyzmat.com`; A record, trusted TLS, API/WebSocket and monitor verified; certificate expires 2027-01-16                |
 | Monitoring HTTPS origin               | Pending, or private access only                                                                                                          |
 | Alert recipient                       | `bagtyyarkowusow.dev@gmail.com`                                                                                                          |
 | Resend verified sender                | Production sender domain pending; `onboarding@resend.dev` permitted for initial tests to the confirmed Resend account email only         |
-| Current/previous production release   | `/opt/tayyn/current` → `vps-2-68c2f354c4374fdcaed850a6af6378f8af63ab4a`; bundle run `39037794659`                                      |
+| Current/previous production release   | `/opt/tayyn/current` → `vps-2-68c2f354c4374fdcaed850a6af6378f8af63ab4a`; bundle run `39037794659`                                        |
 | Main runtime configuration            | `/etc/tayyn/app.env`                                                                                                                     |
 | Monitor runtime configuration         | `/etc/tayyn/operations.json` and `/etc/tayyn/monitor-secrets.json`                                                                       |
-| Backup storage and private key holder | Hourly encrypted archive on main + verified relay on monitor; private age identity remains on the owner Mac                                 |
-| Last restore test and alert test      | 2026-10-18 UTC disposable PG17 restore + tamper rejection; monitor initialization email sent and healthy check verified                 |
+| Backup storage and private key holder | Hourly encrypted archive on main + verified relay on monitor; private age identity remains on the owner Mac                              |
+| Last restore test and alert test      | 2026-10-18 UTC disposable PG17 restore + tamper rejection; monitor initialization email sent and healthy check verified                  |
 
 ### Purchased-host checks, 2026-10-17
 
@@ -126,9 +126,21 @@ A pinned acceptance probe completed admin login, overview read and an authentica
 
 A clean signed production APK was rebuilt from source commit `3b055c31` with the verified production endpoints. It is `TayynHyzmat-production-1.18-code19.apk`, application ID `tayyn.hyzmat.production`, version 1.18/code 19, SHA-256 `462d4bd67391122fdb29a624741ba7aa881f061e234b2fbff3ca7945f5426caa`, and signing certificate SHA-256 `a675842c5d0c2bfb62b08c02aff99687b66c8580180591a4ebf8169716d240b6`. Physical Android 14 lock-screen, Doze, force-stop, GPS, Yandex and splash checks remain open.
 
+### Domain release and acceptance, 2026-10-18
+
+Issue #129 tracks the move to `taxi.tayynhyzmat.com`. Both authoritative Namecheap servers returned the active TXT challenge, and Let's Encrypt issued the matching certificate, valid until 2027-01-16 12:53:56 UTC. The certificate and private key are under `/etc/letsencrypt/live/taxi.tayynhyzmat.com/`. Manual DNS-01 renewal still requires an operator.
+
+The protected runtime file now uses the new `DOMAIN`, `CORS_ORIGIN`, `TLS_CERT_PATH` and `TLS_KEY_PATH`. Native allowed origins, credentials and backend Yandex Referer were preserved. An encrypted pre-change backup completed. API and proxy were recreated using the installed images; database and web containers remained running. The initial operator script used the wrong Compose project directory and failed the Caddyfile bind mount; retry with the existing release's `deploy/production` directory succeeded. The previous config is protected at `/etc/tayyn/app.env.before-domain-20261018T135351Z`. No data initialization, migrations, image replacement or database restore ran.
+
+Pinned external HTTPS returned 200 with trusted certificate verification for `/`, `/health` and `/api/health`. CORS preflight allowed `https://taxi.tayynhyzmat.com`, `https://localhost` and `capacitor://localhost`. Admin login, overview, orders/drivers/regions reads, authenticated WebSocket stability and logout passed at 13:55 UTC. Existing records remained visible: two drivers, six orders and nine regions. No synthetic production records were added. The Yandex browser loader reported the configured public key valid with the new web Referer; physical-phone map/GPS behavior remains unproven.
+
+The monitor's protected `public_url` now uses the new origin. Other configuration and incident history were preserved. Backup relay verified four encrypted copies, and the independent monitor reported healthy with no failures or warnings, sending a recovery notification for the cutover interruption. Main backup timer remains active.
+
+Signed APK `TayynHyzmat-production-1.19-code20.apk` was built from clean commit `08162520fab2a55942bb11a68b4ca3452f14073c`. Its API is `https://taxi.tayynhyzmat.com/api` and socket origin is `https://taxi.tayynhyzmat.com`. Version 1.19/code 20 retains application ID `tayyn.hyzmat.production` and signing certificate SHA-256 `a675842c5d0c2bfb62b08c02aff99687b66c8580180591a4ebf8169716d240b6`, allowing an update over code 19. Artifact SHA-256 is `a4b29c6b7d19a8a9d4519a92ca8a275a31e9a0c121d44a97b3b825085936fc4f`. Build, typecheck, lint, signature and embedded-endpoint inspection passed. The matching artifact was copied to the owner Downloads directory after live acceptance. Physical-phone notification, GPS, Doze and Yandex handoff checks remain pending.
+
 ## Namecheap DNS and TLS
 
-At Namecheap, create an `A` record for the production hostname pointing to the main VPS public IPv4 address. Add an `AAAA` record only after IPv6 is configured and tested; a broken AAAA record can make some phones fail before IPv4 is tried. Point a separate monitoring hostname to Standard S only if needed. Keep DNS TTL low during cutover, then raise it after verification.
+At Namecheap, in the `tayynhyzmat.com` zone, use an `A` record with Host `taxi`, value `216.250.8.238` and Automatic TTL. Manual certificate validation uses a TXT record with Host `_acme-challenge.taxi` in that same zone and the active Certbot challenge value. Add an `AAAA` record only after IPv6 is configured and tested; a broken AAAA record can make some phones fail before IPv4 is tried. Point a separate monitoring hostname to Standard S only if needed. Keep DNS TTL low during cutover, then raise it after verification.
 
 The selected external-certificate Caddy configuration terminates TLS and proxies `/` to nginx web, while `/api`, `/health` and `/socket.io` go directly to the API. This keeps one trusted proxy before Express. Place the publicly trusted certificate and matching private key at `TLS_CERT_PATH` and `TLS_KEY_PATH` on the main VPS with restricted permissions. Verify port 443, the trusted chain, WebSocket upgrade, CORS origin and mobile network access before calling deployment ready. Check the port-80 redirect separately; the present network restriction means it cannot be promised to all clients. DNS-01 avoids inbound CA validation but still requires reachable ACME services and authoritative DNS. Keep an existing management SSH session and provider-console recovery while changing networking.
 
@@ -245,8 +257,8 @@ python3 scripts/production-readiness.py \
   --project-name tayyn-production \
   --compose-file deploy/production/compose.production.yaml \
   --network --offline --email-transport smtp \
-  --api-url https://tayynhyzmat.bagtyyar.dev/api \
-  --web-url https://tayynhyzmat.bagtyyar.dev \
+  --api-url https://taxi.tayynhyzmat.com/api \
+  --web-url https://taxi.tayynhyzmat.com \
   --json > readiness-report.json
 ```
 
