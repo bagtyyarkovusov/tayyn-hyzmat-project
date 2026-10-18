@@ -102,9 +102,11 @@ const {
   ["admin:message"],
 );
 const olderBroadcastsLoading = ref(false);
+const olderBroadcastsError = ref("");
 async function loadOlderBroadcasts() {
   if (olderBroadcastsLoading.value) return;
   olderBroadcastsLoading.value = true;
+  olderBroadcastsError.value = "";
   const previousHeight = history.value?.scrollHeight ?? 0;
   try {
     const { data } = await adminApi.get<Page<Message>>(
@@ -127,7 +129,7 @@ async function loadOlderBroadcasts() {
     if (history.value)
       history.value.scrollTop += history.value.scrollHeight - previousHeight;
   } catch (error) {
-    if (alive) sendError.value = errorMessage(error);
+    if (alive) olderBroadcastsError.value = errorMessage(error);
   } finally {
     olderBroadcastsLoading.value = false;
   }
@@ -515,6 +517,19 @@ async function send(all = false) {
             @click="loadOlderBroadcasts"
             >Загрузить более ранние сообщения</Button
           >
+          <p
+            v-if="olderBroadcastsError"
+            role="alert"
+            class="text-sm text-destructive"
+          >
+            Не удалось загрузить историю. {{ olderBroadcastsError }}
+            <Button
+              variant="link"
+              :disabled="olderBroadcastsLoading"
+              @click="loadOlderBroadcasts"
+              >Повторить</Button
+            >
+          </p>
           <article
             v-for="message in broadcasts.items"
             :key="message.id"

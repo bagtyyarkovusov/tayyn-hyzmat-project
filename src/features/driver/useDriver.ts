@@ -1127,9 +1127,6 @@ function start() {
     });
   const visibility = () => {
     if (!document.hidden) {
-      // Native notifications may exist before the WebView recovers an offer.
-      // Browser playback belongs to an incoming order, not a permission probe.
-
       if (nativeAndroid)
         void checkNativeLocationPermission().then(() => refresh());
       else void refresh();

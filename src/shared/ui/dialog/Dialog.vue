@@ -4,13 +4,16 @@ import { DialogRoot, useForwardProps } from "reka-ui";
 import { reactiveOmit, useVModel } from "@vueuse/core";
 import { useOverlay } from "@/shared/overlays";
 
-const props = defineProps<DialogRootProps>();
+const props = withDefaults(defineProps<DialogRootProps>(), { open: undefined });
 const emits = defineEmits<DialogRootEmits>();
 
-const open = useVModel(props, "open", emits, {
-  passive: true,
-  defaultValue: props.defaultOpen ?? false,
-});
+const open =
+  props.open === undefined
+    ? useVModel(props, "open", emits, {
+        passive: true,
+        defaultValue: props.defaultOpen ?? false,
+      })
+    : useVModel(props, "open", emits, { passive: false });
 useOverlay(open);
 const forwarded = useForwardProps(reactiveOmit(props, "open", "defaultOpen"));
 </script>

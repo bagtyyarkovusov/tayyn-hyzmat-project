@@ -4,13 +4,18 @@ import { DropdownMenuRoot, useForwardProps } from "reka-ui";
 import { reactiveOmit, useVModel } from "@vueuse/core";
 import { useOverlay } from "@/shared/overlays";
 
-const props = defineProps<DropdownMenuRootProps>();
+const props = withDefaults(defineProps<DropdownMenuRootProps>(), {
+  open: undefined,
+});
 const emits = defineEmits<DropdownMenuRootEmits>();
 
-const open = useVModel(props, "open", emits, {
-  passive: true,
-  defaultValue: props.defaultOpen ?? false,
-});
+const open =
+  props.open === undefined
+    ? useVModel(props, "open", emits, {
+        passive: true,
+        defaultValue: props.defaultOpen ?? false,
+      })
+    : useVModel(props, "open", emits, { passive: false });
 useOverlay(open);
 const forwarded = useForwardProps(reactiveOmit(props, "open", "defaultOpen"));
 </script>

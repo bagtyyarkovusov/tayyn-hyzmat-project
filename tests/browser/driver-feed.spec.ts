@@ -804,11 +804,22 @@ test("broadcast history preserves earlier pages and reading position during live
     await history.evaluate((el) => {
       el.scrollTop = 0;
     });
+    await admin.route("**/admin/messages/broadcasts?*", (route) =>
+      new URL(route.request().url()).searchParams.has("beforeMessageId")
+        ? route.abort("failed")
+        : route.continue(),
+    );
     await history
       .getByRole("button", {
         name: "Загрузить более ранние сообщения",
         exact: true,
       })
+      .click();
+    const historyError = history.getByRole("alert");
+    await expect(historyError).toContainText("Не удалось загрузить историю");
+    await admin.unroute("**/admin/messages/broadcasts?*");
+    await historyError
+      .getByRole("button", { name: "Повторить", exact: true })
       .click();
     await expect(history.getByText(`${tag}-0`, { exact: true })).toBeAttached();
     await history.evaluate((el) => {
@@ -831,6 +842,97 @@ test("broadcast history preserves earlier pages and reading position during live
     ).toBeLessThan(3);
   } finally {
     await admin.close();
+    await f.close();
+  }
+});
+
+test("pending controlled dialogs refuse Escape, X and native Back and keep failed actions visible", async ({
+  browser,
+}) => {
+  const f = await fixture(browser, { width: 390, height: 844 }, true);
+  const admin = await f.context.newPage();
+  let release = () => {};
+  try {
+    const order = await f.create("Проверка отказа закрытия");
+    await admin.goto("/adminOrders");
+    await admin
+      .getByRole("article")
+      .filter({ hasText: `#${order.orderNumber}` })
+      .getByRole("button", { name: "Отменить заказ", exact: true })
+      .click();
+    const dialog = admin.getByRole("dialog", {
+      name: "Отменить заказ?",
+      exact: true,
+    });
+    let reached!: () => void;
+    const held = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await admin.route(`**/admin/orders/${order.id}/cancel`, async (route) => {
+      reached();
+      await gate;
+      await route.abort("failed");
+    });
+    await dialog
+      .getByRole("button", { name: "Отменить заказ", exact: true })
+      .click();
+    await held;
+    await admin.keyboard.press("Escape");
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(dialog).toBeVisible();
+    await admin.evaluate(() => (window as any).pressNativeBack());
+    await expect
+      .poll(() =>
+        admin.evaluate(() => (window as any).nativeBackReplies.at(-1)?.result),
+      )
+      .toBe("handled");
+    await expect(dialog).toBeVisible();
+    release();
+    await expect(dialog.getByRole("alert")).toBeVisible();
+    await expect(
+      dialog.getByRole("button", { name: "Отменить заказ", exact: true }),
+    ).toBeEnabled();
+  } finally {
+    release();
+    await admin.close();
+    await f.close();
+  }
+});
+
+test("failed private decline through native Back keeps the incoming offer and error visible", async ({
+  browser,
+}) => {
+  const f = await fixture(browser, { width: 390, height: 844 }, true);
+  try {
+    await f.create("Неудавшийся отказ", { privateOfferDriverId: f.driverId });
+    const dialog = f.page.getByRole("dialog", {
+      name: "Предложение заказа",
+      exact: true,
+    });
+    await expect(
+      dialog.getByText("Неудавшийся отказ", { exact: true }),
+    ).toBeVisible();
+    await f.page.route("**/orders/private-offer/decline", (route) =>
+      route.abort("failed"),
+    );
+    await f.page.evaluate(() => (window as any).pressNativeBack());
+    await expect
+      .poll(() =>
+        f.page.evaluate(() => (window as any).nativeBackReplies.at(-1)?.result),
+      )
+      .toBe("handled");
+    await expect(dialog.getByRole("alert")).toBeVisible();
+    await expect(
+      dialog.getByText("Неудавшийся отказ", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("button", { name: "Отказаться", exact: true }),
+    ).toBeEnabled();
+  } finally {
     await f.close();
   }
 });

@@ -9,7 +9,7 @@ export function closeTopOverlay() {
   top.close();
   return true;
 }
-export function useOverlay(open: Ref<boolean>) {
+export function useOverlay(open: Ref<boolean | undefined>) {
   const entry = {
     close: () => {
       open.value = false;

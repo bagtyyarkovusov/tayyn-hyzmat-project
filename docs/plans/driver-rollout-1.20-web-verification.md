@@ -46,3 +46,11 @@ Broadcast pagination keeps loaded older messages and the reader's scroll positio
 The initial broad run found these failures before their fixes, including follow-on queue pollution from failed fixture cleanup. It is retained as diagnostic evidence, not described as a full passing run. Typecheck and formatting pass after the follow-up; modern plus retained legacy build passed before the follow-up. Final broader coverage remains pending at this commit.
 
 The release-note draft originally `9abd556` is carried as `f9bdd55`.
+
+## Controlled-overlay review fix
+
+Shared Dialog and DropdownMenu preserve Reka's controlled contract. A supplied `open` prop remains parent-owned; an omitted prop uses local state. Escape, X and native Back cannot hide a pending dialog when its parent refuses closure. The browser regression failed on Escape before the fix, then passed with the failed request's error still visible. Private-offer decline failure through native Back also keeps the offer and error visible. Broadcast pagination failures now show a contextual error and a working retry.
+
+The review-focused nine-case run passes, including pagination retry, controlled-dialog refusal/failure, private decline failure, ACCEPTED-only cancellation visibility and all five trip navigation variants. The initial broad run finished 169/184 with 15 failures, including cascades from obsolete cancellation/charge assertions and failed fixture cleanup. All directly affected cases have focused passing reruns. A final 187-case broad run is in progress after the shared primitive changes. Typecheck and formatting pass; final modern/legacy build is being repeated.
+
+Owned diagnostic logs, error-context reports, screenshots and the controlled-dialog red trace are retained in ignored `.local/release1.20-validation/`. After preservation, 76 MiB of superseded owned traces were removed. Shared caches, dependencies, other checkouts and Docker resources of uncertain ownership were untouched.
