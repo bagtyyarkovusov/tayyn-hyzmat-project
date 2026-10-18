@@ -1,4 +1,10 @@
-import { test, expect, type Browser, type Page } from "@playwright/test";
+import {
+  test,
+  expect,
+  type Browser,
+  type Locator,
+  type Page,
+} from "@playwright/test";
 import { createRequire } from "node:module";
 const require = createRequire(
   new URL("../../backend/package.json", import.meta.url),
@@ -169,6 +175,25 @@ async function fits(page: Page) {
     expect(size.scroll, JSON.stringify(size)).toBeLessThanOrEqual(size.client);
   }
 }
+async function tripDialogTargetsFit(dialog: Locator, names: string[]) {
+  for (const name of names) {
+    const control = dialog.getByRole("button", { name, exact: true });
+    await expect(control).toBeVisible();
+    const bounds = await control.boundingBox();
+    expect(bounds, name).not.toBeNull();
+    const dimensions = await control.evaluate((node) => ({
+      minHeight: parseFloat(getComputedStyle(node).minHeight),
+      width: node.clientWidth,
+      contentWidth: node.scrollWidth,
+      contentHeight: node.scrollHeight,
+      height: node.clientHeight,
+    }));
+    expect(dimensions.minHeight, name).toBeGreaterThanOrEqual(48);
+    expect(dimensions.contentWidth).toBeLessThanOrEqual(dimensions.width);
+    expect(dimensions.contentHeight).toBeLessThanOrEqual(dimensions.height);
+  }
+}
+
 for (const viewport of [
   { width: 320, height: 568 },
   { width: 568, height: 320 },
@@ -193,6 +218,39 @@ for (const viewport of [
         exact: true,
       });
       await expect(dialog).toBeVisible();
+      await tripDialogTargetsFit(dialog, ["Я на месте", "Отменить заказ"]);
+      await dialog
+        .getByRole("button", { name: "Отменить заказ", exact: true })
+        .click();
+      const confirmation = page.getByRole("dialog", {
+        name: "Отменить текущий заказ?",
+        exact: true,
+      });
+      await expect(confirmation).toBeVisible();
+      await tripDialogTargetsFit(confirmation, [
+        "Продолжить поездку",
+        "Подтвердить отмену",
+      ]);
+      if (viewport.height >= 800) {
+        await page.evaluate(() => {
+          document.documentElement.style.fontSize = "20px";
+        });
+        await tripDialogTargetsFit(confirmation, [
+          "Продолжить поездку",
+          "Подтвердить отмену",
+        ]);
+        await confirmation
+          .getByRole("button", { name: "Продолжить поездку", exact: true })
+          .click();
+        await tripDialogTargetsFit(dialog, ["Я на месте"]);
+        await page.evaluate(() => {
+          document.documentElement.style.fontSize = "";
+        });
+      } else {
+        await confirmation
+          .getByRole("button", { name: "Продолжить поездку", exact: true })
+          .click();
+      }
       await dialog.getByRole("button", { name: "Close", exact: true }).click();
       const feed = page.getByRole("region", {
         name: "Текущая поездка",
@@ -213,6 +271,9 @@ for (const viewport of [
         await expect(
           feed.getByRole("listitem").filter({ hasText: "Ожидание" }),
         ).toHaveAttribute("aria-current", "step");
+      await feed.getByRole("button", { name: "Поездка", exact: true }).click();
+      await tripDialogTargetsFit(dialog, ["Начать поездку"]);
+      await dialog.getByRole("button", { name: "Close", exact: true }).click();
       await feed
         .getByRole("button", { name: "Начать поездку", exact: true })
         .click();
@@ -221,6 +282,7 @@ for (const viewport of [
           feed.getByRole("listitem").filter({ hasText: "В пути" }),
         ).toHaveAttribute("aria-current", "step");
       await feed.getByRole("button", { name: "Поездка", exact: true }).click();
+      await tripDialogTargetsFit(dialog, ["Завершить поездку"]);
       await expect(
         dialog.getByRole("button", { name: "Отменить заказ", exact: true }),
       ).toHaveCount(0);

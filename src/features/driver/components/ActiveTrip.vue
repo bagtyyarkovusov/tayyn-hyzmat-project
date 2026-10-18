@@ -96,21 +96,29 @@ async function cancel() {
     <div class="grid gap-2 sm:grid-cols-[1fr_auto]">
       <Button
         v-if="state.active.status === 'ACCEPTED'"
+        class="min-h-12 whitespace-normal py-3"
+        data-touch-target
         :disabled="state.busy"
         @click="transition('waiting')"
         >{{ state.busy ? "Сохраняем…" : "Я на месте" }}</Button
       ><Button
         v-if="state.active.status === 'WAITING'"
+        class="min-h-12 whitespace-normal py-3"
+        data-touch-target
         :disabled="state.busy"
         @click="transition('start')"
         >Начать поездку</Button
       ><Button
         v-if="state.active.status === 'STARTED'"
+        class="min-h-12 whitespace-normal py-3"
+        data-touch-target
         :disabled="state.busy"
         @click="transition('complete')"
         >Завершить поездку</Button
       ><Button
         v-if="state.active.status === 'ACCEPTED'"
+        class="min-h-12 whitespace-normal py-3"
+        data-touch-target
         variant="ghost"
         :disabled="state.busy"
         @click="cancelOpen = true"
@@ -122,9 +130,18 @@ async function cancel() {
         ><DialogHeader
           ><DialogTitle>Отменить текущий заказ?</DialogTitle></DialogHeader
         ><DialogFooter
-          ><Button variant="outline" @click="cancelOpen = false"
+          ><Button
+            class="min-h-12 whitespace-normal py-3"
+            data-touch-target
+            variant="outline"
+            @click="cancelOpen = false"
             >Продолжить поездку</Button
-          ><Button variant="destructive" :disabled="state.busy" @click="cancel"
+          ><Button
+            class="min-h-12 whitespace-normal py-3"
+            data-touch-target
+            variant="destructive"
+            :disabled="state.busy"
+            @click="cancel"
             >Подтвердить отмену</Button
           ></DialogFooter
         ></DialogContent

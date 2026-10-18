@@ -61,6 +61,11 @@ A further transport regression held a real successful acceptance response for at
 
 The native Back case also checks short landscape with an asymmetric 72px cutout. Dialog horizontal centering now accounts for unequal safe insets, keeping the close control within usable bounds. Both targeted cases pass. [Enlarged 320px high-price evidence](../evidence/driver-rollout-1.20/incoming-large-price-320.png) confirms wrapping rather than clipping. No physical-device claim is implied.
 
+## Touch-target follow-up
+
+Active-trip arrival, start and completion actions, the accepted-state cancellation action, and both cancellation confirmation actions now use the approved `min-h-12` (48px) target with wrapping preserved. The focused browser assertion checks the computed minimum height, content fit and visible controls at the accepted, waiting and started states, including both confirmation buttons at enlarged text. The targeted 390x844 case passed 1/1 after the correction. The previously recorded 187/187 broad run and 2/2 late acceptance/cutout run remain unchanged; no broad rerun was performed.
+
+
 ## Final local result
 
 - The final disposable browser run passed **187/187 in 7.5 minutes**, with no failures or skips. It includes the controlled-overlay, pagination-retry, incoming-layout, Back, cancellation, funding, chat privacy and map regressions.
