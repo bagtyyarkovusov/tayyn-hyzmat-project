@@ -485,6 +485,7 @@ async function cancel(orderId, driver, reason) {
   safeEmit((io) => {
     io.to(rooms.admins()).emit('order:cancelled', result.order);
     io.to(rooms.order(result.order.id)).emit('order:cancelled', result.order);
+    io.to(rooms.driver(driver.id)).emit('order:cancelled', result.order);
     io.to(rooms.driver(driver.id)).to(rooms.admins()).emit('balance:updated', {
       driverId: driver.id, ...result.wallet, reason: result.reason, orderId
     });

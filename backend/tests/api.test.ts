@@ -3386,3 +3386,25 @@ test('broadcast history and merged conversations exclude private replies and bro
     await prisma.user.update({ where: { id: driver.userId }, data: { createdAt: oldCreatedAt } });
   }
 });
+
+test('driver cancellation reaches every signed-in driver socket with its exact attempt identity', async () => {
+  const driver = await socket(driverToken);
+  const otherSession = await request('/auth/login', '', { phone: '+99360000101', password, deviceId: 'synthetic-cancel-observer' });
+  const observer = await socket(otherSession.data.accessToken);
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const job = await order(40);
+  assert.equal((await request('/orders/accept', driverToken, { orderId: job.id })).status, 200);
+  const [cancelled, ownEvent, observerEvent] = await Promise.all([
+    request('/orders/cancel', driverToken, { orderId: job.id }),
+    nextSocketEvent<any>(driver, 'order:cancelled', 1200),
+    nextSocketEvent<any>(observer, 'order:cancelled', 1200)
+  ]);
+  assert.equal(cancelled.status, 200);
+  for (const event of [ownEvent, observerEvent]) {
+    assert.equal(event.id, job.id);
+    assert.equal(event.orderNumber, job.orderNumber);
+    assert.equal(event.offerAttemptId, job.offerAttemptId);
+    assert.equal(event.notificationEventId, job.notificationEventId);
+    assert.equal(event.status, 'CANCELLED');
+  }
+});
