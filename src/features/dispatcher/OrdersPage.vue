@@ -24,7 +24,7 @@ import CreateOrderForm from "./components/CreateOrderForm.vue";
 import PhoneInput from "@/shared/ui/phone-input/PhoneInput.vue";
 import { isTurkmenPhone } from "@/shared/phone";
 const route = useRoute();
-const filter = ref("waiting"),
+const filter = ref(String(route.query.status || "waiting")),
   page = ref(1),
   create = ref(route.query.create === "1"),
   offer = ref<Order | null>(null),
@@ -35,7 +35,7 @@ const filter = ref("waiting"),
   actionError = ref(""),
   customerPhone = ref(""),
   driverPhone = ref(""),
-  orderNumber = ref("");
+  orderNumber = ref(String(route.query.orderNumber || ""));
 const validFilterPhone = (value: string) =>
   isTurkmenPhone(value) ? value : undefined;
 const filters = [
@@ -72,7 +72,20 @@ const { data, loading, error, load } = useResource(
     "order:started",
     "order:completed",
     "order:cancelled",
+    "order:reoffered",
+    "order:cancellation-resolved",
   ],
+);
+watch(
+  () => route.query,
+  (query) => {
+    customerPhone.value = "";
+    driverPhone.value = "";
+    filter.value = String(query.status || "waiting");
+    orderNumber.value = String(query.orderNumber || "");
+    page.value = 1;
+    void load();
+  },
 );
 watch([customerPhone, driverPhone, orderNumber], () => {
   if (
@@ -131,6 +144,30 @@ async function confirmResolve() {
     pending.value = false;
   }
 }
+async function resolveCancellation(
+  order: Order,
+  action: "reoffer" | "final-cancel",
+) {
+  if (pending.value) return;
+  pending.value = true;
+  actionError.value = "";
+  try {
+    const { data: resolved } = await adminApi.post<Order>(
+      `/admin/orders/${order.id}/${action}`,
+      {},
+    );
+    if (resolved.status === "NEW") {
+      filter.value = "waiting";
+      page.value = 1;
+    }
+    await load();
+  } catch (error) {
+    actionError.value = errorMessage(error);
+    await load();
+  } finally {
+    pending.value = false;
+  }
+}
 </script>
 <template>
   <div class="space-y-6">
@@ -144,6 +181,9 @@ async function confirmResolve() {
         ><Plus class="size-4" />Создать заказ</Button
       >
     </header>
+    <p v-if="actionError" role="alert" class="text-sm text-destructive">
+      {{ actionError }}
+    </p>
     <div class="flex flex-wrap gap-2" aria-label="Фильтр заказов">
       <Button
         v-for="item in filters"
@@ -190,6 +230,9 @@ async function confirmResolve() {
         v-for="order in data.items"
         :key="order.id"
         :order="order"
+        :pending="pending"
+        @reoffer="resolveCancellation($event, 'reoffer')"
+        @final-cancel="resolveCancellation($event, 'final-cancel')"
         cancellable
         offerable
         @offer="offer = $event"

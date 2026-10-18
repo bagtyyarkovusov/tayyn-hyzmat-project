@@ -180,6 +180,7 @@ test("second device signs in immediately without ending or controlling the first
     ).toBeVisible();
     await spectator.getByRole("link", { name: "Чат", exact: true }).click();
     await expect(spectator).toHaveURL(/driverChat/);
+    await spectator.getByRole("link", { name: "Профиль", exact: true }).click();
     await spectator.getByRole("button", { name: "Выйти", exact: true }).click();
     await expect(spectator).toHaveURL(/driverLogin/);
     const profile = await owner.request.get(`${api}/driver/profile`, {
@@ -329,7 +330,10 @@ test("dispatcher signs out every session without changing the assigned trip or c
     const balance = await admin.request.get(`${api}/admin/drivers/${id}`, {
       headers: adminHeaders,
     });
-    expect(Number((await balance.json()).user.balance.amount)).toBe(70);
+    const funding = (await balance.json()).user.balance;
+    expect(Number(funding.amount)).toBe(100);
+    expect(Number(funding.held)).toBe(30);
+    expect(Number(funding.available)).toBe(70);
     const history = await admin.request.get(
       `${api}/admin/drivers/${id}/history`,
       { headers: adminHeaders },

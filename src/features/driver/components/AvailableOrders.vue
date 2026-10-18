@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { canFundOrder } from "@/shared/order-funding";
-import { MapPin, ArrowDown } from "lucide-vue-next";
+import OrderRoute from "./OrderRoute.vue";
 import { Button } from "@/shared/ui/button";
 import { driverApi, errorMessage } from "@/shared/api";
 import { driverSession } from "@/features/auth/session";
@@ -111,11 +111,6 @@ onUnmounted(() => {
     :aria-busy="loading"
     tabindex="0"
   >
-    <h2 class="text-base font-semibold">Доступные заказы</h2>
-    <p class="text-xs text-muted-foreground">
-      Телефон клиента откроется после принятия. При принятии списывается цена
-      заказа.
-    </p>
     <p
       v-if="error || state.error"
       role="alert"
@@ -134,7 +129,7 @@ onUnmounted(() => {
       Загружаем заказы…
     </p>
     <p v-else-if="!orders.length" class="muted py-8 text-center">
-      Сейчас нет свободных заказов. Новые появятся автоматически.
+      Сейчас нет свободных заказов.
     </p>
     <template v-else v-for="group in groups" :key="group.id">
       <section
@@ -162,32 +157,17 @@ onUnmounted(() => {
                   >{{ regionName(order) }}</span
                 >
               </p>
-              <p class="flex items-start gap-2 font-medium">
-                <MapPin class="mt-0.5 size-4 shrink-0 text-primary" /><span
-                  class="break-words"
-                  >{{
-                    order.pickupAddress || "Подача уточняется по телефону"
-                  }}</span
-                >
-              </p>
-              <p
-                v-if="order.dropoffAddress"
-                class="flex items-start gap-2 text-sm text-muted-foreground"
-              >
-                <ArrowDown class="size-4 shrink-0" /><span
-                  class="break-words"
-                  >{{ order.dropoffAddress }}</span
-                >
-              </p>
             </div>
             <span
-              class="shrink-0 text-2xl font-semibold leading-none tabular-nums"
+              class="shrink-0 text-3xl font-semibold leading-tight tabular-nums"
               >{{ money(order.priceEstimated) }}</span
             >
           </div>
-          <p v-if="order.note" class="muted text-sm break-words">
-            {{ order.note }}
-          </p>
+          <OrderRoute
+            :pickup="order.pickupAddress"
+            :destination="order.dropoffAddress"
+            :note="order.note"
+          />
           <div
             class="grid grid-cols-[auto_minmax(0,1fr)] items-end gap-2 bg-background pb-1"
           >
@@ -211,7 +191,10 @@ onUnmounted(() => {
               :disabled="
                 state.busy ||
                 !!state.active ||
-                !canFundOrder(state.balance?.amount, order.priceEstimated) ||
+                !canFundOrder(
+                  state.balance?.available ?? state.balance?.amount,
+                  order.priceEstimated,
+                ) ||
                 !state.gpsReady ||
                 !state.profile?.isOnline
               "
@@ -220,7 +203,12 @@ onUnmounted(() => {
             >
           </div>
           <p
-            v-if="!canFundOrder(state.balance?.amount, order.priceEstimated)"
+            v-if="
+              !canFundOrder(
+                state.balance?.available ?? state.balance?.amount,
+                order.priceEstimated,
+              )
+            "
             class="text-sm text-destructive"
           >
             Недостаточно средств.

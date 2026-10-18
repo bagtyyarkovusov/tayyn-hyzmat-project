@@ -12,6 +12,7 @@ import {
 } from "reka-ui";
 import { cn } from "@/shared/utils";
 
+defineOptions({ inheritAttrs: false });
 const props = defineProps<
   DialogContentProps & { class?: HTMLAttributes["class"] }
 >();
@@ -34,7 +35,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
             props.class,
           )
         "
-        v-bind="forwarded"
+        v-bind="{ ...forwarded, ...$attrs }"
         @pointer-down-outside="
           (event) => {
             const originalEvent = event.detail.originalEvent;
@@ -51,9 +52,9 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
         <slot />
 
         <DialogClose
-          class="dialog-close absolute right-1 top-1 flex size-11 items-center justify-center rounded-lg border-0 bg-transparent text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none"
+          class="dialog-close absolute right-1 top-1 flex size-12 items-center justify-center rounded-lg border-0 bg-secondary text-foreground transition-colors hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none"
         >
-          <X class="w-4 h-4" />
+          <X class="w-5 h-5" />
           <span class="sr-only">Close</span>
         </DialogClose>
       </DialogContent>

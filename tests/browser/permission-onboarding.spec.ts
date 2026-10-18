@@ -72,6 +72,19 @@ async function nativePermissions(context: BrowserContext) {
     bridge.Capacitor = {
       PluginHeaders: [
         {
+          name: "DriverUi",
+          methods: [
+            "ready",
+            "respondBack",
+            "resetBack",
+            "detach",
+            "theme",
+            "removeListener",
+          ]
+            .map((name) => ({ name, rtype: "promise" }))
+            .concat([{ name: "addListener", rtype: "callback" }]),
+        },
+        {
           name: "DriverShift",
           methods: methods([
             "permissions",
@@ -90,7 +103,7 @@ async function nativePermissions(context: BrowserContext) {
               "status",
               "requestPermissions",
               "configure",
-              "setEnabled",
+              "reconcileOrders",
               "setPresence",
               "deliver",
               "clear",
@@ -212,6 +225,7 @@ for (const choice of ["Deny", "Dismiss"]) {
         page.getByRole("button", { name: "Включить GPS", exact: true }),
       ).toHaveAttribute("data-state", "blocked");
       await expect(page.getByRole("dialog")).toHaveCount(0);
+      await page.getByRole("link", { name: "Профиль", exact: true }).click();
       await page.getByRole("button", { name: "Выйти", exact: true }).click();
       await login(page);
       await expect(
@@ -242,6 +256,7 @@ test("an unfinished location prompt cannot request notifications after logout", 
       name: "Android precise location permission",
     });
     await expect(location).toBeVisible();
+    await page.getByRole("link", { name: "Профиль", exact: true }).click();
     await page.getByRole("button", { name: "Выйти", exact: true }).click();
     await expect(page).toHaveURL(/driverLogin/);
     await location.getByRole("button", { name: "Allow", exact: true }).click();
@@ -301,8 +316,12 @@ test("notification denial does not prevent a deliberate shift with precise GPS",
       page.getByRole("button", { name: "Выйти на линию", exact: true }),
     ).toBeVisible();
   } finally {
-    if (await page.getByRole("button", { name: "Выйти", exact: true }).count())
+    if (
+      await page.getByRole("link", { name: "Профиль", exact: true }).count()
+    ) {
+      await page.getByRole("link", { name: "Профиль", exact: true }).click();
       await page.getByRole("button", { name: "Выйти", exact: true }).click();
+    }
     await context.close();
   }
 });
@@ -395,6 +414,7 @@ test("switching accounts during location permission keeps the next prompt in the
       name: "Android precise location permission",
     });
     await expect(location).toBeVisible();
+    await page.getByRole("link", { name: "Профиль", exact: true }).click();
     await page.getByRole("button", { name: "Выйти", exact: true }).click();
     await login(page, "60000102");
     await expect(

@@ -1,24 +1,28 @@
 <script setup lang="ts">
 import { formatPhone } from "@/shared/phone";
-import IncomingOrder from "./components/IncomingOrder.vue";
 import { onMounted, ref, watch } from "vue";
 import {
   Car,
   Wallet,
-  Bell,
+  LogOut,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
 } from "lucide-vue-next";
-import { notificationSettings, toggleNotifications } from "./notifications";
-import { alertState, openNotificationSettings } from "./alerts";
+import { useRouter } from "vue-router";
+
 import { Button } from "@/shared/ui/button";
 import { Badge } from "@/shared/ui/badge";
 import { driverApi, errorMessage } from "@/shared/api";
 import { useDriver } from "./useDriver";
-import { nativeAndroid } from "./nativeShift";
+
 import { date, money, statusLabels, type History } from "./model";
-const { state } = useDriver();
+const { state, session } = useDriver();
+const router = useRouter();
+async function logout() {
+  await session.logout();
+  await router.replace("/driverLogin");
+}
 const history = ref<History | null>(null),
   loading = ref(false),
   error = ref(""),
@@ -55,7 +59,6 @@ onMounted(() => void load());
 <template>
   <div class="mx-auto max-w-xl space-y-4">
     <h1 class="text-lg font-semibold">Профиль</h1>
-    <IncomingOrder />
     <p v-if="state.error" role="alert" class="text-sm text-destructive">
       {{ state.error }}
     </p>
@@ -124,55 +127,9 @@ onMounted(() => void load());
         </div>
       </div>
     </section>
-    <section aria-label="Настройки уведомлений" class="border-y py-3">
-      <div class="flex items-center gap-3">
-        <Bell class="size-4 shrink-0" aria-hidden="true" />
-        <div class="min-w-0 flex-1">
-          <h2 class="text-sm font-medium">Уведомления</h2>
-          <p class="text-xs text-muted-foreground">
-            Заказы и сообщения диспетчера
-          </p>
-        </div>
-        <Button
-          role="switch"
-          aria-label="Уведомления"
-          :aria-checked="notificationSettings.enabled"
-          :disabled="notificationSettings.loading"
-          :aria-busy="notificationSettings.loading"
-          class="min-h-11 min-w-16"
-          :variant="notificationSettings.enabled ? 'default' : 'outline'"
-          @click="toggleNotifications"
-          >{{ notificationSettings.enabled ? "Вкл" : "Выкл" }}</Button
-        >
-      </div>
-      <p
-        v-if="notificationSettings.error"
-        role="alert"
-        class="mt-2 text-sm text-destructive"
-      >
-        {{ notificationSettings.error }}
-      </p>
-      <p
-        v-if="
-          notificationSettings.enabled && alertState.permission === 'denied'
-        "
-        class="mt-2 text-xs text-muted-foreground"
-      >
-        Системные уведомления запрещены в настройках
-        {{ nativeAndroid ? "Android" : "браузера" }}.
-      </p>
-      <Button
-        v-if="
-          nativeAndroid &&
-          notificationSettings.enabled &&
-          alertState.permission === 'denied'
-        "
-        variant="link"
-        class="min-h-11 px-0"
-        @click="openNotificationSettings"
-        >Открыть настройки Android</Button
-      >
-    </section>
+    <Button variant="outline" class="min-h-12 w-full" @click="logout"
+      ><LogOut class="size-5" />Выйти</Button
+    >
     <section class="space-y-3">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <h2 class="font-semibold">История</h2>

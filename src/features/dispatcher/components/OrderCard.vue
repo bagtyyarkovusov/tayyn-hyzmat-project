@@ -4,8 +4,19 @@ import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { MapPin, ArrowDown, Phone } from "lucide-vue-next";
 import { date, money, statusLabel, type Order } from "../domain";
-defineProps<{ order: Order; cancellable?: boolean; offerable?: boolean }>();
-defineEmits<{ cancel: [Order]; offer: [Order]; resolve: [Order] }>();
+defineProps<{
+  order: Order;
+  cancellable?: boolean;
+  offerable?: boolean;
+  pending?: boolean;
+}>();
+defineEmits<{
+  cancel: [Order];
+  offer: [Order];
+  resolve: [Order];
+  reoffer: [Order];
+  finalCancel: [Order];
+}>();
 const ageLabel = (seconds?: number | null) => {
   if (seconds == null) return "";
   const minutes = Math.floor(seconds / 60);
@@ -26,6 +37,12 @@ const ageLabel = (seconds?: number | null) => {
         money(order.priceFinal ?? order.priceEstimated)
       }}</strong>
     </div>
+    <p
+      v-if="order.cancellationReviewRequired"
+      class="mt-3 font-semibold text-destructive"
+    >
+      Отменён водителем · требуется решение
+    </p>
     <div class="my-4 grid grid-cols-[20px_1fr] items-center gap-x-2 gap-y-1">
       <MapPin class="size-4 text-primary" />
       <p class="font-medium">
@@ -87,6 +104,19 @@ const ageLabel = (seconds?: number | null) => {
         @click="$emit('cancel', order)"
         >Отменить заказ</Button
       >
+      <template
+        v-if="order.status === 'CANCELLED' && order.cancellationReviewRequired"
+      >
+        <Button :disabled="pending" @click="$emit('reoffer', order)"
+          >Предложить снова</Button
+        >
+        <Button
+          variant="outline"
+          :disabled="pending"
+          @click="$emit('finalCancel', order)"
+          >Отменить окончательно</Button
+        >
+      </template>
       <Button
         v-if="order.status === 'STARTED'"
         variant="destructive"

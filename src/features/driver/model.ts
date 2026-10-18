@@ -17,6 +17,9 @@ export interface Order {
   /** Stable human-facing reference assigned by the database sequence. */
   orderNumber: number;
   status: OrderStatus;
+  offerAttemptId: string;
+  notificationEventId: string;
+  serverTime?: string;
   pickupAddress: string | null;
   dropoffAddress?: string | null;
   pickupLat?: Money | null;
@@ -64,6 +67,9 @@ export interface DriverProfile {
 export interface Balance {
   amount: Money;
   currency: string;
+  total?: Money;
+  held?: Money;
+  available?: Money;
 }
 export interface Message {
   id: string;

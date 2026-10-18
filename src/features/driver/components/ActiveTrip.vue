@@ -10,14 +10,12 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/shared/ui/dialog";
-import { Textarea } from "@/shared/ui/textarea";
 import { useDriver } from "../useDriver";
 import { money, statusLabels } from "../model";
 import { tripNavigation, openTripNavigation } from "../navigation";
 defineProps<{ embedded?: boolean }>();
 const { state, transition } = useDriver();
 const cancelOpen = ref(false);
-const reason = ref("");
 const navigation = computed(() => tripNavigation(state.active));
 const navigationError = ref("");
 async function openNavigation() {
@@ -30,7 +28,7 @@ async function openNavigation() {
   }
 }
 async function cancel() {
-  await transition("cancel", reason.value.trim() || "Отменено водителем");
+  await transition("cancel");
   if (!state.active) cancelOpen.value = false;
 }
 </script>
@@ -95,10 +93,6 @@ async function cancel() {
     <p v-if="navigationError" role="alert" class="text-sm text-destructive">
       {{ navigationError }}
     </p>
-    <p class="muted text-xs">
-      Позвоните клиенту и уточните подачу. Точка на карте может быть центром
-      района, а не точным местом клиента.
-    </p>
     <div class="grid gap-2 sm:grid-cols-[1fr_auto]">
       <Button
         v-if="state.active.status === 'ACCEPTED'"
@@ -116,7 +110,7 @@ async function cancel() {
         @click="transition('complete')"
         >Завершить поездку</Button
       ><Button
-        v-if="state.active.status === 'WAITING'"
+        v-if="state.active.status === 'ACCEPTED'"
         variant="ghost"
         :disabled="state.busy"
         @click="cancelOpen = true"
@@ -124,20 +118,10 @@ async function cancel() {
       >
     </div>
     <Dialog v-model:open="cancelOpen"
-      ><DialogContent
+      ><DialogContent :aria-describedby="undefined"
         ><DialogHeader
-          ><DialogTitle>Отменить текущий заказ?</DialogTitle
-          ><DialogDescription
-            >Заказ будет закрыт. Списание за принятие заказа вернётся на
-            баланс.</DialogDescription
-          ></DialogHeader
-        ><label for="cancel-reason" class="field-label">Причина отмены</label
-        ><Textarea
-          id="cancel-reason"
-          v-model="reason"
-          maxlength="500"
-          placeholder="Необязательно"
-        /><DialogFooter
+          ><DialogTitle>Отменить текущий заказ?</DialogTitle></DialogHeader
+        ><DialogFooter
           ><Button variant="outline" @click="cancelOpen = false"
             >Продолжить поездку</Button
           ><Button variant="destructive" :disabled="state.busy" @click="cancel"

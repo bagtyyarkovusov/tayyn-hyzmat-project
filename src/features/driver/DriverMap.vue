@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import IncomingOrder from "./components/IncomingOrder.vue";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { Car, LocateFixed, MapPin } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
@@ -15,7 +14,7 @@ import { useDriver } from "./useDriver";
 import ActiveTrip from "./components/ActiveTrip.vue";
 import { tripMarkerPoints, validCoordinatePair } from "./map-markers";
 
-const { state, enableGps } = useDriver();
+const { state, enableGps } = useDriver({ localGps: true });
 const container = ref<HTMLElement | null>(null);
 const error = ref("");
 const loading = ref(true);
@@ -38,7 +37,7 @@ let ownMarker: any = null;
 let pickupMarker: any = null;
 let destinationMarker: any = null;
 let alive = true;
-let following = false;
+let following = true;
 let locatePending = false;
 function stopFollowing() {
   following = false;
@@ -155,9 +154,12 @@ async function init() {
     map = new ymaps.Map(container.value, {
       center: [37.9601, 58.3261],
       zoom: 12,
-      controls: ["zoomControl"],
+      controls: [],
     });
-    container.value.addEventListener("pointerdown", stopFollowing);
+    map.events.add("actionbegin", (event: any) => {
+      const action = event.get("type");
+      if (action === "drag" || action === "multiTouch") stopFollowing();
+    });
     draw();
   } catch (e) {
     error.value =
@@ -193,7 +195,6 @@ watch(
 onMounted(() => void init());
 onUnmounted(() => {
   alive = false;
-  container.value?.removeEventListener("pointerdown", stopFollowing);
   ownMarker = null;
   pickupMarker = null;
   destinationMarker = null;
@@ -204,7 +205,6 @@ onUnmounted(() => {
 <template>
   <div class="driver-map-shell flex h-full min-h-0 w-full flex-col">
     <h1 class="sr-only">Карта водителя</h1>
-    <IncomingOrder />
     <p
       v-if="state.gpsError"
       role="alert"
@@ -220,7 +220,7 @@ onUnmounted(() => {
       <Button
         variant="secondary"
         size="icon"
-        class="absolute right-3 top-3 z-10 size-11 rounded-full bg-background/90 shadow-lg backdrop-blur"
+        class="map-locate absolute z-10 size-12 rounded-full bg-background text-foreground shadow-lg"
         aria-label="Показать моё положение на карте"
         title="Моё положение"
         :disabled="loading || state.loading || state.gpsPending"
@@ -281,3 +281,16 @@ onUnmounted(() => {
     </p>
   </div>
 </template>
+
+<style scoped>
+.map-locate {
+  right: max(
+    0.75rem,
+    var(--native-safe-right, env(safe-area-inset-right, 0px))
+  );
+  bottom: max(
+    3.5rem,
+    var(--native-safe-bottom, env(safe-area-inset-bottom, 0px))
+  );
+}
+</style>

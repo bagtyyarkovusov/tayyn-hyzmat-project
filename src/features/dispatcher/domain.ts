@@ -42,12 +42,21 @@ export interface Driver {
     fullName: string;
     phone: string;
     lastLoginAt?: string;
-    balance?: { amount: number | string };
+    balance?: {
+      amount: number | string;
+      total?: number | string;
+      held?: number | string;
+      available?: number | string;
+    };
   };
 }
 export interface Order {
   id: string;
   orderNumber: number;
+  cancellationReviewRequired?: boolean;
+  resolutionActions?: ("REOFFER" | "FINAL_CANCEL")[];
+  notificationEventId?: string;
+  offerAttemptId?: string;
   status: string;
   district?: District;
   driver?: Driver;
@@ -77,6 +86,7 @@ export interface Order {
 export interface Message {
   id: string;
   senderId: string;
+  isBroadcast?: boolean;
   body: string;
   sentAt: string;
 }

@@ -1,12 +1,6 @@
 <script setup lang="ts">
-import IncomingOrder from "./components/IncomingOrder.vue";
-import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-  DialogDescription,
-} from "@/shared/ui/dialog";
+import { nextTick, onMounted, onUnmounted, ref } from "vue";
+
 import { Button } from "@/shared/ui/button";
 import ChatComposer from "@/shared/ChatComposer.vue";
 import { useChatRecovery } from "@/shared/useChatRecovery";
@@ -16,13 +10,7 @@ import { driverSession } from "@/features/auth/session";
 import { useDriver } from "./useDriver";
 import { closeChatAlerts } from "./alerts";
 import { date, type Message, type Page } from "./model";
-const { state, dismissIncoming } = useDriver();
-const offerOpen = computed({
-  get: () => !!state.incoming && !state.active,
-  set: (value) => {
-    if (!value) dismissIncoming();
-  },
-});
+const { state } = useDriver();
 const { history, track, updated, followAfterSend } = useChatScroll();
 const messages = ref<Message[]>([]),
   draft = ref(""),
@@ -156,13 +144,6 @@ onUnmounted(() => {
         <h1 class="text-lg font-semibold">Диспетчер</h1>
       </div>
     </header>
-    <Dialog v-model:open="offerOpen"
-      ><DialogContent
-        ><DialogTitle class="sr-only">Новый заказ</DialogTitle
-        ><DialogDescription class="sr-only"
-          >Выберите время прибытия и подтвердите заказ.</DialogDescription
-        ><IncomingOrder embedded /></DialogContent
-    ></Dialog>
     <p
       v-if="error"
       role="alert"

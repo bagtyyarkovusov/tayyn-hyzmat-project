@@ -839,6 +839,7 @@ test("logout wins over a delayed refresh response and keeps the other actor sign
     .getByRole("link", { name: "Профиль", exact: true })
     .click();
   await reached;
+  await page.getByRole("link", { name: "Профиль", exact: true }).click();
   await page.getByRole("button", { name: "Выйти", exact: true }).click();
   await expect(page).toHaveURL(/driverLogin/);
   release();
@@ -899,6 +900,7 @@ test("GPS reporting continues across driver routes and stops after logout", asyn
         return Number(profile.lastLat);
       })
       .toBe(37.9701);
+    await page.getByRole("link", { name: "Профиль", exact: true }).click();
     await page.getByRole("button", { name: "Выйти", exact: true }).click();
     await expect(page).toHaveURL(/driverLogin/);
     // Native geolocation runs outside the browser timer mock. Let the real
@@ -1803,13 +1805,26 @@ async function emulateNativeBridge(page: Page, holdPermission: boolean) {
     bridge.Capacitor = {
       PluginHeaders: [
         {
+          name: "DriverUi",
+          methods: [
+            "ready",
+            "respondBack",
+            "resetBack",
+            "detach",
+            "theme",
+            "removeListener",
+          ]
+            .map((name) => ({ name, rtype: "promise" }))
+            .concat([{ name: "addListener", rtype: "callback" }]),
+        },
+        {
           name: "DriverNotifications",
           methods: [
             ...[
               "status",
               "requestPermissions",
               "configure",
-              "setEnabled",
+              "reconcileOrders",
               "setPresence",
               "deliver",
               "clear",

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { formatPhone } from "@/shared/phone";
-import { nextTick, onUnmounted, ref, watch } from "vue";
-import { RouterLink } from "vue-router";
+import { computed, nextTick, onUnmounted, ref, watch } from "vue";
+import { RouterLink, useRoute } from "vue-router";
 import { ArrowLeft } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
 import { Label } from "@/shared/ui/label";
@@ -23,6 +23,10 @@ import { date, type Driver, type Page, type Message } from "./domain";
 import { useResource } from "./useResource";
 import PageState from "./components/PageState.vue";
 const props = defineProps<{ driverId?: string }>();
+const route = useRoute();
+const allDrivers = computed(
+  () => !props.driverId && route.query.broadcast === "1",
+);
 const { history, track, updated, followAfterSend } = useChatScroll();
 let alive = true;
 onUnmounted(() => {
@@ -54,6 +58,57 @@ const {
   [],
   ["driver:message"],
 );
+const {
+  data: broadcasts,
+  loading: broadcastsLoading,
+  error: broadcastsError,
+  load: loadBroadcasts,
+} = useResource(
+  async () =>
+    (
+      await adminApi.get<Page<Message>>("/admin/messages/broadcasts", {
+        params: { limit: 30 },
+      })
+    ).data,
+  { items: [], total: 0, page: 1, limit: 30 },
+  ["admin:message"],
+);
+const olderBroadcastsLoading = ref(false);
+async function loadOlderBroadcasts() {
+  if (olderBroadcastsLoading.value) return;
+  olderBroadcastsLoading.value = true;
+  const previousHeight = history.value?.scrollHeight ?? 0;
+  try {
+    const { data } = await adminApi.get<Page<Message>>(
+      "/admin/messages/broadcasts",
+      { params: { beforeMessageId: broadcasts.value.items[0]?.id, limit: 30 } },
+    );
+    if (!alive) return;
+    broadcasts.value = {
+      ...data,
+      items: [
+        ...new Map(
+          [...data.items, ...broadcasts.value.items].map((message) => [
+            message.id,
+            message,
+          ]),
+        ).values(),
+      ],
+    };
+    await nextTick();
+    if (history.value)
+      history.value.scrollTop += history.value.scrollHeight - previousHeight;
+  } catch (error) {
+    if (alive) sendError.value = errorMessage(error);
+  } finally {
+    olderBroadcastsLoading.value = false;
+  }
+}
+watch(allDrivers, () => {
+  sendError.value = "";
+  void loadBroadcasts();
+  void updated(true);
+});
 const olderLoading = ref(false);
 type Thread = { messages: Message[]; total: number; driver: Driver };
 let retryMessage: { body: string; target: string; id: string } | undefined;
@@ -170,6 +225,7 @@ const {
 useChatRecovery(() => {
   void load();
   void loadThread();
+  void loadBroadcasts();
 });
 watch(
   () => props.driverId,
@@ -209,6 +265,8 @@ async function send(all = false) {
       broadcastBody.value = "";
       broadcast.value = false;
       sent.value = true;
+      await Promise.all([loadBroadcasts(), loadThread()]);
+      await finishScroll();
     } else {
       body.value = "";
       await loadThread();
@@ -243,8 +301,14 @@ async function send(all = false) {
     <div class="grid min-h-0 flex-1 gap-3 lg:grid-cols-[300px_1fr]">
       <aside
         class="min-h-0 overflow-y-auto overscroll-contain"
-        :class="driverId ? 'hidden lg:block' : ''"
+        :class="driverId || allDrivers ? 'hidden lg:block' : ''"
       >
+        <RouterLink
+          to="/adminChat?broadcast=1"
+          class="mb-3 flex min-h-12 items-center rounded-xl border p-4 font-semibold"
+          :class="allDrivers ? 'bg-secondary' : ''"
+          >Все водители</RouterLink
+        >
         <PageState
           :loading="loading && !drivers.length"
           :error="error"
@@ -356,6 +420,9 @@ async function send(all = false) {
                   : 'bg-primary text-primary-foreground'
               "
             >
+              <p v-if="message.isBroadcast" class="mb-1 text-xs font-semibold">
+                Всем водителям
+              </p>
               <p class="whitespace-pre-wrap break-words text-sm">
                 {{ message.body }}
               </p>
@@ -378,6 +445,64 @@ async function send(all = false) {
         >
           {{ sendError }}
         </p>
+      </section>
+      <section
+        v-else-if="allDrivers"
+        class="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border bg-card"
+      >
+        <header class="flex shrink-0 items-center gap-3 border-b p-3">
+          <RouterLink
+            to="/adminChat"
+            aria-label="Все диалоги"
+            class="flex size-11 items-center justify-center lg:hidden"
+            ><ArrowLeft class="size-4"
+          /></RouterLink>
+          <h2 class="font-semibold">Все водители</h2>
+        </header>
+        <div
+          ref="history"
+          role="region"
+          aria-label="Отправленные всем водителям"
+          class="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-3"
+          @scroll="track"
+        >
+          <PageState
+            :loading="broadcastsLoading && !broadcasts.items.length"
+            :error="broadcastsError"
+            @retry="loadBroadcasts"
+          />
+          <p
+            v-if="!broadcastsLoading && !broadcasts.items.length"
+            class="py-10 text-center text-sm text-muted-foreground"
+          >
+            Сообщений пока нет.
+          </p>
+          <Button
+            v-if="broadcasts.total > broadcasts.items.length"
+            variant="ghost"
+            :disabled="olderBroadcastsLoading"
+            @click="loadOlderBroadcasts"
+            >Загрузить более ранние сообщения</Button
+          >
+          <article
+            v-for="message in broadcasts.items"
+            :key="message.id"
+            class="ml-auto w-fit max-w-[85%] rounded-xl bg-primary p-3 text-primary-foreground"
+          >
+            <p class="mb-1 text-xs font-semibold">Всем водителям</p>
+            <p class="whitespace-pre-wrap break-words text-base">
+              {{ message.body }}
+            </p>
+            <p class="mt-1 text-right text-xs opacity-80">
+              {{ date(message.sentAt) }}
+            </p>
+          </article>
+        </div>
+        <div class="border-t p-3">
+          <Button class="min-h-11 w-full" @click="broadcast = true"
+            >Сообщение всем</Button
+          >
+        </div>
       </section>
       <section
         v-else

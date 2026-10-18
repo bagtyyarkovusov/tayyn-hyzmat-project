@@ -432,6 +432,7 @@ watch(
         :blockers="state.active && !shiftElsewhere ? [] : blockers"
         :error="incomingOpen || tripOpen ? '' : state.error"
         :notice="state.notice"
+        :notice-event-id="state.noticeEventId"
         :attempt="state.actionAttempt"
       />
     </div>
@@ -502,12 +503,9 @@ watch(
     <Dialog :open="!!selected" @update:open="!$event && (selected = null)"
       ><DialogContent
         class="queue-dialog flex max-h-[85dvh] flex-col overflow-hidden"
+        :aria-describedby="undefined"
         ><DialogHeader class="shrink-0 pr-8"
-          ><DialogTitle>Заказы района</DialogTitle
-          ><DialogDescription
-            >Все доступные заказы. Заказы выбранного района показаны
-            первыми.</DialogDescription
-          ></DialogHeader
+          ><DialogTitle>Заказы района</DialogTitle></DialogHeader
         >
         <AvailableOrders
           v-if="!shiftElsewhere && selectedDistrict && state.profile?.isOnline"

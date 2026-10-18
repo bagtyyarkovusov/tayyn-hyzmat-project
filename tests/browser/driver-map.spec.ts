@@ -101,8 +101,44 @@ async function fixture(
     }
     class MapStub {
       geoObjects: Objects;
-      constructor(private readonly node: HTMLElement) {
+      events = {
+        add: (
+          name: string,
+          callback: (event: { get: (key: string) => string }) => void,
+        ) => {
+          if (name === "actionbegin") {
+            let origin: { x: number; y: number } | undefined;
+            this.node.addEventListener("pointerdown", (event) => {
+              origin = { x: event.clientX, y: event.clientY };
+            });
+            this.node.addEventListener("pointerup", () => {
+              origin = undefined;
+            });
+            this.node.addEventListener("pointermove", (event) => {
+              if (
+                origin &&
+                Math.hypot(event.clientX - origin.x, event.clientY - origin.y) >
+                  8
+              ) {
+                origin = undefined;
+                callback({ get: () => "drag" });
+              }
+            });
+          }
+        },
+      };
+      constructor(
+        private readonly node: HTMLElement,
+        options: { controls: string[] },
+      ) {
         this.geoObjects = new Objects(node);
+        this.node.dataset.controls = options.controls.join(",");
+        const attribution = document.createElement("a");
+        attribution.textContent = "Яндекс · Открыть в Картах";
+        attribution.href = "https://yandex.com/maps/";
+        attribution.style.cssText =
+          "position:absolute;bottom:0;right:0;height:24px";
+        this.node.append(attribution);
       }
       setCenter(point: number[]) {
         this.node.dataset.center = point.join(",");
@@ -266,6 +302,64 @@ test("invalid pickup and a missing destination do not create map markers", async
     await expect(
       page.getByRole("img", { name: "Текущее положение", exact: true }),
     ).toBeVisible();
+  } finally {
+    await close();
+  }
+});
+
+test("GPS follows until a map pan, a tap keeps following and Locate resumes without off-shift uploads", async ({
+  browser,
+}) => {
+  const { page, context, close } = await fixture(browser);
+  try {
+    const uploads: string[] = [];
+    page.on("request", (request) => {
+      if (
+        request.url().endsWith("/driver/location") &&
+        request.method() === "POST"
+      )
+        uploads.push(request.url());
+    });
+    await page
+      .getByRole("button", { name: "Показать моё положение на карте" })
+      .click();
+    const marker = page.getByRole("img", {
+      name: "Текущее положение",
+      exact: true,
+    });
+    const canvas = marker.locator("..");
+    await expect(canvas).toHaveAttribute("data-controls", "");
+    await expect(canvas).toHaveAttribute("data-center", "37.96,58.32");
+    await canvas.click({ position: { x: 100, y: 100 } });
+    await context.setGeolocation({
+      latitude: 37.961,
+      longitude: 58.321,
+      accuracy: 10,
+    });
+    await expect(canvas).toHaveAttribute("data-center", "37.961,58.321");
+    const box = await canvas.boundingBox();
+    await page.mouse.move(box!.x + 100, box!.y + 100);
+    await page.mouse.down();
+    await page.mouse.move(box!.x + 170, box!.y + 140, { steps: 5 });
+    await page.mouse.up();
+    await context.setGeolocation({
+      latitude: 37.962,
+      longitude: 58.322,
+      accuracy: 10,
+    });
+    await expect(marker).toHaveAttribute("data-point", "37.962,58.322");
+    await expect(canvas).toHaveAttribute("data-center", "37.961,58.321");
+    const locate = page.getByRole("button", {
+      name: "Показать моё положение на карте",
+    });
+    await locate.click();
+    await expect(canvas).toHaveAttribute("data-center", "37.962,58.322");
+    const locateBox = await locate.boundingBox();
+    const attribution = page.getByRole("link", { name: /Яндекс/ });
+    await expect(attribution).toBeVisible();
+    const attributionBox = await attribution.boundingBox();
+    expect(locateBox!.y + locateBox!.height).toBeLessThan(attributionBox!.y);
+    expect(uploads).toEqual([]);
   } finally {
     await close();
   }
