@@ -4,7 +4,7 @@ This is the operational handoff for the first VPS release. Start with the [setup
 
 ## Current status
 
-The first production release is installed on the main VPS from the verified clean-source bundle described below. The Railway services and `apk-test` environments remain test environments; their databases and credentials must not be copied into production. HTTPS health, admin login, authenticated WebSocket access, encrypted backup/relay, monitor checks and a disposable restore have now been verified. Real dispatcher-driver workflow, physical-phone delivery, clean APK rebuild and merge of the deployment PR remain open gates.
+The first production release is installed on the main VPS from the verified clean-source bundle described below. The Railway services and `apk-test` environments remain test environments; their databases and credentials must not be copied into production. HTTPS health, admin login, authenticated WebSocket access, encrypted backup/relay, monitor checks and a disposable restore have now been verified. Real dispatcher-driver workflow, physical-phone delivery and merge of the deployment PR remain open gates; the clean signed APK has been rebuilt below.
 
 The bootstrap began with one approved admin and the nine versioned saved regions. Current authenticated overview evidence reports two drivers, one active order and four completed trips; these records were not created by this handoff session. Do not seed synthetic drivers, orders, chats, balances, or Railway records into production.
 
@@ -122,7 +122,9 @@ The main `tayyn-backup.timer`, monitor `tayyn-backup-relay.timer` and monitor `t
 
 The relayed archive was copied to the owner Mac and its SHA-256 was checked against the monitor. Using the private owner identity only on the Mac, it restored into a disposable PostgreSQL 17 container and database. The restored snapshot contained one admin, nine districts, two drivers, six orders, three users and 25 migrations. A one-byte tampered copy was rejected before creating its disposable database. The restore container was removed afterward; production was never replaced.
 
-A pinned acceptance probe completed admin login, overview read and an authenticated WebSocket connection. The original helper's unpinned hostname request was blocked by the current Mac gateway, while the same checks passed with the documented pinned origin probe. A real dispatcher-driver workflow, FCM delivery on the target Infinix, and clean APK rebuild remain pending; no driver or order was seeded for this check. The Yandex carryover was skipped because the Moscow quota day had already rolled over.
+A pinned acceptance probe completed admin login, overview read and an authenticated WebSocket connection. The original helper's unpinned hostname request was blocked by the current Mac gateway, while the same checks passed with the documented pinned origin probe. A real dispatcher-driver workflow and FCM delivery on the target Infinix remain pending; no driver or order was seeded for this check. The Yandex carryover was skipped because the Moscow quota day had already rolled over.
+
+A clean signed production APK was rebuilt from source commit `3b055c31` with the verified production endpoints. It is `TayynHyzmat-production-1.18-code19.apk`, application ID `tayyn.hyzmat.production`, version 1.18/code 19, SHA-256 `462d4bd67391122fdb29a624741ba7aa881f061e234b2fbff3ca7945f5426caa`, and signing certificate SHA-256 `a675842c5d0c2bfb62b08c02aff99687b66c8580180591a4ebf8169716d240b6`. Physical Android 14 lock-screen, Doze, force-stop, GPS, Yandex and splash checks remain open.
 
 ## Namecheap DNS and TLS
 
