@@ -99,6 +99,10 @@ The updater verifies the manifest, checksums, image identities, configuration, c
 
 Do not automatically install the monitor archive on every app update. Update its root-owned operations script and service templates when monitoring changes, preserve its secrets and state, then rerun relay and health checks. The selected transport must remain SMTP unless we deliberately change it.
 
+## Authorized one-time rollout 1.20 reset
+
+Use the [scoped reset runbook](production-reset-1.20.md) before the standard updater. It preserves existing admin credentials, every exact saved region, migration/settings/quota records and order-number state. A fresh quiesced encrypted backup, protected off-host copies and owner-local disposable restore are mandatory before deletion. Normal updates never run this reset.
+
 ## Verify the result
 
 After each release, confirm the running commit/image IDs, HTTPS and certificate chain, API health and database access. Check an authenticated Socket.IO connection and a real dispatcher/driver workflow. A healthy static page alone is insufficient.

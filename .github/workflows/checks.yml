@@ -73,6 +73,10 @@ jobs:
         run: python3 -m unittest discover -s scripts/tests -p 'test_production_backup_integration.py' -v
         env:
           TAYYN_PRODUCTION_BACKUP_DRILL: "1"
+      - name: Verify scoped rollout reset, preservation and transaction rollback
+        run: python3 -m unittest discover -s scripts/tests -p 'test_production_reset.py' -v
+        env:
+          TAYYN_PRODUCTION_RESET_DRILL: "1"
 
   android:
     runs-on: ubuntu-latest

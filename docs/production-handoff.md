@@ -289,3 +289,11 @@ Before changing production-related files:
 - Update this guide and `docs/deployment-readiness.md` when commands, ports, credentials, retention or release gates change.
 - Record release tag, image digests, migration status, backup/restore evidence, alert test and known limitations.
 - Do not claim “production ready” while any gate above remains unverified.
+
+### Rollout 1.20 reset preparation and monitor recovery, 2026-10-18
+
+The scoped [one-time reset runbook](production-reset-1.20.md), explicit catalog policy and operator command are prepared for independent review. The isolated PostgreSQL 17 drill passes 23 tests across the installed and rollout schemas, including exact preservation of two distinct admin credentials, non-default region geometry, settings/quota/migrations and sequence continuation. Unknown tables/schema/FKs and stale snapshots fail closed; a forced failure after earlier deletes rolls back every statement. This is preparation evidence, not a production reset or live-backup restore result. Production reset, quiescing and release application were not performed during this recovery.
+
+The existing monitor service account could not read root-owned 0600 artifacts left by earlier maintenance. The previous recovery hash-verified and corrected ownership of precisely two ciphertext archives and the relay/monitor state files. A further read-only check identified the monitor's `operations.json` as root-owned 0600 and unreadable by `tayyn-monitor`. Its ownership alone was restored to the established `tayyn-monitor` user/group; the content digest and 0600 mode stayed unchanged. No application configuration or credentials changed.
+
+Both existing relay and monitor units subsequently completed with `Result=success` and `ExecMainStatus=0` under `tayyn-monitor`; both timers remained active/enabled. Relay inventory verification found all 11 available ciphertext copies matched application size/SHA-256, including the missing hourly archives. The monitor's bounded check reported `healthy: true`, no failures/warnings and no email needed. This repairs the freshness blocker, but a NEW quiesced, protected PRE-RESET backup, independent relay/hash and successful owner-local disposable restore remain mandatory before deletion. Private commands, hashes and storage recovery pointers remain in the ignored operator checkout.
