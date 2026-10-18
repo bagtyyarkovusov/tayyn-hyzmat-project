@@ -22,7 +22,8 @@ import org.json.*;
  */
 public final class ShiftService extends Service {
   public static final String SHIFT_CHANNEL = "driver-shift",
-      ORDER_CHANNEL = "driver-orders",
+      ORDER_CHANNEL = "driver-orders-v120",
+      LEGACY_ORDER_CHANNEL = "driver-orders",
       CHAT_CHANNEL = "driver-chat";
   private static final int SHIFT_ID = 1;
   private static volatile ShiftService instance;
@@ -37,7 +38,6 @@ public final class ShiftService extends Service {
   private final ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor();
   private LocationManager locations;
   private volatile Location latest;
-  private NotificationInbox inbox;
   private final LocationListener listener =
       new LocationListener() {
         @Override
@@ -52,6 +52,7 @@ public final class ShiftService extends Service {
         @Override
         public void onProviderDisabled(String provider) {
           phase = "gps-unavailable";
+          PushNotificationService.clear(ShiftService.this, "orders");
         }
 
         @Override
@@ -67,11 +68,34 @@ public final class ShiftService extends Service {
     manager.createNotificationChannel(
         new NotificationChannel(
             SHIFT_CHANNEL, "Рабочая смена", NotificationManager.IMPORTANCE_LOW));
-    manager.createNotificationChannel(
-        new NotificationChannel(ORDER_CHANNEL, "Заказы", NotificationManager.IMPORTANCE_HIGH));
+    if (manager.getNotificationChannel(ORDER_CHANNEL) == null) {
+      NotificationChannel previous = manager.getNotificationChannel(LEGACY_ORDER_CHANNEL);
+      NotificationChannel orders = new NotificationChannel(ORDER_CHANNEL, "Заказы",
+          previous == null ? NotificationManager.IMPORTANCE_HIGH : previous.getImportance());
+      android.net.Uri sound = orderSound(context);
+      if (previous != null) {
+        // Preserve OS opt-outs, silent/custom sounds and other channel choices.
+        android.net.Uri selected = previous.getSound();
+        if (selected == null || !android.provider.Settings.System.DEFAULT_NOTIFICATION_URI.equals(selected)) sound = selected;
+        orders.enableVibration(previous.shouldVibrate());
+        orders.setVibrationPattern(previous.getVibrationPattern());
+        orders.enableLights(previous.shouldShowLights());
+        orders.setLightColor(previous.getLightColor());
+        orders.setShowBadge(previous.canShowBadge());
+        orders.setLockscreenVisibility(previous.getLockscreenVisibility());
+      }
+      orders.setSound(sound, new android.media.AudioAttributes.Builder()
+          .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+          .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build());
+      manager.createNotificationChannel(orders);
+    }
     manager.createNotificationChannel(
         new NotificationChannel(
             CHAT_CHANNEL, "Сообщения диспетчера", NotificationManager.IMPORTANCE_HIGH));
+  }
+
+  public static android.net.Uri orderSound(Context context) {
+    return android.net.Uri.parse("android.resource://" + context.getPackageName() + "/raw/offer_music_20s");
   }
 
   public static boolean channelEnabled(Context context, String id) {
@@ -108,7 +132,12 @@ public final class ShiftService extends Service {
 
   public static void clear(String channel) {
     ShiftService service = instance;
-    if (service != null && service.inbox != null) service.inbox.clear(channel);
+    if (service != null) PushNotificationService.clear(service, channel);
+  }
+
+  static boolean ordersAllowed() {
+    ShiftService service = instance;
+    return service != null && !service.closing && SystemClock.elapsedRealtime() < service.leaseDeadline;
   }
 
   public static void end(Context context) {
@@ -118,6 +147,7 @@ public final class ShiftService extends Service {
   public static void end(Context context, String expectedToken) {
     ShiftService service = instance;
     if (expectedToken != null && (service == null || !expectedToken.equals(service.token))) return;
+    PushNotificationService.clear(context, "orders");
     if (service != null) service.finishShift("");
     else context.stopService(new Intent(context, ShiftService.class));
   }
@@ -127,50 +157,7 @@ public final class ShiftService extends Service {
     super.onCreate();
     instance = this;
     createChannels(this);
-    inbox =
-        new NotificationInbox(
-            new NotificationInbox.Sink() {
-              public void show(NotificationInbox.Event event) {
-                if (closing
-                    || !channelEnabled(
-                        ShiftService.this,
-                        event.channel.equals("orders") ? ORDER_CHANNEL : CHAT_CHANNEL)) return;
-                Intent intent = getPackageManager().getLaunchIntentForPackage(getPackageName());
-                intent.putExtra("notificationChannel", event.channel);
-                PendingIntent open =
-                    PendingIntent.getActivity(
-                        ShiftService.this,
-                        event.channel.hashCode(),
-                        intent,
-                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-                NotificationCompat.Builder notification =
-                    new NotificationCompat.Builder(
-                            ShiftService.this,
-                            event.channel.equals("orders") ? ORDER_CHANNEL : CHAT_CHANNEL)
-                        .setSmallIcon(R.drawable.ic_stat_driver)
-                        .setContentTitle(event.title)
-                        .setContentText(event.body)
-                        .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-                        .setAutoCancel(true)
-                        .setOnlyAlertOnce(true)
-                        .setContentIntent(open)
-                        .setTimeoutAfter(Math.max(1, event.expiresAt - System.currentTimeMillis()));
-                if (ContextCompat.checkSelfPermission(
-                            ShiftService.this, Manifest.permission.POST_NOTIFICATIONS)
-                        == PackageManager.PERMISSION_GRANTED
-                    || Build.VERSION.SDK_INT < 33)
-                  NotificationManagerCompat.from(ShiftService.this)
-                      .notify(event.id, 0, notification.build());
-              }
 
-              public void refresh(NotificationInbox.Event event) {
-                show(event);
-              }
-
-              public void cancel(String id) {
-                NotificationManagerCompat.from(ShiftService.this).cancel(id, 0);
-              }
-            });
   }
 
   @Override
@@ -256,6 +243,7 @@ public final class ShiftService extends Service {
         || SystemClock.elapsedRealtimeNanos() - fix.getElapsedRealtimeNanos()
             > TimeUnit.SECONDS.toNanos(30)) {
       phase = "gps-unavailable";
+      PushNotificationService.clear(this, "orders");
       return;
     }
     try {
@@ -265,6 +253,7 @@ public final class ShiftService extends Service {
               .put("lng", fix.getLongitude())
               .put("accuracy", fix.getAccuracy())
               .put("recordedAt", iso(fix.getTime()));
+      PushNotificationService.OrderSnapshot requestedOrders = PushNotificationService.orderSnapshot(this);
       long requestStarted = SystemClock.elapsedRealtime();
       JSONObject response = request("/native-shift/tick", payload);
       long requestElapsed = Math.max(0L, SystemClock.elapsedRealtime() - requestStarted);
@@ -286,7 +275,7 @@ public final class ShiftService extends Service {
       for (int i = 0; i < raw.length(); i++) {
         JSONObject event = raw.getJSONObject(i);
         long expires = NotificationDelivery.expiryFromServerTime(
-            parseIso(event.getString("expiresAt")), serverTime, now, requestElapsed);
+            parseIso(event.getString("expiresAt")), serverTime, System.currentTimeMillis(), requestElapsed);
         events.add(
             new NotificationInbox.Event(
                 event.getString("id"),
@@ -296,15 +285,14 @@ public final class ShiftService extends Service {
                 expires));
       }
       if (PushNotificationService.configured(this)) {
-        // The canonical coordinator is the sole renderer once the signed
-        // installation capability exists. Polling remains a catch-up trigger
-        // for devices where Socket.IO/FCM was unavailable.
+        Set<String> canonicalOrders = new HashSet<>();
+        for (NotificationInbox.Event event : events)
+          if ("orders".equals(event.channel) && event.expiresAt > System.currentTimeMillis()) canonicalOrders.add(event.id);
+        PushNotificationService.reconcileOrders(this, canonicalOrders, requestedOrders);
+        // Only this coordinator renders, even if registration is delayed.
+        // A failed request never becomes an empty authoritative inbox.
         for (NotificationInbox.Event event : events)
           PushNotificationService.execute(() -> PushNotificationService.deliver(this, event.id));
-      } else {
-        // Legacy isolated APKs without Firebase configuration retain the
-        // server inbox renderer until they are configured.
-        inbox.reconcile(events, now);
       }
     } catch (RejectedShift error) {
       finishShift("Смена завершена сервером. Войдите или включите линию снова.");
@@ -350,7 +338,7 @@ public final class ShiftService extends Service {
     detail = reason;
     stopSequence++;
     lastReportAt = 0;
-    if (inbox != null) inbox.stop();
+    PushNotificationService.clear(this, "orders");
     worker.execute(
         () -> {
           try {
@@ -376,7 +364,7 @@ public final class ShiftService extends Service {
     if (locations != null) locations.removeUpdates(listener);
     worker.shutdown();
     main.removeCallbacksAndMessages(null);
-    if (inbox != null) inbox.stop();
+    PushNotificationService.clear(this, "orders");
     if (instance == this) instance = null;
     stopForeground(true);
     super.onDestroy();
