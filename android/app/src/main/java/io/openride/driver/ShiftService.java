@@ -39,6 +39,7 @@ public final class ShiftService extends Service {
   private LocationAcquisition acquisition;
   private static volatile long lastFixElapsedNanos;
   private volatile Location latest;
+  private volatile FirstReportPolicy firstReport = new FirstReportPolicy();
 
   private void acceptLocation(Location fix) {
     if (closing || !LocationAcquisition.usable(fix)) return;
@@ -48,6 +49,13 @@ public final class ShiftService extends Service {
     latitude = fix.getLatitude();
     longitude = fix.getLongitude();
     accuracy = fix.getAccuracy();
+    // The single worker serialises this with scheduled reports.
+    FirstReportPolicy policy = firstReport;
+    if (policy.fixAccepted())
+      worker.execute(
+          () -> {
+            if (policy.stillNeeded()) tick();
+          });
   }
 
   public static void createChannels(Context context) {
@@ -180,6 +188,7 @@ public final class ShiftService extends Service {
     token = intent.getStringExtra("token");
     userId = intent.getStringExtra("userId");
     latest = null;
+    firstReport = new FirstReportPolicy();
     lastFixAt = 0;
     lastFixElapsedNanos = 0;
     lastReportAt = 0;
@@ -250,6 +259,7 @@ public final class ShiftService extends Service {
               + NotificationDelivery.expiryFromServerTime(
                   parseIso(response.getString("leaseExpiresAt")), serverTime, 0L, requestElapsed);
       lastReportAt = System.currentTimeMillis();
+      firstReport.reported();
       latitude = fix.getLatitude();
       longitude = fix.getLongitude();
       accuracy = fix.getAccuracy();
