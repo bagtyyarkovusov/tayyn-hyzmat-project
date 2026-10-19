@@ -36,31 +36,19 @@ public final class ShiftService extends Service {
   private volatile long leaseDeadline;
   private final Handler main = new Handler(Looper.getMainLooper());
   private final ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor();
-  private LocationManager locations;
+  private LocationAcquisition acquisition;
+  private static volatile long lastFixElapsedNanos;
   private volatile Location latest;
-  private final LocationListener listener =
-      new LocationListener() {
-        @Override
-        public void onLocationChanged(Location location) {
-          latest = location;
-          lastFixAt = System.currentTimeMillis();
-          latitude = location.getLatitude();
-          longitude = location.getLongitude();
-          accuracy = location.getAccuracy();
-        }
 
-        @Override
-        public void onProviderDisabled(String provider) {
-          phase = "gps-unavailable";
-          PushNotificationService.clear(ShiftService.this, "orders");
-        }
-
-        @Override
-        public void onProviderEnabled(String provider) {}
-
-        @Override
-        public void onStatusChanged(String provider, int status, Bundle extras) {}
-      };
+  private void acceptLocation(Location fix) {
+    if (closing || !LocationAcquisition.usable(fix)) return;
+    latest = fix;
+    lastFixElapsedNanos = fix.getElapsedRealtimeNanos();
+    lastFixAt = System.currentTimeMillis() - LocationAcquisition.ageMs(fix);
+    latitude = fix.getLatitude();
+    longitude = fix.getLongitude();
+    accuracy = fix.getAccuracy();
+  }
 
   public static void createChannels(Context context) {
     if (Build.VERSION.SDK_INT < 26) return;
@@ -70,13 +58,18 @@ public final class ShiftService extends Service {
             SHIFT_CHANNEL, "Рабочая смена", NotificationManager.IMPORTANCE_LOW));
     if (manager.getNotificationChannel(ORDER_CHANNEL) == null) {
       NotificationChannel previous = manager.getNotificationChannel(LEGACY_ORDER_CHANNEL);
-      NotificationChannel orders = new NotificationChannel(ORDER_CHANNEL, "Заказы",
-          previous == null ? NotificationManager.IMPORTANCE_HIGH : previous.getImportance());
+      NotificationChannel orders =
+          new NotificationChannel(
+              ORDER_CHANNEL,
+              "Заказы",
+              previous == null ? NotificationManager.IMPORTANCE_HIGH : previous.getImportance());
       android.net.Uri sound = orderSound(context);
       if (previous != null) {
         // Preserve OS opt-outs, silent/custom sounds and other channel choices.
         android.net.Uri selected = previous.getSound();
-        if (selected == null || !android.provider.Settings.System.DEFAULT_NOTIFICATION_URI.equals(selected)) sound = selected;
+        if (selected == null
+            || !android.provider.Settings.System.DEFAULT_NOTIFICATION_URI.equals(selected))
+          sound = selected;
         orders.enableVibration(previous.shouldVibrate());
         orders.setVibrationPattern(previous.getVibrationPattern());
         orders.enableLights(previous.shouldShowLights());
@@ -84,9 +77,12 @@ public final class ShiftService extends Service {
         orders.setShowBadge(previous.canShowBadge());
         orders.setLockscreenVisibility(previous.getLockscreenVisibility());
       }
-      orders.setSound(sound, new android.media.AudioAttributes.Builder()
-          .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
-          .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build());
+      orders.setSound(
+          sound,
+          new android.media.AudioAttributes.Builder()
+              .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+              .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+              .build());
       manager.createNotificationChannel(orders);
     }
     manager.createNotificationChannel(
@@ -95,7 +91,8 @@ public final class ShiftService extends Service {
   }
 
   public static android.net.Uri orderSound(Context context) {
-    return android.net.Uri.parse("android.resource://" + context.getPackageName() + "/raw/offer_music_20s");
+    return android.net.Uri.parse(
+        "android.resource://" + context.getPackageName() + "/raw/offer_music_20s");
   }
 
   public static boolean channelEnabled(Context context, String id) {
@@ -117,8 +114,20 @@ public final class ShiftService extends Service {
           .put("phase", phase)
           .put("detail", detail)
           .put("lastReportAt", lastReportAt)
-          .put("leaseRemainingMs", service == null ? 0L : Math.max(0L, service.leaseDeadline - SystemClock.elapsedRealtime()))
+          .put(
+              "leaseRemainingMs",
+              service == null
+                  ? 0L
+                  : Math.max(0L, service.leaseDeadline - SystemClock.elapsedRealtime()))
           .put("lastFixAt", lastFixAt)
+          .put(
+              "fixAgeMs",
+              lastFixAt == 0
+                  ? -1L
+                  : Math.max(
+                      0L,
+                      TimeUnit.NANOSECONDS.toMillis(
+                          SystemClock.elapsedRealtimeNanos() - lastFixElapsedNanos)))
           .put("stopSequence", stopSequence)
           .put("lat", latitude)
           .put("lng", longitude)
@@ -137,7 +146,9 @@ public final class ShiftService extends Service {
 
   static boolean ordersAllowed() {
     ShiftService service = instance;
-    return service != null && !service.closing && SystemClock.elapsedRealtime() < service.leaseDeadline;
+    return service != null
+        && !service.closing
+        && SystemClock.elapsedRealtime() < service.leaseDeadline;
   }
 
   public static void end(Context context) {
@@ -157,7 +168,6 @@ public final class ShiftService extends Service {
     super.onCreate();
     instance = this;
     createChannels(this);
-
   }
 
   @Override
@@ -169,6 +179,10 @@ public final class ShiftService extends Service {
     apiBase = intent.getStringExtra("apiBase");
     token = intent.getStringExtra("token");
     userId = intent.getStringExtra("userId");
+    latest = null;
+    lastFixAt = 0;
+    lastFixElapsedNanos = 0;
+    lastReportAt = 0;
     leaseDeadline =
         SystemClock.elapsedRealtime() + Math.min(60000, intent.getLongExtra("leaseDurationMs", 0));
     phase = "connecting";
@@ -193,41 +207,15 @@ public final class ShiftService extends Service {
             notification,
             android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
       else startForeground(SHIFT_ID, notification);
-      locations = (LocationManager) getSystemService(LOCATION_SERVICE);
       if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
           != PackageManager.PERMISSION_GRANTED) throw new SecurityException("location");
-      locations.requestLocationUpdates(
-          LocationManager.GPS_PROVIDER, 10000, 0, listener, Looper.getMainLooper());
-      if (locations.isProviderEnabled(LocationManager.NETWORK_PROVIDER))
-        locations.requestLocationUpdates(
-            LocationManager.NETWORK_PROVIDER, 10000, 0, listener, Looper.getMainLooper());
+      acquisition = new LocationAcquisition(this, main);
+      acquisition.start(this::acceptLocation);
       worker.scheduleWithFixedDelay(this::tick, 0, 10, TimeUnit.SECONDS);
     } catch (RuntimeException error) {
       finishShift("Разрешите точный GPS в настройках приложения.");
     }
     return START_NOT_STICKY;
-  }
-
-  private void requestFreshLocation() {
-    main.post(
-        () -> {
-          if (closing || locations == null) return;
-          try {
-            if (Build.VERSION.SDK_INT >= 30)
-              locations.getCurrentLocation(
-                  LocationManager.GPS_PROVIDER,
-                  null,
-                  getMainExecutor(),
-                  location -> {
-                    if (location != null) listener.onLocationChanged(location);
-                  });
-            else
-              locations.requestSingleUpdate(
-                  LocationManager.GPS_PROVIDER, listener, Looper.getMainLooper());
-          } catch (SecurityException error) {
-            finishShift("Доступ к GPS отозван. Смена завершена.");
-          }
-        });
   }
 
   private void tick() {
@@ -237,11 +225,8 @@ public final class ShiftService extends Service {
       finishShift("Связь потеряна. Включите линию снова.");
       return;
     }
-    requestFreshLocation();
     Location fix = latest;
-    if (fix == null
-        || SystemClock.elapsedRealtimeNanos() - fix.getElapsedRealtimeNanos()
-            > TimeUnit.SECONDS.toNanos(30)) {
+    if (!LocationAcquisition.usable(fix)) {
       phase = "gps-unavailable";
       PushNotificationService.clear(this, "orders");
       return;
@@ -252,8 +237,9 @@ public final class ShiftService extends Service {
               .put("lat", fix.getLatitude())
               .put("lng", fix.getLongitude())
               .put("accuracy", fix.getAccuracy())
-              .put("recordedAt", iso(fix.getTime()));
-      PushNotificationService.OrderSnapshot requestedOrders = PushNotificationService.orderSnapshot(this);
+              .put("recordedAt", iso(System.currentTimeMillis() - LocationAcquisition.ageMs(fix)));
+      PushNotificationService.OrderSnapshot requestedOrders =
+          PushNotificationService.orderSnapshot(this);
       long requestStarted = SystemClock.elapsedRealtime();
       JSONObject response = request("/native-shift/tick", payload);
       long requestElapsed = Math.max(0L, SystemClock.elapsedRealtime() - requestStarted);
@@ -262,8 +248,7 @@ public final class ShiftService extends Service {
       leaseDeadline =
           SystemClock.elapsedRealtime()
               + NotificationDelivery.expiryFromServerTime(
-                  parseIso(response.getString("leaseExpiresAt")), serverTime,
-                  0L, requestElapsed);
+                  parseIso(response.getString("leaseExpiresAt")), serverTime, 0L, requestElapsed);
       lastReportAt = System.currentTimeMillis();
       latitude = fix.getLatitude();
       longitude = fix.getLongitude();
@@ -274,8 +259,12 @@ public final class ShiftService extends Service {
       List<NotificationInbox.Event> events = new ArrayList<>();
       for (int i = 0; i < raw.length(); i++) {
         JSONObject event = raw.getJSONObject(i);
-        long expires = NotificationDelivery.expiryFromServerTime(
-            parseIso(event.getString("expiresAt")), serverTime, System.currentTimeMillis(), requestElapsed);
+        long expires =
+            NotificationDelivery.expiryFromServerTime(
+                parseIso(event.getString("expiresAt")),
+                serverTime,
+                System.currentTimeMillis(),
+                requestElapsed);
         events.add(
             new NotificationInbox.Event(
                 event.getString("id"),
@@ -287,7 +276,8 @@ public final class ShiftService extends Service {
       if (PushNotificationService.configured(this)) {
         Set<String> canonicalOrders = new HashSet<>();
         for (NotificationInbox.Event event : events)
-          if ("orders".equals(event.channel) && event.expiresAt > System.currentTimeMillis()) canonicalOrders.add(event.id);
+          if ("orders".equals(event.channel) && event.expiresAt > System.currentTimeMillis())
+            canonicalOrders.add(event.id);
         PushNotificationService.reconcileOrders(this, canonicalOrders, requestedOrders);
         // Only this coordinator renders, even if registration is delayed.
         // A failed request never becomes an empty authoritative inbox.
@@ -348,7 +338,11 @@ public final class ShiftService extends Service {
             token = null;
           }
         });
-    main.post(this::stopSelf);
+    main.post(
+        () -> {
+          if (acquisition != null) acquisition.stop();
+          stopSelf();
+        });
   }
 
   @Override
@@ -361,7 +355,7 @@ public final class ShiftService extends Service {
   @Override
   public void onDestroy() {
     if (!closing) finishShift("");
-    if (locations != null) locations.removeUpdates(listener);
+    if (acquisition != null) acquisition.stop();
     worker.shutdown();
     main.removeCallbacksAndMessages(null);
     PushNotificationService.clear(this, "orders");

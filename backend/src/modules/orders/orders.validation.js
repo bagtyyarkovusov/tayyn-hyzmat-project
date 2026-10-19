@@ -13,11 +13,6 @@ const acceptSchema = z.object({
   etaMinutes: z.union([z.literal(5), z.literal(10), z.literal(15), z.literal(20)]).default(5)
 });
 
-const cancelSchema = z.object({
-  orderId: z.string().uuid('Некорректный идентификатор заказа'),
-  reason: z.string().trim().max(300).optional()
-});
-
 // Phone dispatch requires a region, customer phone and manually entered price.
 // Addresses, map coordinates and note are optional. Missing
 // pickup coordinates use the selected region centre for existing storage.
@@ -51,4 +46,4 @@ const privateOfferSchema = z.object({ driverId: z.string().uuid() });
 
 const privateAcceptSchema = acceptSchema.extend({ privateOfferExpiresAt: z.string().datetime() });
 
-module.exports = { privateAcceptSchema, privateOfferSchema, orderIdSchema, acceptSchema, cancelSchema, createOrderSchema, listAvailableQuerySchema };
+module.exports = { privateAcceptSchema, privateOfferSchema, orderIdSchema, acceptSchema, createOrderSchema, listAvailableQuerySchema };

@@ -8,7 +8,6 @@ import { money, type District } from "./domain";
 interface Overview {
   totalDrivers: number;
   onlineDrivers: number;
-  pendingDrivers: number;
   activeOrders: number;
   completedTrips: number;
   pricedCompletedTrips: number;
@@ -29,7 +28,6 @@ const { data, loading, error, load } = useResource(
     regions: [] as District[],
     totalDrivers: 0,
     onlineDrivers: 0,
-    pendingDrivers: 0,
     activeOrders: 0,
     completedTrips: 0,
     pricedCompletedTrips: 0,
@@ -64,7 +62,7 @@ const { data, loading, error, load } = useResource(
     <PageState :loading="loading" :error="error" @retry="load" />
     <template v-if="!loading && !error">
       <section
-        class="grid grid-cols-3 divide-x rounded-lg border bg-card"
+        class="grid grid-cols-2 divide-x rounded-lg border bg-card"
         aria-label="Текущая ситуация"
       >
         <RouterLink
@@ -87,15 +85,6 @@ const { data, loading, error, load } = useResource(
             >
           </p>
           <p class="mt-1 text-xs text-muted-foreground">Водители на линии</p>
-        </RouterLink>
-        <RouterLink
-          to="/adminDrivers?status=PENDING"
-          class="min-w-0 p-3 sm:p-4 hover:bg-secondary/50"
-        >
-          <p class="text-2xl font-semibold leading-tight tabular-nums">
-            {{ data.pendingDrivers }}
-          </p>
-          <p class="mt-1 text-xs text-muted-foreground">Ожидают проверки</p>
         </RouterLink>
       </section>
       <section>

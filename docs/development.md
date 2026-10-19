@@ -14,7 +14,7 @@ TEST_BASE_URL=http://localhost:8081 node --env-file=.local/zone-test.env scripts
 
 `--no-build` uses existing local images. To test a changed image, give it a separate tag and an isolated Compose override before restarting this stack. The base Compose file shares image names with another local environment.
 
-The fixture in `scripts/seed-zone-test.cjs` creates `TEST ONLY - Central Ashgabat` centered on 37.9601, 58.3261, with a guessed rectangular boundary. It creates one dispatcher and three approved drivers. It is not the supporting developer's actual region drawing. Passwords come from the ignored environment file. Seeding preserves existing balances and edits.
+The fixture in `scripts/seed-zone-test.cjs` creates `TEST ONLY - Central Ashgabat` centered on 37.9601, 58.3261, with a guessed rectangular boundary. It creates one dispatcher and three active drivers. It is not the supporting developer's actual region drawing. Passwords come from the ignored environment file. Seeding preserves existing balances and edits.
 
 Fresh checkouts need a private `.local/zone-test.env` based on `.env.example` and the variables referenced by the zone override. Generate independent JWT secrets and seed passwords, retain database name `tayyn_zone_test`, and keep `ISOLATED_ZONE_FIXTURE=true` only for this fixture. The shared root `.env` is not a substitute.
 

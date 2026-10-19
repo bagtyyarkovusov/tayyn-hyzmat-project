@@ -35,7 +35,6 @@ import {
 } from "@/shared/ui/dropdown-menu";
 import { useDriverNotifications } from "@/features/driver/notifications";
 import { useDriverPermissionOnboarding } from "@/features/driver/permissionOnboarding";
-import CancellationReviewBanner from "@/features/dispatcher/CancellationReviewBanner.vue";
 import DriverOfferOverlay from "@/features/driver/components/DriverOfferOverlay.vue";
 import AdminMessageAlert from "@/features/dispatcher/AdminMessageAlert.vue";
 import { installNativeUi, resetNativeBack } from "@/features/driver/nativeUi";
@@ -305,23 +304,8 @@ async function logout() {
         v-if="!driver"
         class="dispatcher-alerts grid max-h-[40dvh] shrink-0 overflow-y-auto overscroll-contain border-b bg-card md:grid-cols-[repeat(auto-fit,minmax(20rem,1fr))] empty:hidden"
       >
-        <CancellationReviewBanner />
         <AdminMessageAlert />
       </div>
-      <p
-        v-if="driver && !networkOnline"
-        role="status"
-        class="border-b bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-900 dark:bg-amber-950/60 dark:text-amber-200"
-      >
-        Нет интернета. Пытаемся подключиться…
-      </p>
-      <p
-        v-else-if="driver && !session.state.connected"
-        role="status"
-        class="border-b bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-900 dark:bg-amber-950/60 dark:text-amber-200"
-      >
-        Связь с диспетчером прервана. Переподключаемся…
-      </p>
       <nav
         v-if="!driver"
         class="mobile-admin-nav"

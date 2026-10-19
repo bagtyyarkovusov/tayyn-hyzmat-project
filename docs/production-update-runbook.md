@@ -118,6 +118,8 @@ Backend and dashboard updates do not require changing DNS or recreating credenti
 
 Keep SSH open and use the failure instructions in [the offline guide](offline-production-bundle.md#recover-a-failed-update). A failed backup stops before migrations. If migrations have begun, do not assume the previous API can read the changed schema. Use a reviewed forward fix or a previously verified compatible image rollback.
 
+The 1.21 [dispatcher cancellation migration](plans/dispatcher-cancellation-1.21-contract.md#forward-only-deployment) is forward-only and has no compatible image rollback: after it runs, 1.20 images cannot accept priced orders or start trips. Recover with a reviewed forward fix, or with a deliberate database restore from the pre-deploy backup together with the 1.20 image. Never roll back the image alone.
+
 Never automatically restore an older database. That could discard trips, balance changes and messages recorded after the backup. Preserve failure evidence without publishing credentials. Use the provider console if management access fails.
 
 ## Certificate issuance and renewal

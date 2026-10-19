@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { cancellationLabel } from "@/shared/order-cancellation";
 import { formatPhone } from "@/shared/phone";
 import { onMounted, ref, watch } from "vue";
 import {
@@ -86,11 +87,11 @@ onMounted(() => void load());
         >
           {{
             state.profile?.status === "APPROVED"
-              ? "Допущен"
+              ? "Активен"
               : state.profile?.status === "BLOCKED"
                 ? "Заблокирован"
                 : state.profile?.status === "PENDING"
-                  ? "На проверке"
+                  ? "Доступ ограничен"
                   : "Загружаем…"
           }}
         </Badge>
@@ -100,7 +101,8 @@ onMounted(() => void load());
         <div class="min-w-0 flex-1">
           <h2 class="text-sm font-medium">Баланс</h2>
           <p class="mt-0.5 text-xs text-muted-foreground">
-            Пополнение через диспетчера
+            Пополнение через диспетчера. Полная стоимость списывается при
+            принятии заказа. При начале и завершении повторного списания нет.
           </p>
         </div>
         <p class="shrink-0 text-lg font-semibold tabular-nums">
@@ -192,7 +194,11 @@ onMounted(() => void load());
                         : 'text-foreground'
                     "
                   >
-                    {{ statusLabels[order.status] }}
+                    {{
+                      order.status === "CANCELLED"
+                        ? cancellationLabel(order.cancellationOutcome)
+                        : statusLabels[order.status]
+                    }}
                   </span>
                   <span v-if="order.district?.name">{{
                     order.district.name
@@ -230,6 +236,12 @@ onMounted(() => void load());
                   <dt class="text-xs text-muted-foreground">Примечание</dt>
                   <dd class="mt-0.5 whitespace-pre-wrap break-words">
                     {{ order.note }}
+                  </dd>
+                </div>
+                <div v-if="order.status === 'CANCELLED'">
+                  <dt class="text-xs text-muted-foreground">Исход отмены</dt>
+                  <dd class="mt-0.5">
+                    {{ cancellationLabel(order.cancellationOutcome) }}
                   </dd>
                 </div>
                 <div v-if="order.cancelReason">

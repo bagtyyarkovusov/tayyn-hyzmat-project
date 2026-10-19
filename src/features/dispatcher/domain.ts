@@ -1,3 +1,4 @@
+import type { CancellationOutcome } from "@/shared/order-cancellation";
 export interface Page<T> {
   items: T[];
   total: number;
@@ -53,9 +54,8 @@ export interface Driver {
 export interface Order {
   id: string;
   orderNumber: number;
-  cancellationReviewRequired?: boolean;
-  resolutionActions?: ("REOFFER" | "FINAL_CANCEL")[];
-  notificationEventId?: string;
+  cancellationOutcome?: CancellationOutcome | null;
+  cancellationRefundAmount?: number | string | null;
   offerAttemptId?: string;
   status: string;
   district?: District;
@@ -118,8 +118,9 @@ const statusLabels: Record<string, string> = {
   STARTED: "В пути",
   COMPLETED: "Завершён",
   CANCELLED: "Отменён",
-  PENDING: "На проверке",
-  APPROVED: "Одобрен",
+  // Legacy pre-1.21 rows only; signup no longer creates this status.
+  PENDING: "Доступ ограничен",
+  APPROVED: "Активен",
   BLOCKED: "Заблокирован",
 };
 export const statusLabel = (status: string): string =>

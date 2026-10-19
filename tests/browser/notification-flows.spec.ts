@@ -127,9 +127,10 @@ test("Profile has no notification settings and denied OS permission does not blo
       page.getByRole("switch", { name: "Уведомления", exact: true }),
     ).toHaveCount(0);
     await page.getByRole("link", { name: "Заказы", exact: true }).click();
-    await page
-      .getByRole("button", { name: "Включить GPS", exact: true })
-      .click();
+    await expect(page.getByRole("status", { name: /^GPS:/ })).toHaveAttribute(
+      "data-state",
+      "ready",
+    );
     await page
       .getByRole("button", { name: "Выйти на линию", exact: true })
       .click();

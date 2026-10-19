@@ -60,8 +60,12 @@ test("GPS waits for shift ownership profile before requesting coordinates", asyn
     });
     await page.goto("/driverDashboard");
     await delayed;
-    const gps = page.getByRole("button", { name: "Включить GPS", exact: true });
-    await expect(gps).toBeDisabled();
+    const gps = page.getByRole("status", { name: /^GPS:/ });
+    await expect(gps).toHaveCount(1);
+    await expect(gps).not.toHaveAttribute("tabindex");
+    await expect(
+      page.getByRole("button", { name: "Включить GPS", exact: true }),
+    ).toHaveCount(0);
     await expect(
       page.getByText(
         "Смена активна на другом устройстве. Завершите её там, чтобы выйти на линию здесь.",
@@ -69,8 +73,7 @@ test("GPS waits for shift ownership profile before requesting coordinates", asyn
       ),
     ).toHaveCount(0);
     release();
-    await expect(gps).toBeEnabled();
-    await gps.click();
+
     await expect(gps).toHaveAttribute("data-state", "ready");
   } finally {
     release();

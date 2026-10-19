@@ -16,17 +16,6 @@ const getDriver = asyncHandler(async (req, res) => {
   res.json(require('../driver/public-profile').publicDriverProfile(driver));
 });
 
-// NOTE: we pass req.user.id (the User row id) as the "actor" identity, not
-// req.user.adminId (the Admin profile row id) - Message.senderId is a real
-// foreign key into `users`, so anything that might end up recorded as a
-// message sender must be a User id. The other audit fields (approvedBy,
-// blockedBy, createdBy) aren't FK-constrained, but using the same id
-// everywhere keeps "who did this" unambiguous across the whole API.
-const approveDriver = asyncHandler(async (req, res) => {
-  const driver = await service.approveDriver(req.params.id, req.user.id);
-  res.json(require('../driver/public-profile').publicDriverProfile(driver));
-});
-
 const blockDriver = asyncHandler(async (req, res) => {
   const driver = await service.blockDriver(req.params.id, req.user.id, req.body.reason);
   res.json(require('../driver/public-profile').publicDriverProfile(driver));
@@ -67,7 +56,7 @@ const listOrders = asyncHandler(async (req, res) => {
 });
 
 const cancelOrder = asyncHandler(async (req, res) => {
-  const order = await ordersService.adminCancel(req.params.id, req.body.reason, req.user.id);
+  const order = await ordersService.adminCancel(req.params.id, req.body.outcome, req.user.id);
   res.json(order);
 });
 
@@ -121,7 +110,6 @@ module.exports = {
   createDriver,
   listDrivers,
   getDriver,
-  approveDriver,
   blockDriver,
   unblockDriver,
   signOutEverywhere,

@@ -27,7 +27,7 @@ const requireApprovedDriver = asyncHandler(async (req, res, next) => {
   }
 
   if (driver.status === 'PENDING') {
-    throw ApiError.forbidden('Ваш аккаунт ожидает подтверждения', { status: 'PENDING' });
+    throw ApiError.forbidden('Доступ к аккаунту ограничен. Обратитесь к диспетчеру.', { status: 'PENDING' });
   }
 
   if (driver.status === 'BLOCKED') {

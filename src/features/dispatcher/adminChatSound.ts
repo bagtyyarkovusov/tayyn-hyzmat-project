@@ -2,10 +2,7 @@ const cooldownMs = 3_000;
 const maximumPlaybackMs = 750;
 
 /** Optional browser audio. Banners remain available when coordination or audio fails. */
-export function createAdminChatSound(
-  adminId: () => string | null,
-  kind: "chat" | "cancellation" = "chat",
-) {
+export function createAdminChatSound(adminId: () => string | null) {
   // Logout clears the reactive account before this shell unmounts. Cleanup
   // must still target the account that received this tab's message preview.
   const account = adminId();
@@ -14,7 +11,6 @@ export function createAdminChatSound(
   let playing: { id: string; audio: HTMLAudioElement } | null = null;
   let deadline: ReturnType<typeof setTimeout> | undefined;
   const cancelled = new Set<string>();
-  const pending = new Map<string, ReturnType<typeof setTimeout>>();
 
   function key(id: string) {
     return `tayyn.admin.chat-sound.${id}`;
@@ -35,8 +31,6 @@ export function createAdminChatSound(
 
   function rememberCancellation(id: string) {
     cancelled.add(id);
-    clearTimeout(pending.get(id));
-    pending.delete(id);
     if (cancelled.size > 100)
       cancelled.delete(cancelled.values().next().value as string);
     stopLocal(id);
@@ -88,7 +82,7 @@ export function createAdminChatSound(
         const heard: string[] = JSON.parse(
           localStorage.getItem(eventKey) || "[]",
         );
-        const identity = `${kind}:${id}`;
+        const identity = `chat:${id}`;
         if (heard.includes(identity)) return;
         const remember = () =>
           localStorage.setItem(
@@ -98,37 +92,18 @@ export function createAdminChatSound(
         const now = Date.now();
         const last = Number(localStorage.getItem(key(account)));
         if (last > 0 && now >= last && now - last < cooldownMs) {
-          if (localStorage.getItem(`${key(account)}.kind`) === kind) {
-            // A rapid same-kind burst shares one chime, even across tabs.
-            remember();
-          } else {
-            clearTimeout(pending.get(id));
-            pending.set(
-              id,
-              setTimeout(
-                () => {
-                  pending.delete(id);
-                  if (eligible()) void play(id, isCurrent);
-                },
-                cooldownMs - (now - last) + 10,
-              ),
-            );
-          }
+          // Rapid chat bursts share one chime, even across tabs.
+          remember();
           return;
         }
         // Claim the shared cooldown under the lock before any playback. If
         // storage is unavailable, fail silent rather than duplicate tab audio.
         localStorage.setItem(key(account), String(now));
-        localStorage.setItem(`${key(account)}.kind`, kind);
         remember();
         if (!eligible()) return;
         stopLocal();
-        const audio = new Audio(
-          kind === "chat"
-            ? "/sounds/admin-chat-chime.wav"
-            : "/sounds/admin-cancellation-chime.wav",
-        );
-        audio.volume = kind === "chat" ? 0.25 : 0.4;
+        const audio = new Audio("/sounds/admin-chat-chime.wav");
+        audio.volume = 0.25;
         audio.loop = false;
         playing = { id, audio };
         const stop = () => {
@@ -158,8 +133,6 @@ export function createAdminChatSound(
   function dispose() {
     if (disposed) return;
     disposed = true;
-    pending.forEach(clearTimeout);
-    pending.clear();
     if (requestedMessageId) cancel(requestedMessageId);
     window.removeEventListener("storage", storageChanged);
     stopLocal();

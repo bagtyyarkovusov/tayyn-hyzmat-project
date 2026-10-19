@@ -1,6 +1,6 @@
 const { Router } = require('express');
 const validate = require('../../utils/validate');
-const { privateAcceptSchema, orderIdSchema, acceptSchema, cancelSchema, listAvailableQuerySchema } = require('./orders.validation');
+const { privateAcceptSchema, orderIdSchema, acceptSchema, listAvailableQuerySchema } = require('./orders.validation');
 const controller = require('./orders.controller');
 
 // Mounted in routes/index.js behind: authenticate, requireRole('DRIVER'), requireApprovedDriver
@@ -17,8 +17,8 @@ router.post('/accept', validate({ body: acceptSchema }), controller.accept);
 router.post('/waiting', validate({ body: orderIdSchema }), controller.waiting);
 router.post('/start', validate({ body: orderIdSchema }), controller.start); // "Начать поездку": WAITING -> STARTED
 router.post('/complete', validate({ body: orderIdSchema }), controller.complete);
-// Not in the original spec either - CANCELLED is a listed status and a
-// no-show at pickup is the realistic way to reach it.
-router.post('/cancel', validate({ body: cancelSchema }), controller.cancel);
+// Retained for old clients only. Cancellation is dispatcher-only, so every
+// request is refused before body validation or any order lookup.
+router.post('/cancel', controller.cancel);
 
 module.exports = router;

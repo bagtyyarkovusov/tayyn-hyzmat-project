@@ -4,6 +4,7 @@ import {
   type Browser,
   type Locator,
   type Page,
+  type Request,
 } from "@playwright/test";
 import { createRequire } from "node:module";
 const require = createRequire(
@@ -59,9 +60,12 @@ async function fixture(
     await installFixtureSession(context, "driver", driverSession, deviceId);
     const page = await context.newPage();
     await page.goto("/driverDashboard");
-    await page
-      .getByRole("button", { name: "Включить GPS", exact: true })
-      .click();
+    // GPS starts automatically; wait until the passive status shows a fix
+    // so the server has a fresh location before the shift opens.
+    await expect(page.getByRole("status", { name: /^GPS:/ })).toHaveAttribute(
+      "data-state",
+      "ready",
+    );
     await page
       .getByRole("button", { name: "Выйти на линию", exact: true })
       .click();
@@ -106,7 +110,7 @@ async function fixture(
           `${process.env.TEST_API_URL}/admin/orders/${orderId}/cancel`,
           {
             headers: { Authorization: `Bearer ${adminToken}` },
-            data: { reason: "Disposable browser fixture cleanup" },
+            data: { outcome: "WITH_REFUND" },
           },
         );
         expect([200, 409]).toContain(response.status());
@@ -134,6 +138,19 @@ async function fixture(
         data,
       });
     }
+    async function adminGet(path: string) {
+      return context.request.get(`${process.env.TEST_API_URL}${path}`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+    }
+    async function serverBalance() {
+      const response = await context.request.get(
+        `${process.env.TEST_API_URL}/driver/balance`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      expect(response.ok()).toBe(true);
+      return Number((await response.json()).amount);
+    }
     await installFixtureSession(context, "admin", adminSession, "");
     return {
       page,
@@ -141,6 +158,8 @@ async function fixture(
       create,
       post,
       adminPost,
+      adminGet,
+      serverBalance,
       driverId: user.driver.id,
       phone: user.phone as string,
       close,
@@ -245,7 +264,10 @@ for (const viewport of [
   test(`active trip has a direct next step and client call without page scrolling at ${viewport.width}x${viewport.height}`, async ({
     browser,
   }) => {
-    const { page, create, post, close } = await fixture(browser, viewport);
+    const { page, create, post, serverBalance, close } = await fixture(
+      browser,
+      viewport,
+    );
     try {
       const order = await create("Торговый центр, главный вход");
       expect(
@@ -259,39 +281,10 @@ for (const viewport of [
         exact: true,
       });
       await expect(dialog).toBeVisible();
-      await tripDialogTargetsFit(dialog, ["Я на месте", "Отменить заказ"]);
-      await dialog
-        .getByRole("button", { name: "Отменить заказ", exact: true })
-        .click();
-      const confirmation = page.getByRole("dialog", {
-        name: "Отменить текущий заказ?",
-        exact: true,
-      });
-      await expect(confirmation).toBeVisible();
-      await tripDialogTargetsFit(confirmation, [
-        "Продолжить поездку",
-        "Подтвердить отмену",
-      ]);
-      if (viewport.height >= 800) {
-        await page.evaluate(() => {
-          document.documentElement.style.fontSize = "20px";
-        });
-        await tripDialogTargetsFit(confirmation, [
-          "Продолжить поездку",
-          "Подтвердить отмену",
-        ]);
-        await confirmation
-          .getByRole("button", { name: "Продолжить поездку", exact: true })
-          .click();
-        await tripDialogTargetsFit(dialog, ["Я на месте"]);
-        await page.evaluate(() => {
-          document.documentElement.style.fontSize = "";
-        });
-      } else {
-        await confirmation
-          .getByRole("button", { name: "Продолжить поездку", exact: true })
-          .click();
-      }
+      await tripDialogTargetsFit(dialog, ["Я на месте"]);
+      await expect(
+        dialog.getByRole("button", { name: "Отменить заказ", exact: true }),
+      ).toHaveCount(0);
       await dialog.getByRole("button", { name: "Close", exact: true }).click();
       const feed = page.getByRole("region", {
         name: "Текущая поездка",
@@ -346,6 +339,10 @@ for (const viewport of [
         .getByRole("button", { name: "Завершить поездку", exact: true })
         .click();
       await expect(feed).toHaveCount(0);
+      // Server first, then a freshly loaded screen rather than text left
+      // over from acceptance.
+      expect(await serverBalance()).toBe(475);
+      await page.reload();
       await expect(page.getByLabel("Баланс")).toHaveText("475 TMT");
     } finally {
       await close();
@@ -591,105 +588,6 @@ test("incoming offers show a readable price, route, note and reduced-motion dead
   }
 });
 
-test("driver cancellation is before arrival and dispatcher reoffers the same order with a fresh alert", async ({
-  browser,
-}) => {
-  const f = await fixture(browser);
-  const { page, context, create, close } = f;
-  let releaseOld: (() => void) | undefined;
-  try {
-    let oldEventId = "";
-    await page.routeWebSocket("**/socket.io/**", (socket) => {
-      const server = socket.connectToServer();
-      server.onMessage((message) => {
-        const text = String(message);
-        if (
-          oldEventId &&
-          text.includes('"order:taken"') &&
-          text.includes(oldEventId)
-        ) {
-          releaseOld = () => socket.send(message);
-        } else socket.send(message);
-      });
-      socket.onMessage((message) => server.send(message));
-    });
-    await page.reload();
-    await expect(
-      page.getByRole("button", { name: "Уйти с линии", exact: true }),
-    ).toBeVisible();
-    const order = await create("Заказ для повторного предложения");
-    oldEventId = order.notificationEventId;
-    const incoming = page.getByRole("dialog", {
-      name: "Предложение заказа",
-      exact: true,
-    });
-    await incoming
-      .getByRole("button", { name: "Принять заказ", exact: true })
-      .click();
-    const trip = page.getByRole("dialog", {
-      name: "Управление поездкой",
-      exact: true,
-    });
-    await trip
-      .getByRole("button", { name: "Отменить заказ", exact: true })
-      .click();
-    const confirmation = page.getByRole("dialog", {
-      name: "Отменить текущий заказ?",
-      exact: true,
-    });
-    await expect(confirmation.getByRole("textbox")).toHaveCount(0);
-    await confirmation
-      .getByRole("button", { name: "Подтвердить отмену", exact: true })
-      .click();
-    await expect(trip).toHaveCount(0);
-    await expect.poll(() => Boolean(releaseOld)).toBe(true);
-    const adminPage = await context.newPage();
-    await adminPage.goto("/adminOrders?status=cancelled");
-    const banner = adminPage.getByRole("region", {
-      name: "Отмены требуют решения",
-      exact: true,
-    });
-    await expect(
-      banner.getByRole("link", {
-        name: `Заказ #${order.orderNumber}`,
-        exact: true,
-      }),
-    ).toBeVisible();
-    await expect(
-      banner.getByRole("link", {
-        name: "Водитель экрана поездки",
-        exact: true,
-      }),
-    ).toHaveAttribute("href", `/adminDrivers/${f.driverId}`);
-    const row = adminPage
-      .getByRole("article")
-      .filter({ hasText: `#${order.orderNumber}` });
-    await row
-      .getByRole("button", { name: "Предложить снова", exact: true })
-      .click();
-    await expect(row.getByText("Новый", { exact: true })).toBeVisible();
-    await expect(banner).toHaveCount(0);
-    await expect(incoming).toBeVisible();
-    releaseOld!();
-    await page.waitForTimeout(500);
-    await expect(incoming).toBeVisible();
-    await incoming
-      .getByRole("button", { name: "Принять заказ", exact: true })
-      .click();
-    await expect(trip).toBeVisible();
-    await trip.getByRole("button", { name: "Я на месте", exact: true }).click();
-    await expect(
-      trip.getByRole("button", { name: "Отменить заказ", exact: true }),
-    ).toHaveCount(0);
-    expect(
-      (await f.post("/orders/cancel", { orderId: order.id })).status(),
-    ).toBe(409);
-    await adminPage.close();
-  } finally {
-    await close();
-  }
-});
-
 test("native Back closes the top overlay through its normal action then tabs return to Orders", async ({
   browser,
 }) => {
@@ -862,7 +760,7 @@ test("all-drivers sent history merges labeled broadcasts into private conversati
   }
 });
 
-test("dispatcher balance exposes held funds without debiting an acceptance", async ({
+test("dispatcher balance shows the acceptance deduction without a second debit", async ({
   browser,
 }) => {
   const f = await fixture(browser);
@@ -871,33 +769,88 @@ test("dispatcher balance exposes held funds without debiting an acceptance", asy
     const order = await f.create("Проверка удержанной суммы", {
       priceEstimated: 40,
     });
+    async function wallet() {
+      const response = await f.adminGet(
+        `/admin/drivers/${f.driverId}/history?page=1&limit=100`,
+      );
+      expect(response.ok()).toBe(true);
+      const body = await response.json();
+      return {
+        amount: Number(body.balance.amount),
+        ledger: (
+          body.transactions.items as {
+            id: string;
+            orderId: string | null;
+            type: string;
+            amount: string;
+            balanceAfter: string;
+          }[]
+        ).map((entry) => ({
+          id: entry.id,
+          orderId: entry.orderId,
+          type: entry.type,
+          amount: Number(entry.amount),
+          balanceAfter: Number(entry.balanceAfter),
+        })),
+      };
+    }
+    const totals = adminPage
+      .locator("section")
+      .filter({ has: adminPage.getByLabel("Сумма, TMT", { exact: true }) });
+    /** A fresh dispatcher page load, so no earlier on-screen total can pass. */
+    async function openWallet() {
+      const issued = new Set<Request>();
+      const track = (request: Request) => {
+        if (
+          new URL(request.url()).pathname.endsWith(
+            `/admin/drivers/${f.driverId}/history`,
+          )
+        )
+          issued.add(request);
+      };
+      adminPage.on("request", track);
+      const loaded = adminPage.waitForResponse((response) =>
+        issued.has(response.request()),
+      );
+      await adminPage.goto(`/adminDrivers/${f.driverId}`);
+      await loaded.finally(() => adminPage.off("request", track));
+      await adminPage
+        .getByRole("button", { name: "Баланс", exact: true })
+        .click();
+      await expect(totals.getByText("460 TMT", { exact: true })).toBeVisible();
+    }
     expect(
       (
         await f.post("/orders/accept", { orderId: order.id, etaMinutes: 10 })
       ).ok(),
     ).toBe(true);
-    await adminPage.goto(`/adminDrivers/${f.driverId}`);
-    await adminPage
-      .getByRole("button", { name: "Баланс", exact: true })
-      .click();
-    const totals = adminPage
-      .locator("section")
-      .filter({ has: adminPage.getByText("Удержано", { exact: true }) });
-    await expect(totals.getByText("500 TMT", { exact: true })).toBeVisible();
-    await expect(totals.getByText("40 TMT", { exact: true })).toBeVisible();
-    await expect(totals.getByText("460 TMT", { exact: true })).toBeVisible();
-    expect((await f.post("/orders/waiting", { orderId: order.id })).ok()).toBe(
-      true,
+    const afterAcceptance = await wallet();
+    expect(afterAcceptance.amount).toBe(460);
+    expect(await f.serverBalance()).toBe(460);
+    expect(
+      afterAcceptance.ledger.map(({ orderId, type, amount, balanceAfter }) => ({
+        orderId,
+        type,
+        amount,
+        balanceAfter,
+      })),
+    ).toEqual([
+      { orderId: order.id, type: "PAYMENT", amount: -40, balanceAfter: 460 },
+    ]);
+    await openWallet();
+    await expect(totals.getByText("Удержано", { exact: true })).toHaveCount(0);
+    await expect(totals).toContainText(
+      "Полная стоимость списывается при принятии заказа",
     );
-    await expect(totals.getByText("500 TMT", { exact: true })).toBeVisible();
-    expect((await f.post("/orders/start", { orderId: order.id })).ok()).toBe(
-      true,
-    );
-    await expect(totals.getByText("460 TMT", { exact: true })).toHaveCount(2);
-    await expect(totals.getByText("0 TMT", { exact: true })).toBeVisible();
-    expect((await f.post("/orders/complete", { orderId: order.id })).ok()).toBe(
-      true,
-    );
+    for (const action of ["waiting", "start", "complete"]) {
+      expect(
+        (await f.post(`/orders/${action}`, { orderId: order.id })).ok(),
+      ).toBe(true);
+      // Same wallet and the very same ledger rows: no second debit.
+      expect(await wallet()).toEqual(afterAcceptance);
+      expect(await f.serverBalance()).toBe(460);
+      await openWallet();
+    }
   } finally {
     await adminPage.close();
     await f.close();
@@ -1060,58 +1013,6 @@ test("failed private decline through native Back keeps the incoming offer and er
   }
 });
 
-test("a delayed acceptance response cannot dismiss a same-order reoffer", async ({
-  browser,
-}) => {
-  const f = await fixture(browser);
-  let release = () => {};
-  try {
-    let reached!: () => void;
-    const held = new Promise<void>((resolve) => {
-      reached = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await f.page.route("**/orders/accept", async (route) => {
-      const response = await route.fetch();
-      expect(response.ok()).toBe(true);
-      reached();
-      await gate;
-      await route.fulfill({ response });
-    });
-    const first = await f.create("Задержанный ответ принятия");
-    const incoming = f.page.getByRole("dialog", {
-      name: "Предложение заказа",
-      exact: true,
-    });
-    await incoming
-      .getByRole("button", { name: "Принять заказ", exact: true })
-      .click();
-    await held;
-    expect((await f.post("/orders/cancel", { orderId: first.id })).ok()).toBe(
-      true,
-    );
-    const reofferResponse = await f.adminPost(
-      `/admin/orders/${first.id}/reoffer`,
-    );
-    expect(reofferResponse.ok()).toBe(true);
-    const second = await reofferResponse.json();
-    expect(second.notificationEventId).not.toBe(first.notificationEventId);
-    await expect(incoming).toBeVisible();
-    release();
-    await expect(
-      incoming.getByRole("button", { name: "Принять заказ", exact: true }),
-    ).toBeEnabled();
-    await f.page.waitForTimeout(300);
-    expect(await incoming.count()).toBe(1);
-    await expect(incoming.getByRole("timer")).toBeVisible();
-  } finally {
-    release();
-    await f.close();
-  }
-});
-
 async function openDriverTab(page: Page, name: string) {
   await page
     .getByRole("navigation", { name: "Разделы водителя" })
@@ -1203,56 +1104,6 @@ test("Back and X are refused while a public offer acceptance is pending", async 
     await expect(incoming).toHaveCount(0);
   } finally {
     accept.release();
-    await f.close();
-  }
-});
-
-test("the trip cancel confirmation refuses Back and Escape while cancellation is pending", async ({
-  browser,
-}) => {
-  const f = await fixture(browser, { width: 390, height: 844 }, true);
-  const cancel = gate();
-  try {
-    const order = await f.create("Назад во время отмены");
-    expect(
-      (
-        await f.post("/orders/accept", { orderId: order.id, etaMinutes: 10 })
-      ).ok(),
-    ).toBe(true);
-    await f.page.reload();
-    const trip = f.page.getByRole("dialog", {
-      name: "Управление поездкой",
-      exact: true,
-    });
-    await expect(trip).toBeVisible();
-    await f.page.route("**/orders/cancel", async (route) => {
-      // Hold before the server commits, so no socket event ends the dialog.
-      cancel.reached();
-      await cancel.opened;
-      await route.fallback();
-    });
-    await trip
-      .getByRole("button", { name: "Отменить заказ", exact: true })
-      .click();
-    const confirm = f.page.getByRole("dialog", {
-      name: "Отменить текущий заказ?",
-      exact: true,
-    });
-    await confirm
-      .getByRole("button", { name: "Подтвердить отмену", exact: true })
-      .click();
-    await cancel.held;
-    expect(await pressNativeBack(f.page)).toBe("handled");
-    await expect(confirm).toBeVisible();
-    await f.page.keyboard.press("Escape");
-    await expect(confirm).toBeVisible();
-    cancel.release();
-    await expect(confirm).toHaveCount(0);
-    await expect(
-      f.page.getByRole("region", { name: "Текущая поездка", exact: true }),
-    ).toHaveCount(0);
-  } finally {
-    cancel.release();
     await f.close();
   }
 });
@@ -1358,9 +1209,8 @@ test("forced offline is not overwritten by an older refresh still in flight", as
     await profile.held;
     // Losing GPS permission forces the shift offline locally.
     await context.clearPermissions();
-    await page
-      .getByRole("button", { name: "Включить GPS", exact: true })
-      .click();
+    // The passive GPS watcher receives the denial and forces the shift
+    // offline without any enable-GPS control.
     await status.held;
     const goOnline = page.getByRole("button", {
       name: "Выйти на линию",
@@ -1407,6 +1257,7 @@ test("a late acceptance response cannot restore an order cancelled meanwhile", a
     expect(
       (
         await f.adminPost(`/admin/orders/${order.id}/cancel`, {
+          outcome: "WITH_REFUND",
           reason: "Отмена до ответа водителю",
         })
       ).ok(),

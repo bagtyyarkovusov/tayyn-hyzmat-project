@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { Plus } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
@@ -14,7 +14,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/shared/ui/dialog";
-import { adminApi, errorMessage } from "@/shared/api";
+import { adminApi, ApiError, errorMessage, tokens } from "@/shared/api";
 import type { Order, Page } from "./domain";
 import { useResource } from "./useResource";
 import OrderCard from "./components/OrderCard.vue";
@@ -28,7 +28,10 @@ const filter = ref(String(route.query.status || "waiting")),
   page = ref(1),
   create = ref(route.query.create === "1"),
   offer = ref<Order | null>(null),
-  cancel = ref<Order | null>(null),
+  cancel = ref<{
+    order: Order;
+    outcome: "WITH_REFUND" | "WITHOUT_REFUND" | "BEFORE_ACCEPTANCE";
+  } | null>(null),
   resolve = ref<Order | null>(null),
   reason = ref(""),
   pending = ref(false),
@@ -72,8 +75,6 @@ const { data, loading, error, load } = useResource(
     "order:started",
     "order:completed",
     "order:cancelled",
-    "order:reoffered",
-    "order:cancellation-resolved",
   ],
 );
 watch(
@@ -107,21 +108,52 @@ watch(filter, () => {
 watch(page, () => {
   void load();
 });
+let mounted = true;
+onUnmounted(() => {
+  mounted = false;
+});
+const cancellationTitle = computed(() =>
+  cancel.value?.outcome === "WITH_REFUND"
+    ? "Отменить с возвратом"
+    : cancel.value?.outcome === "WITHOUT_REFUND"
+      ? "Отменить без возврата"
+      : "Отменить заказ",
+);
+function openCancel(
+  order: Order,
+  outcome: NonNullable<typeof cancel.value>["outcome"],
+) {
+  if (pending.value) return;
+  cancel.value = { order, outcome };
+  actionError.value = "";
+}
 async function confirmCancel() {
-  if (!cancel.value) return;
+  if (!cancel.value || pending.value) return;
+  const intent = cancel.value;
+  const generation = tokens.generation("admin");
+  const current = () => mounted && generation === tokens.generation("admin");
   pending.value = true;
   actionError.value = "";
   try {
-    await adminApi.post(`/admin/orders/${cancel.value.id}/cancel`, {
-      reason: reason.value,
-    });
+    await adminApi.post(
+      `/admin/orders/${intent.order.id}/cancel`,
+      intent.outcome === "BEFORE_ACCEPTANCE" ? {} : { outcome: intent.outcome },
+    );
+    if (!current()) return;
     cancel.value = null;
-    reason.value = "";
     await load();
   } catch (e) {
-    actionError.value = errorMessage(e);
+    if (!current()) return;
+    if (e instanceof ApiError && e.status === 409) {
+      cancel.value = null;
+      actionError.value =
+        "Заказ уже изменён. Список обновлён: проверьте сохранённый статус и исход отмены.";
+      await load();
+    } else {
+      actionError.value = errorMessage(e);
+    }
   } finally {
-    pending.value = false;
+    if (current()) pending.value = false;
   }
 }
 async function confirmResolve() {
@@ -140,30 +172,6 @@ async function confirmResolve() {
     await load();
   } catch (e) {
     actionError.value = errorMessage(e);
-  } finally {
-    pending.value = false;
-  }
-}
-async function resolveCancellation(
-  order: Order,
-  action: "reoffer" | "final-cancel",
-) {
-  if (pending.value) return;
-  pending.value = true;
-  actionError.value = "";
-  try {
-    const { data: resolved } = await adminApi.post<Order>(
-      `/admin/orders/${order.id}/${action}`,
-      {},
-    );
-    if (resolved.status === "NEW") {
-      filter.value = "waiting";
-      page.value = 1;
-    }
-    await load();
-  } catch (error) {
-    actionError.value = errorMessage(error);
-    await load();
   } finally {
     pending.value = false;
   }
@@ -230,16 +238,10 @@ async function resolveCancellation(
         v-for="order in data.items"
         :key="order.id"
         :order="order"
-        :pending="pending"
-        @reoffer="resolveCancellation($event, 'reoffer')"
-        @final-cancel="resolveCancellation($event, 'final-cancel')"
         cancellable
         offerable
         @offer="offer = $event"
-        @cancel="
-          cancel = $event;
-          actionError = '';
-        "
+        @cancel="openCancel"
         @resolve="
           resolve = $event;
           reason = '';
@@ -298,13 +300,22 @@ async function resolveCancellation(
       @update:open="!$event && !pending && (cancel = null)"
       ><DialogContent
         ><DialogHeader
-          ><DialogTitle>Отменить заказ?</DialogTitle
-          ><DialogDescription
-            >Заказ #{{ cancel?.orderNumber }} будет закрыт. Водитель получит
-            уведомление.</DialogDescription
-          ></DialogHeader
-        ><Label for="cancel-reason">Причина, необязательно</Label
-        ><Textarea id="cancel-reason" v-model="reason" maxlength="500" />
+          ><DialogTitle>{{ cancellationTitle }}?</DialogTitle
+          ><DialogDescription>
+            Заказ #{{ cancel?.order.orderNumber }} будет закрыт.
+            <template v-if="cancel?.outcome === 'WITH_REFUND'"
+              >Списание при принятии вернётся на баланс водителя. Водитель
+              освободится сразу.</template
+            >
+            <template v-else-if="cancel?.outcome === 'WITHOUT_REFUND'"
+              >Списание при принятии останется без возврата. Водитель
+              освободится сразу.</template
+            >
+            <template v-else
+              >Заказ ещё не принят. Списания и возврата нет.</template
+            >
+          </DialogDescription></DialogHeader
+        >
         <p v-if="actionError" role="alert" class="text-sm text-destructive">
           {{ actionError }}
         </p>
@@ -315,7 +326,7 @@ async function resolveCancellation(
             variant="destructive"
             :disabled="pending"
             @click="confirmCancel"
-            >{{ pending ? "Отменяем…" : "Отменить заказ" }}</Button
+            >{{ pending ? "Отменяем…" : cancellationTitle }}</Button
           ></DialogFooter
         ></DialogContent
       ></Dialog

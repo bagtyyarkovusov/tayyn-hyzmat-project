@@ -22,7 +22,7 @@ test.afterEach(async () => {
 });
 if (process.env.DISPOSABLE_BROWSER_TEST !== "true")
   throw new Error("Use disposable browser runner");
-test("dispatcher completes a started drive with a reason and cannot select refund cancellation", async ({
+test("dispatcher can manually complete a started drive or choose either cancellation outcome", async ({
   page,
 }) => {
   await isolateBrowserClient(page.context());
@@ -126,6 +126,12 @@ test("dispatcher completes a started drive with a reason and cannot select refun
   await expect(
     card.getByRole("button", { name: "Отменить заказ", exact: true }),
   ).toHaveCount(0);
+  await expect(
+    card.getByRole("button", { name: "Отменить с возвратом", exact: true }),
+  ).toBeVisible();
+  await expect(
+    card.getByRole("button", { name: "Отменить без возврата", exact: true }),
+  ).toBeVisible();
   await card
     .getByRole("button", { name: "Завершить вручную", exact: true })
     .click();

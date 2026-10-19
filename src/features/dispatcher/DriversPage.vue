@@ -21,7 +21,11 @@ import PageState from "./components/PageState.vue";
 const router = useRouter(),
   create = ref(false);
 const route = useRoute(),
-  filter = ref(String(route.query.status || "")),
+  filter = ref(
+    ["APPROVED", "BLOCKED"].includes(String(route.query.status))
+      ? String(route.query.status)
+      : "",
+  ),
   search = ref(""),
   page = ref(1);
 const { data, loading, error, load } = useResource(
@@ -81,8 +85,7 @@ const visible = computed(() =>
         class="native-select"
       >
         <option value="">Все статусы</option>
-        <option value="PENDING">На проверке</option>
-        <option value="APPROVED">Одобрены</option>
+        <option value="APPROVED">Активны</option>
         <option value="BLOCKED">Заблокированы</option>
       </select>
     </div>
@@ -138,17 +141,7 @@ const visible = computed(() =>
           >
             {{ driver.isOnline ? "На линии" : "Не в сети" }} ·
             <span class="block"
-              >Всего
-              {{
-                money(driver.user.balance?.total ?? driver.user.balance?.amount)
-              }}</span
-            ><span class="mt-1 block text-xs text-muted-foreground"
-              >Удержано {{ money(driver.user.balance?.held) }} · Доступно
-              {{
-                money(
-                  driver.user.balance?.available ?? driver.user.balance?.amount,
-                )
-              }}</span
+              >Баланс {{ money(driver.user.balance?.amount) }}</span
             >
           </p>
         </div>
