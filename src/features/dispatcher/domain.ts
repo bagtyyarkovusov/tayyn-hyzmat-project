@@ -103,6 +103,9 @@ export interface History {
 }
 export interface Activity {
   id: string;
+  orderId?: string;
+  orderNumber?: number;
+  driverId?: string;
   type: string;
   summary: string;
   actor?: string;

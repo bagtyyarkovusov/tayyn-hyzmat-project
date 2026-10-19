@@ -12,6 +12,14 @@ const { data, loading, error, load } = useResource(
       })
     ).data.items,
   [],
+  [
+    "order:cancelled",
+    "order:reoffered",
+    "order:cancellation-resolved",
+    "driver:updated",
+    "district:stats",
+    "balance:updated",
+  ],
 );
 </script>
 <template>
@@ -19,9 +27,6 @@ const { data, loading, error, load } = useResource(
     <header class="flex items-end justify-between gap-4">
       <div>
         <h1 class="page-heading">Активность</h1>
-        <p class="mt-2 text-muted-foreground">
-          Последние 100 событий диспетчерской.
-        </p>
       </div>
       <Button variant="outline" :disabled="loading" @click="load"
         >Обновить</Button
@@ -31,8 +36,7 @@ const { data, loading, error, load } = useResource(
       :loading="loading"
       :error="error"
       :empty="!data.length"
-      empty-title="Поездок пока нет"
-      empty-description="Завершённые поездки появятся здесь."
+      empty-title="Событий пока нет"
       @retry="load"
     />
     <ol
@@ -45,11 +49,21 @@ const { data, loading, error, load } = useResource(
         class="flex gap-4 border-b p-5 last:border-0"
       >
         <span class="mt-2 size-2 shrink-0 rounded-full bg-primary" />
-        <div>
+        <div class="min-w-0 break-words">
           <p class="text-sm font-medium">{{ event.summary }}</p>
           <p class="mt-1 text-xs text-muted-foreground">
-            {{ event.actor || "Система" }} · {{ date(event.at) }}
+            {{ event.actor || "Система" }} ·
+            <time :datetime="event.at">{{ date(event.at) }}</time>
           </p>
+          <RouterLink
+            v-if="event.orderNumber"
+            :to="{
+              path: '/adminOrders',
+              query: { orderNumber: event.orderNumber },
+            }"
+            class="mt-1 inline-flex min-h-11 items-center text-sm font-semibold underline underline-offset-4"
+            >Заказ #{{ event.orderNumber }}</RouterLink
+          >
         </div>
       </li>
     </ol>

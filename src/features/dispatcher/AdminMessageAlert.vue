@@ -17,7 +17,8 @@ type IncomingMessage = {
 
 const route = useRoute();
 const router = useRouter();
-const message = ref<IncomingMessage | null>(null);
+const messages = ref(new Map<string, IncomingMessage>());
+const dismissed = new Map<string, string>();
 const unreadDrivers = ref(new Set<string>());
 const seen = new Set<string>();
 const visible = ref(!document.hidden);
@@ -34,6 +35,20 @@ const activeDriverId = computed(() => {
   return match?.[1] || null;
 });
 const unreadCount = computed(() => unreadDrivers.value.size);
+const previews = computed(() =>
+  [...messages.value.values()]
+    .filter(
+      (message) =>
+        visibleDriverId.value !== message.driverId &&
+        dismissed.get(message.driverId) !== message.id,
+    )
+    .sort(
+      (a, b) =>
+        String(b.sentAt ?? "").localeCompare(String(a.sentAt ?? "")) ||
+        b.id.localeCompare(a.id),
+    ),
+);
+const visiblePreviews = computed(() => previews.value.slice(0, 3));
 const visibleDriverId = computed(() =>
   visible.value ? activeDriverId.value : null,
 );
@@ -56,11 +71,13 @@ function showIncoming(payload: unknown) {
   if (visibleDriverId.value === payload.driverId) return;
   activityRevision++;
   unreadDrivers.value = new Set(unreadDrivers.value).add(payload.driverId);
-  if (message.value) sound.cancel(message.value.id);
-  message.value = payload;
+  const previous = messages.value.get(payload.driverId);
+  if (previous) sound.cancel(previous.id);
+  messages.value = new Map(messages.value).set(payload.driverId, payload);
   void sound.play(
     payload.id,
-    () => mounted && message.value?.id === payload.id,
+    () =>
+      mounted && previews.value.some((message) => message.id === payload.id),
   );
   void refreshUnread();
 }
@@ -69,29 +86,44 @@ async function refreshUnread() {
   const request = ++unreadRequest;
   const revision = activityRevision;
   try {
-    const response = await adminApi.get<{ driverIds: string[] }>(
-      "/admin/messages/unread",
-    );
+    const response = await adminApi.get<{
+      driverIds: string[];
+      items: {
+        driverId: string;
+        driverName: string;
+        message: { id: string; body: string; sentAt: string };
+      }[];
+    }>("/admin/messages/unread");
     if (!mounted || request !== unreadRequest || revision !== activityRevision)
       return;
     unreadDrivers.value = new Set(response.data.driverIds);
-    if (message.value && !unreadDrivers.value.has(message.value.driverId))
-      dismiss();
+    const next = new Map<string, IncomingMessage>();
+    for (const item of response.data.items) {
+      next.set(item.driverId, {
+        ...item.message,
+        driverId: item.driverId,
+        senderName: item.driverName,
+      });
+    }
+    for (const previous of messages.value.values()) {
+      if (next.get(previous.driverId)?.id !== previous.id)
+        sound.cancel(previous.id);
+    }
+    messages.value = next;
   } catch {
     // Keep live alerts if the canonical unread snapshot is unavailable.
   }
 }
 
-function dismiss() {
-  if (message.value) sound.cancel(message.value.id);
-  message.value = null;
+function dismiss(message: IncomingMessage) {
+  sound.cancel(message.id);
+  dismissed.set(message.driverId, message.id);
+  messages.value = new Map(messages.value);
 }
 
-function openConversation() {
-  const driverId = message.value?.driverId;
-  if (!driverId) return;
-  dismiss();
-  void router.push(`/adminChat/${driverId}`);
+function openConversation(message: IncomingMessage) {
+  dismiss(message);
+  void router.push(`/adminChat/${message.driverId}`);
 }
 
 function visibilityChanged() {
@@ -118,7 +150,8 @@ onMounted(() => {
 });
 
 watch(visibleDriverId, (driverId) => {
-  if (driverId && message.value?.driverId === driverId) dismiss();
+  const message = driverId ? messages.value.get(driverId) : undefined;
+  if (message) dismiss(message);
 });
 
 onUnmounted(() => {
@@ -133,48 +166,55 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div
-    v-if="message && visibleDriverId !== message.driverId"
-    class="fixed inset-x-3 top-3 z-[70] mx-auto w-[calc(100%-1.5rem)] max-w-md"
+  <section
+    v-if="visiblePreviews.length"
+    role="alert"
+    aria-label="Новое сообщение"
+    class="flex max-h-[20dvh] min-w-0 flex-col border-t p-3 md:max-h-[40dvh] first:border-t-0 md:border-t-0 md:border-l md:first:border-l-0"
   >
-    <div
-      role="alert"
-      aria-label="Новое сообщение"
-      class="rounded-xl border border-primary/30 bg-card/95 p-3 shadow-xl backdrop-blur supports-[backdrop-filter]:bg-card/80"
+    <header
+      class="flex shrink-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-1"
     >
-      <button
-        type="button"
-        class="flex w-full items-start gap-3 text-left"
-        @click="openConversation"
+      <h2 class="text-sm font-semibold">Новое сообщение</h2>
+      <span class="text-xs text-muted-foreground"
+        >{{ unreadCount }} непрочитанных диалогов</span
       >
-        <span
-          class="mt-1 flex size-2.5 shrink-0 rounded-full bg-primary ring-4 ring-primary/15"
-          aria-hidden="true"
-        />
-        <span class="min-w-0 flex-1">
-          <span class="flex items-center justify-between gap-2">
-            <span class="text-sm font-semibold">Новое сообщение</span>
-            <span class="text-xs text-muted-foreground"
-              >{{ unreadCount }} непрочитанных диалогов</span
-            >
-          </span>
-          <span class="mt-1 block truncate text-sm font-medium">
-            {{ message.senderName || "Водитель" }}
-          </span>
-          <span class="mt-0.5 block truncate text-sm text-muted-foreground">
-            {{ message.body }}
-          </span>
-        </span>
-      </button>
-      <Button
-        variant="ghost"
-        size="icon"
-        class="absolute right-1.5 top-1.5 size-7"
-        aria-label="Закрыть уведомление"
-        @click="dismiss"
+    </header>
+    <ul class="mt-1 min-h-0 divide-y overflow-y-auto overscroll-contain">
+      <li
+        v-for="message in visiblePreviews"
+        :key="message.driverId"
+        class="flex items-start gap-1"
       >
-        <X class="size-4" />
-      </Button>
-    </div>
-  </div>
+        <button
+          type="button"
+          class="min-h-12 min-w-0 flex-1 rounded-md px-1 py-2 text-left hover:bg-secondary focus-visible:outline-2 focus-visible:outline-primary"
+          @click="openConversation(message)"
+        >
+          <span class="block break-words text-sm font-semibold">{{
+            message.senderName || "Водитель"
+          }}</span>
+          <span
+            class="mt-0.5 line-clamp-2 break-words text-sm text-muted-foreground"
+            >{{ message.body }}</span
+          >
+        </button>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="size-11 shrink-0"
+          aria-label="Закрыть уведомление"
+          :title="`Закрыть уведомление: ${message.senderName || 'Водитель'}`"
+          @click="dismiss(message)"
+          ><X class="size-4"
+        /></Button>
+      </li>
+    </ul>
+    <RouterLink
+      v-if="unreadCount > 3"
+      to="/adminChat"
+      class="inline-flex min-h-11 shrink-0 items-center px-1 text-sm font-semibold underline underline-offset-4"
+      >Все сообщения · {{ unreadCount }}</RouterLink
+    >
+  </section>
 </template>
