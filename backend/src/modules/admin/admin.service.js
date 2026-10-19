@@ -603,14 +603,17 @@ async function getActivity({ limit = 50 } = {}) {
     APPROVED: ['driver_activated', 'Активирован']
   };
   const events = [
-    ...driverEvents.map(event => ({
-      id: `driver-${event.id}`,
-      type: event.action === 'CREATED' ? 'driver_created' : event.action === 'BLOCKED' ? 'driver_blocked' : 'driver_unblocked',
-      at: event.createdAt,
-      actor: event.actorName,
-      driverId: event.driverId,
-      summary: `${event.action === 'CREATED' ? 'Создан' : event.action === 'BLOCKED' ? 'Заблокирован' : 'Разблокирован'} водитель ${event.driverName}${event.reason ? ` (${event.reason})` : ''}`
-    })),
+    ...driverEvents.map(event => {
+      const [type, verb] = driverActions[event.action] ?? ['driver_unblocked', 'Разблокирован'];
+      return {
+        id: `driver-${event.id}`,
+        type,
+        at: event.createdAt,
+        actor: event.actorName,
+        driverId: event.driverId,
+        summary: `${verb} водитель ${event.driverName}${event.reason ? ` (${event.reason})` : ''}`
+      };
+    }),
     ...transactions.map(t => ({
       id: `tx-${t.id}`,
       type: 'balance_adjusted',
