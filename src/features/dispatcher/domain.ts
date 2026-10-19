@@ -118,8 +118,9 @@ const statusLabels: Record<string, string> = {
   STARTED: "В пути",
   COMPLETED: "Завершён",
   CANCELLED: "Отменён",
-  PENDING: "На проверке",
-  APPROVED: "Одобрен",
+  // Legacy pre-1.21 rows only; signup no longer creates this status.
+  PENDING: "Доступ ограничен",
+  APPROVED: "Активен",
   BLOCKED: "Заблокирован",
 };
 export const statusLabel = (status: string): string =>

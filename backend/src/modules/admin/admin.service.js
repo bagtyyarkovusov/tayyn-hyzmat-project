@@ -64,12 +64,12 @@ async function createDriver({ phone, fullName, password }, actorId) {
     const user = await tx.user.create({
       data: {
         role: 'DRIVER', phone, fullName, passwordHash,
-        driver: { create: { status: 'APPROVED', approvedAt: new Date(), approvedBy: actorId } },
+        driver: { create: { status: 'APPROVED' } },
         balance: { create: { amount: 0, currency: 'TMT' } }
       },
       select: { driver: { select: { id: true } } }
     });
-    await recordDriverActivity(tx, user.driver.id, actorId, 'APPROVED');
+    await recordDriverActivity(tx, user.driver.id, actorId, 'CREATED');
     return user;
   });
   const driver = await getDriver(user.driver.id);
@@ -209,30 +209,6 @@ async function recordDriverActivity(tx, driverId, actorId, action, reason = null
   await tx.driverActivityAudit.create({ data: { driverId, actorId, actorName: actor.fullName, driverName: driver.user.fullName, action, reason } });
 }
 
-async function approveDriver(driverId, actorId) {
-  const driver = await findDriverOrThrow(driverId);
-  const updated = await prisma.$transaction(async tx => {
-    await tx.$queryRaw`SELECT id FROM users WHERE id = ${driver.userId} FOR UPDATE`;
-    const previous = await tx.driver.findUniqueOrThrow({ where: { id: driverId } });
-    const user = await tx.user.findUniqueOrThrow({ where: { id: driver.userId } });
-    if (user.status === 'BLOCKED') throw ApiError.conflict('Аккаунт удалён. Восстановление недоступно', { code: 'ACCOUNT_DELETED' });
-    const result = await tx.driver.update({
-      where: { id: driverId },
-      data: { status: 'APPROVED', approvedAt: new Date(), approvedBy: actorId, blockedAt: null, blockReason: null }
-    });
-    if (previous.status !== 'APPROVED') await recordDriverActivity(tx, driverId, actorId, 'APPROVED');
-    return result;
-  });
-
-  safeEmit((io) => {
-    io.to(rooms.driver(driverId)).emit('driver:approved', { driverId });
-  });
-
-  await districtsService.broadcastDistrictStats();
-  logger.info({ driverId, actorId }, 'Driver approved');
-  return updated;
-}
-
 async function blockDriver(driverId, actorId, reason) {
   const driver = await findDriverOrThrow(driverId);
 
@@ -277,14 +253,14 @@ async function unblockDriver(driverId, actorId) {
     if (user.status === 'BLOCKED') throw ApiError.conflict('Аккаунт удалён. Восстановление недоступно', { code: 'ACCOUNT_DELETED' });
     const result = await tx.driver.update({
       where: { id: driverId },
-      data: { status: 'APPROVED', blockedAt: null, blockReason: null, blockedBy: null, approvedAt: new Date(), approvedBy: actorId }
+      data: { status: 'APPROVED', blockedAt: null, blockReason: null, blockedBy: null }
     });
-    if (previous.status !== 'APPROVED') await recordDriverActivity(tx, driverId, actorId, 'APPROVED');
+    if (previous.status !== 'APPROVED') await recordDriverActivity(tx, driverId, actorId, 'UNBLOCKED');
     return result;
   });
 
   safeEmit((io) => {
-    io.to(rooms.driver(driverId)).emit('driver:approved', { driverId });
+    io.to(rooms.driver(driverId)).emit('driver:unblocked', { driverId });
   });
   await districtsService.broadcastDistrictStats();
   logger.info({ driverId, actorId }, 'Driver unblocked');
@@ -619,14 +595,21 @@ async function getActivity({ limit = 50 } = {}) {
     FINAL_CANCEL: ['order_final_cancelled', 'Окончательно отменён заказ'],
     FORCE_COMPLETED: ['order_force_completed', 'Завершён диспетчером заказ']
   };
+  // APPROVED rows predate self-service accounts and covered both creation and unblocking.
+  const driverActions = {
+    CREATED: ['driver_created', 'Создан'],
+    UNBLOCKED: ['driver_unblocked', 'Разблокирован'],
+    BLOCKED: ['driver_blocked', 'Заблокирован'],
+    APPROVED: ['driver_activated', 'Активирован']
+  };
   const events = [
     ...driverEvents.map(event => ({
       id: `driver-${event.id}`,
-      type: event.action === 'APPROVED' ? 'driver_approved' : 'driver_blocked',
+      type: event.action === 'CREATED' ? 'driver_created' : event.action === 'BLOCKED' ? 'driver_blocked' : 'driver_unblocked',
       at: event.createdAt,
       actor: event.actorName,
       driverId: event.driverId,
-      summary: `${event.action === 'APPROVED' ? 'Одобрен' : 'Заблокирован'} водитель ${event.driverName}${event.reason ? ` (${event.reason})` : ''}`
+      summary: `${event.action === 'CREATED' ? 'Создан' : event.action === 'BLOCKED' ? 'Заблокирован' : 'Разблокирован'} водитель ${event.driverName}${event.reason ? ` (${event.reason})` : ''}`
     })),
     ...transactions.map(t => ({
       id: `tx-${t.id}`,
@@ -688,7 +671,6 @@ module.exports = {
   createDriver,
   listDrivers,
   getDriver,
-  approveDriver,
   blockDriver,
   unblockDriver,
   signOutEverywhere,

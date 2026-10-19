@@ -1206,7 +1206,7 @@ test("four cancelled orders and conversations stay bounded without covering the 
   }
 });
 
-test("Activity refreshes approvals and blocks from another dispatcher screen", async ({
+test("Activity refreshes unblocks and blocks from another dispatcher screen", async ({
   browser,
 }) => {
   const f = await fixture(browser);
@@ -1224,12 +1224,12 @@ test("Activity refreshes approvals and blocks from another dispatcher screen", a
         .getByRole("listitem")
         .filter({ hasText: "Заблокирован водитель Водитель оповещений" }),
     ).toHaveCount(1);
-    await f.adminPost(`/admin/drivers/${f.driverId}/approve`);
+    await f.adminPost(`/admin/drivers/${f.driverId}/unblock`);
     await expect(
       f.adminPage
         .locator("main")
         .getByRole("listitem")
-        .filter({ hasText: "Одобрен водитель Водитель оповещений" }),
+        .filter({ hasText: "Разблокирован водитель Водитель оповещений" }),
     ).toHaveCount(1);
   } finally {
     await f.close();

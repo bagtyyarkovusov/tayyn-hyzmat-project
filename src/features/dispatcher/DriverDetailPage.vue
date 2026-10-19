@@ -348,11 +348,6 @@ function adjust(withdraw: boolean) {
               class="mt-5 flex flex-wrap gap-2"
             >
               <Button
-                v-if="driver.status === 'PENDING'"
-                :disabled="pending"
-                @click="act('approve')"
-                >Одобрить</Button
-              ><Button
                 v-if="driver.status === 'BLOCKED'"
                 :disabled="pending"
                 @click="act('unblock')"

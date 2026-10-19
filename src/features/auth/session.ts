@@ -102,31 +102,70 @@ function createSession(role: Role) {
     if (!payload) disconnect();
   });
   const client = role === "admin" ? adminApi : driverApi;
-  async function login(phone: string, password: string) {
+  let authAttempt = 0;
+  async function authenticate(
+    path: string,
+    credentials: { phone: string; password: string; fullName?: string },
+    signal?: AbortSignal,
+  ) {
+    const attempt = ++authAttempt;
+    const generation = tokens.generation(role);
     let deviceId = localStorage.getItem("openride.driver.deviceId");
     if (!deviceId) {
       deviceId = crypto.randomUUID();
       localStorage.setItem("openride.driver.deviceId", deviceId);
     }
-    const payload = await publicRequest<SessionPayload>("/auth/login", {
-      phone,
-      password,
-      ...(role === "driver"
-        ? { deviceId, deviceLabel: navigator.userAgent.slice(0, 200) }
-        : {}),
-    });
-    if (payload.user.role !== (role === "admin" ? "ADMIN" : "DRIVER")) {
-      await publicRequest("/auth/logout", {
+    const payload = await publicRequest<SessionPayload>(
+      path,
+      {
+        ...credentials,
+        ...(role === "driver"
+          ? { deviceId, deviceLabel: navigator.userAgent.slice(0, 200) }
+          : {}),
+      },
+      signal,
+    );
+    const stale =
+      signal?.aborted ||
+      attempt !== authAttempt ||
+      generation !== tokens.generation(role);
+    if (
+      stale ||
+      payload.user.role !== (role === "admin" ? "ADMIN" : "DRIVER")
+    ) {
+      void publicRequest("/auth/logout", {
         refreshToken: payload.refreshToken,
       }).catch(() => {});
-      throw new Error("Этот аккаунт предназначен для другой роли.");
+      throw new Error(
+        stale
+          ? "Вход отменён. Войдите снова."
+          : "Этот аккаунт предназначен для другой роли.",
+      );
     }
     tokens.set(role, payload);
     state.message = "";
     state.verificationError = "";
     connect();
   }
+  function login(phone: string, password: string, signal?: AbortSignal) {
+    return authenticate("/auth/login", { phone, password }, signal);
+  }
+  function register(
+    fullName: string,
+    phone: string,
+    password: string,
+    signal?: AbortSignal,
+  ) {
+    if (role !== "driver")
+      throw new Error("Регистрация доступна только водителям.");
+    return authenticate(
+      "/auth/register",
+      { fullName, phone, password },
+      signal,
+    );
+  }
   async function logout() {
+    authAttempt++;
     const refreshToken = tokens.refresh(role);
     if (role === "driver") {
       void stopNativeShift();
@@ -184,6 +223,7 @@ function createSession(role: Role) {
   return {
     state,
     login,
+    register,
     logout,
     restore,
     on(event: string, listener: (...args: any[]) => void) {
