@@ -40,6 +40,11 @@ const originalFetch = globalThis.fetch;
 let providerRequests: URL[] = [];
 let providerHeaders: Headers[] = [];
 let requiredReferer: string | null = null;
+let providerComponents = [
+  { kind: "street", name: "Synthetic street" },
+  { kind: "house", name: "12" },
+];
+let providerMetadata: { kind?: string; precision?: string } = {};
 let providerStatus = 200;
 let providerHangs = false;
 let providerPause = false;
@@ -76,12 +81,8 @@ globalThis.fetch = async (input, init) => {
             GeoObject: {
               metaDataProperty: {
                 GeocoderMetaData: {
-                  Address: {
-                    Components: [
-                      { kind: "street", name: "Synthetic street" },
-                      { kind: "house", name: "12" },
-                    ],
-                  },
+                  ...providerMetadata,
+                  Address: { Components: providerComponents },
                 },
               },
             },
@@ -95,6 +96,11 @@ beforeEach(async () => {
   providerRequests = [];
   providerHeaders = [];
   requiredReferer = null;
+  providerComponents = [
+    { kind: "street", name: "Synthetic street" },
+    { kind: "house", name: "12" },
+  ];
+  providerMetadata = {};
   providerStatus = 200;
   providerHangs = false;
   providerPause = false;
@@ -206,6 +212,115 @@ test("a foreground address request uses the private HTTP credential and server G
     !JSON.stringify(result.data).includes("synthetic-private-geocoder"),
   );
 });
+
+// Yandex Components are ordered from broadest to most specific.
+const ashgabatComponents = [
+  { kind: "country", name: "Туркменистан" },
+  { kind: "locality", name: "Ашхабад" },
+];
+for (const example of [
+  {
+    name: "a precise house in Parahat without a street",
+    position: { lat: 37.8968707, lng: 58.4064495 },
+    components: [
+      ...ashgabatComponents,
+      { kind: "district", name: "микрорайон Парахат 7/3" },
+      { kind: "house", name: "14" },
+    ],
+    metadata: { kind: "house", precision: "exact" },
+    address: "микрорайон Парахат 7/3, 14",
+  },
+  {
+    name: "the Kyoshi quarter without a street or house",
+    position: { lat: 37.9601, lng: 58.3261 },
+    components: [
+      ...ashgabatComponents,
+      { kind: "district", name: "квартал Кёши" },
+    ],
+    address: "квартал Кёши",
+  },
+  {
+    name: "a street and house ahead of its district",
+    components: [
+      ...ashgabatComponents,
+      { kind: "district", name: "квартал Кёши" },
+      { kind: "street", name: "Дворцовая улица" },
+      { kind: "house", name: "12" },
+    ],
+    address: "Дворцовая улица, 12",
+  },
+  {
+    name: "a street without a house ahead of its district",
+    components: [
+      ...ashgabatComponents,
+      { kind: "district", name: "квартал Кёши" },
+      { kind: "street", name: "Дворцовая улица" },
+    ],
+    address: "Дворцовая улица",
+  },
+  {
+    name: "the most specific district with a house",
+    components: [
+      ...ashgabatComponents,
+      { kind: "district", name: "Багтыярлыкский этрап" },
+      { kind: "district", name: "квартал Кёши" },
+      { kind: "house", name: "14" },
+    ],
+    address: "квартал Кёши, 14",
+  },
+  {
+    name: "the most specific district without a house",
+    components: [
+      ...ashgabatComponents,
+      { kind: "district", name: "Багтыярлыкский этрап" },
+      { kind: "district", name: "квартал Кёши" },
+    ],
+    address: "квартал Кёши",
+  },
+  {
+    name: "no label for locality-only components",
+    components: ashgabatComponents,
+    address: null,
+  },
+  {
+    name: "no label for country and province alone",
+    components: [
+      { kind: "country", name: "Туркменистан" },
+      { kind: "province", name: "Ахалский велаят" },
+    ],
+    address: null,
+  },
+  {
+    name: "no label for a house without a street or district",
+    components: [...ashgabatComponents, { kind: "house", name: "14" }],
+    address: null,
+  },
+]) {
+  test(`driver address returns ${example.name}`, async () => {
+    process.env.YANDEX_GEOCODER_API_KEY = "synthetic-private-geocoder";
+    process.env.YANDEX_GEOCODER_DAILY_LIMIT = "1000";
+    process.env.YANDEX_GEOCODER_QUOTA_TIMEZONE = "UTC";
+    providerComponents = example.components;
+    providerMetadata = example.metadata || {};
+    const position = example.position || { lat: 37.96, lng: 58.32 };
+    await prisma.driver.update({
+      where: { id: driverId },
+      data: {
+        lastLat: position.lat,
+        lastLng: position.lng,
+        lastLocationAt: new Date(),
+      },
+    });
+    const result = await request(
+      `/geo/drivers/${driverId}/address`,
+      driverToken,
+    );
+    assert.equal(result.status, 200);
+    assert.equal(result.data.address, example.address);
+    assert.deepEqual(result.data.position, position);
+    assert.equal(result.data.reason, "resolved");
+  });
+}
 
 test("off-shift and non-owning phones never fetch an address for shared driver GPS", async () => {
   process.env.YANDEX_GEOCODER_API_KEY = "synthetic-private-geocoder";
