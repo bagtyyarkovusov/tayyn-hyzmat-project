@@ -723,7 +723,10 @@ test('self-signup creates a usable device session offline with zero TMT and no r
   assert.equal('shiftDeviceId' in profile.data, false);
   assert.equal((await request('/driver/balance', token)).data.amount, '0');
   assert.equal((await request('/orders/current', token)).data, null);
-  assert.equal((await request('/driver/status', token, { isOnline: true })).status, 409);
+  const online = await request('/driver/status', token, { isOnline: true });
+  assert.equal(online.status, 403);
+  assert.equal(online.data.details.code, 'GPS_REQUIRED');
+  assert.equal((await request('/driver/profile', token)).data.isOnline, false);
   const client = await socket(token);
   client.disconnect();
   const restored = await request('/auth/refresh', '', { refreshToken: registered.data.refreshToken });

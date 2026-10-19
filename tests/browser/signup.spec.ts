@@ -53,7 +53,7 @@ for (const logout of [false, true]) {
       await expect(page).toHaveURL(/driverLogin/);
     }
     release();
-    await page.unroute("**/api/auth/register", { behavior: "wait" });
+    await page.unrouteAll({ behavior: "wait" });
     expect(
       await page.evaluate(() =>
         localStorage.getItem("openride.driver.accessToken"),

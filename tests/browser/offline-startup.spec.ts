@@ -231,7 +231,7 @@ test("foreground return automatically retries a failed verification", async ({
   ).toBeVisible();
 });
 
-test("signed out offline registration stays a local form without submitting an application", async ({
+test("signed out offline signup stays a local form without creating an account", async ({
   page,
 }) => {
   await page.addInitScript(() =>
@@ -245,11 +245,11 @@ test("signed out offline registration stays a local form without submitting an a
     if (request.url().endsWith("/api/auth/register")) registrations++;
   });
   await page.goto("/driverRegister");
-  await page.getByLabel("Имя и фамилия").fill("Offline Applicant");
+  await page.getByLabel("Имя и фамилия").fill("Offline Driver");
   await page.getByLabel("Номер телефона").fill("60000999");
   await page.getByLabel("Пароль", { exact: true }).fill("123456");
   await page
-    .getByRole("button", { name: "Отправить заявку", exact: true })
+    .getByRole("button", { name: "Создать аккаунт", exact: true })
     .click();
   await expect(page.getByRole("alert")).toHaveText(
     "Нет интернета. Подключитесь и попробуйте снова.",

@@ -605,11 +605,11 @@ async function getActivity({ limit = 50 } = {}) {
   const events = [
     ...driverEvents.map(event => ({
       id: `driver-${event.id}`,
-      type: driverActions[event.action][0],
+      type: event.action === 'CREATED' ? 'driver_created' : event.action === 'BLOCKED' ? 'driver_blocked' : 'driver_unblocked',
       at: event.createdAt,
       actor: event.actorName,
       driverId: event.driverId,
-      summary: `${driverActions[event.action][1]} водитель ${event.driverName}${event.reason ? ` (${event.reason})` : ''}`
+      summary: `${event.action === 'CREATED' ? 'Создан' : event.action === 'BLOCKED' ? 'Заблокирован' : 'Разблокирован'} водитель ${event.driverName}${event.reason ? ` (${event.reason})` : ''}`
     })),
     ...transactions.map(t => ({
       id: `tx-${t.id}`,
