@@ -1713,7 +1713,6 @@ test("a delayed one-shot timeout cannot erase a newer successful GPS watch fix",
   page,
 }) => {
   await page.addInitScript(() => {
-    let requests = 0;
     let staleFailure: PositionErrorCallback | null | undefined;
     const position = () =>
       ({
@@ -1732,11 +1731,11 @@ test("a delayed one-shot timeout cannot erase a newer successful GPS watch fix",
       configurable: true,
       value: {
         getCurrentPosition(
-          success: PositionCallback,
+          _success: PositionCallback,
           failure?: PositionErrorCallback,
         ) {
-          if (++requests === 1) setTimeout(() => success(position()), 0);
-          else staleFailure = failure;
+          // Keep the acquisition pending while the watch supplies a newer fix.
+          staleFailure = failure;
         },
         watchPosition(success: PositionCallback) {
           setTimeout(() => success(position()), 0);
@@ -1745,17 +1744,23 @@ test("a delayed one-shot timeout cannot erase a newer successful GPS watch fix",
         clearWatch() {},
       },
     });
-    window.addEventListener("late-one-shot-timeout", () =>
-      staleFailure?.({
+    const boundary = window as unknown as {
+      fireLateOneShotTimeout: () => boolean;
+    };
+    boundary.fireLateOneShotTimeout = () => {
+      if (!staleFailure) throw new Error("No pending one-shot GPS request");
+      staleFailure({
         code: 3,
         message: "Old request timeout",
         PERMISSION_DENIED: 1,
         POSITION_UNAVAILABLE: 2,
         TIMEOUT: 3,
-      }),
-    );
+      });
+      return true;
+    };
   });
-  await login(page, "driver");
+  // Other workflows deliberately leave the shared driver on shift.
+  await createAddressDriver(page, "+99360000345");
   await expect(page.getByRole("status", { name: /^GPS:/ })).toHaveAttribute(
     "data-state",
     "ready",
@@ -1771,15 +1776,22 @@ test("a delayed one-shot timeout cannot erase a newer successful GPS watch fix",
     exact: true,
   });
   await expect(online).toBeVisible();
-  await page.waitForTimeout(100);
-  await page.evaluate(() =>
-    window.dispatchEvent(new Event("late-one-shot-timeout")),
-  );
+  expect(
+    await page.evaluate(() =>
+      (
+        window as unknown as { fireLateOneShotTimeout: () => boolean }
+      ).fireLateOneShotTimeout(),
+    ),
+  ).toBe(true);
   await expect(online).toBeEnabled();
   await expect(page.getByRole("status", { name: /^GPS:/ })).toHaveAttribute(
     "data-state",
     "ready",
   );
+  await online.click();
+  await expect(
+    page.getByRole("button", { name: "Выйти на линию", exact: true }),
+  ).toBeEnabled();
 });
 
 // Timeout/backoff and cancelled callbacks are covered through the public
