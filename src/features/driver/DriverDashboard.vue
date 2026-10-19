@@ -25,7 +25,12 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/shared/ui/dialog";
-import { useDriver, canControlShift, connectionRecovering } from "./useDriver";
+import {
+  useDriver,
+  canControlShift,
+  connectionRecovering,
+  OFFER_BACK_GUARD_MS,
+} from "./useDriver";
 import { useDriverAddress } from "./useDriverAddress";
 import { nativeAndroid } from "./nativeShift";
 import { money } from "./model";
@@ -35,14 +40,7 @@ import DriverFeedback from "./components/DriverFeedback.vue";
 import ActiveTripFeed from "./components/ActiveTripFeed.vue";
 import ActiveTrip from "./components/ActiveTrip.vue";
 import AvailableOrders from "./components/AvailableOrders.vue";
-const {
-  state,
-  setOnline,
-  enableGps,
-  session,
-  dismissIncoming,
-  declinePrivateOffer,
-} = useDriver();
+const { state, setOnline, enableGps, session, closeIncoming } = useDriver();
 const {
   address,
   pending: addressPending,
@@ -67,10 +65,6 @@ const {
         : session.state.connected,
   },
 );
-function closeIncoming() {
-  if (state.incoming?.privateOfferExpiresAt) void declinePrivateOffer();
-  else dismissIncoming();
-}
 const selected = ref<string | null>(null);
 const visibility = useDocumentVisibility();
 const networkOnline = useOnline();
@@ -518,7 +512,10 @@ watch(
         </p>
       </DialogContent></Dialog
     >
-    <Dialog :open="incomingOpen" @update:open="!$event && closeIncoming()"
+    <Dialog
+      :open="incomingOpen"
+      :back-guard-ms="OFFER_BACK_GUARD_MS"
+      @update:open="!$event && closeIncoming()"
       ><DialogContent class="max-h-[85dvh] overflow-y-auto"
         ><DialogHeader class="sr-only"
           ><DialogTitle>Предложение заказа</DialogTitle

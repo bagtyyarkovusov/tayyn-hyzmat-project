@@ -45,9 +45,14 @@ watch(
     // Background refreshes can clear and repeat the same failure. Only a new
     // message or an explicit driver retry should create another notification.
     if (seenMessages.has(key)) return;
+    // Driver state outlives this component. Consume each occurrence once so a
+    // remounted tab does not repeat it; a retry is a new attempt and shows.
     if (
-      !error &&
-      !consumeDriverNotice(eventId || `notice:${attempt}:${notice}`)
+      !consumeDriverNotice(
+        error
+          ? `error:${attempt}:${error}`
+          : eventId || `notice:${attempt}:${notice}`,
+      )
     )
       return;
     seenMessages.add(key);

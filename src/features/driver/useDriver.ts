@@ -1,4 +1,4 @@
-import { onMounted, onUnmounted, reactive, readonly, watch } from "vue";
+import { onMounted, onUnmounted, reactive, readonly, ref, watch } from "vue";
 import { driverApi, errorMessage, apiBase, tokens } from "@/shared/api";
 import { driverSession } from "@/features/auth/session";
 import { closeOrderAlerts, notifyOrder, reconcileOrderAlerts } from "./alerts";
@@ -38,6 +38,13 @@ const state = reactive({
   clock: Date.now(),
 });
 export const driverState = readonly(state);
+/** The unsent dispatcher-chat draft. It survives tab switches within one
+ * driver session and is cleared with the session, never shared. */
+export const chatDraft = ref("");
+/** Android Back is not applied to an offer during its first second on screen.
+ * A press that lands then, typically the second press of a minimize, was aimed
+ * at the screen beneath. The shell answers it as a root press instead. */
+export const OFFER_BACK_GUARD_MS = 1000;
 const consumedNotices = new Set<string>();
 export function consumeDriverNotice(eventId: string) {
   if (!eventId || consumedNotices.has(eventId)) return false;
@@ -72,6 +79,18 @@ let offerVersion = 0;
 // A close event can overtake creation while its delivery awaits room sync.
 // Keep only a short session-local memory, longer than the public popup window.
 const closedPublicOffers = new Map<string, number>();
+// order:cancelled can overtake a successful accept response. Remember the
+// latest cancellation per order so that response cannot restore the trip.
+const orderCancellations = new Map<string, number>();
+let cancellationSequence = 0;
+function recordCancellation(payload: unknown) {
+  const orderId = (payload as { id?: unknown } | null)?.id;
+  if (typeof orderId !== "string") return;
+  orderCancellations.delete(orderId);
+  orderCancellations.set(orderId, ++cancellationSequence);
+  if (orderCancellations.size > 100)
+    orderCancellations.delete(orderCancellations.keys().next().value as string);
+}
 function persistClosedOffers() {
   try {
     sessionStorage.setItem(
@@ -184,6 +203,9 @@ async function forceOffline(message: string, preserveLocalGps = false) {
   lastLocationSent = 0;
   hideAvailableOrders();
   if (!canControlShift() || !state.profile?.isOnline || offlinePending) return;
+  // A refresh started before this local decision read the old shift state.
+  refreshVersion++;
+  state.loading = false;
   state.profile.isOnline = false;
   offlinePending = true;
   const generation = sessionGeneration;
@@ -395,6 +417,13 @@ async function recoverOffers() {
       state.error = errorMessage(error);
   }
 }
+/** Driver-initiated close by X or Back. A pending accept or decline owns the
+ * offer until it settles, so the close is refused and the dialog stays. */
+function closeIncoming() {
+  if (state.busy || !state.incoming) return;
+  if (state.incoming.privateOfferExpiresAt) void declinePrivateOffer();
+  else dismissIncoming();
+}
 async function declinePrivateOffer() {
   if (!requireShiftControl()) return;
   const orderId = state.incoming?.id;
@@ -419,6 +448,8 @@ watch(
   () => {
     sessionGeneration++;
     closedPublicOffers.clear();
+    orderCancellations.clear();
+    chatDraft.value = "";
     restoreClosedOffers();
     closeOrderAlerts();
     gpsEpoch++;
@@ -543,6 +574,7 @@ async function accept(orderId: string, etaMinutes: number) {
     state.incoming?.id === orderId
       ? state.incoming.privateOfferExpiresAt
       : undefined;
+  const cancellationBefore = orderCancellations.get(orderId);
   await act(async () => {
     const { data } = await driverApi.post<Order>(
       privateOfferExpiresAt ? "/orders/private-offer/accept" : "/orders/accept",
@@ -557,6 +589,7 @@ async function accept(orderId: string, etaMinutes: number) {
     // only its original alert; the current-order read resolves newer state.
     dismissIncoming(data.notificationEventId);
     if (
+      orderCancellations.get(orderId) === cancellationBefore &&
       !state.incoming &&
       (!state.active ||
         (state.active.id === data.id &&
@@ -1130,7 +1163,10 @@ function start() {
     "order:cancelled",
   ])
     on(event, (payload) => {
-      if (event === "order:cancelled") invalidateOffer(payload);
+      if (event === "order:cancelled") {
+        recordCancellation(payload);
+        invalidateOffer(payload);
+      }
       void refresh();
     });
   const visibility = () => {
@@ -1174,6 +1210,7 @@ export function useDriver(options: { localGps?: boolean } = {}) {
     setOnline,
     enableGps,
     dismissIncoming,
+    closeIncoming,
     declinePrivateOffer,
     session: driverSession,
   };

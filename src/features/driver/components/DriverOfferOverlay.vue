@@ -6,17 +6,14 @@ import {
   DialogTitle,
 } from "@/shared/ui/dialog";
 import IncomingOrder from "./IncomingOrder.vue";
-import { useDriver } from "../useDriver";
-const { state, declinePrivateOffer, dismissIncoming } = useDriver();
-function close() {
-  if (state.incoming?.privateOfferExpiresAt) void declinePrivateOffer();
-  else dismissIncoming();
-}
+import { OFFER_BACK_GUARD_MS, useDriver } from "../useDriver";
+const { state, closeIncoming } = useDriver();
 </script>
 <template>
   <Dialog
     :open="!!state.incoming && !state.active"
-    @update:open="!$event && close()"
+    :back-guard-ms="OFFER_BACK_GUARD_MS"
+    @update:open="!$event && closeIncoming()"
   >
     <DialogContent
       ><DialogHeader class="sr-only"

@@ -26,7 +26,8 @@ export function resetNativeBack() {
   if (nativeAndroid) void ui.resetBack().catch(() => {});
 }
 /** Install once in the shell. The shell closes its topmost overlay or navigates
- * one level before returning handled. Only Orders root returns root. */
+ * one level before returning handled. Orders root returns root, as does a
+ * press during a new offer's Back guard (the offer stays open). */
 export async function installNativeUi(
   handleBack: () => BackResult | Promise<BackResult>,
 ) {
