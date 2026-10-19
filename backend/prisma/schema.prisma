@@ -335,6 +335,9 @@ model Order {
   completedAt  DateTime? @map("completed_at")
   cancelledAt  DateTime? @map("cancelled_at")
   cancelReason String?   @map("cancel_reason")
+  cancellationOutcome String? @map("cancellation_outcome")
+  cancelledBy String? @map("cancelled_by")
+  cancellationRefundAmount Decimal? @map("cancellation_refund_amount") @db.Decimal(10, 2)
 
   offerAttemptId String @default(uuid()) @map("offer_attempt_id")
   offerAttemptKind String @default("order") @map("offer_attempt_kind")
@@ -351,8 +354,8 @@ model Order {
   @@map("orders")
 }
 
-// One immutable accepted quote per offer attempt. Holds are durable state,
-// never ledger debits. Driver/order/wallet locks serialize all transitions.
+// One immutable accepted quote per offer attempt. New assignments are debited
+// at acceptance; legacy HELD rows remain readable for safe transition.
 model OrderAssignment {
   id String @id @default(uuid())
   orderId String @map("order_id")
@@ -367,6 +370,7 @@ model OrderAssignment {
   releasedAt DateTime? @map("released_at")
   endedAt DateTime? @map("ended_at")
   endAction String? @map("end_action")
+  transactions Transaction[]
 
   @@unique([orderId, offerAttemptId])
   @@index([driverId, fundingState])
@@ -433,6 +437,8 @@ model Transaction {
   balance      Balance            @relation(fields: [balanceId], references: [id], onDelete: Cascade)
   orderId      String?            @map("order_id")
   order        Order?             @relation(fields: [orderId], references: [id])
+  assignmentId String? @map("assignment_id")
+  assignment OrderAssignment? @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
   type         TransactionType
   amount       Decimal            @db.Decimal(12, 2) // signed: positive = credit, negative = debit
   heldAfter Decimal? @map("held_after") @db.Decimal(12, 2)
@@ -444,6 +450,7 @@ model Transaction {
   createdBy    String?            @map("created_by") // admin id, if manually adjusted
   createdAt    DateTime           @default(now()) @map("created_at")
 
+  @@unique([assignmentId, type])
   @@unique([createdBy, operationId])
   @@index([balanceId])
   @@index([orderId])

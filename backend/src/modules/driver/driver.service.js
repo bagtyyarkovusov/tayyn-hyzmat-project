@@ -9,6 +9,7 @@ const ApiError = require('../../utils/ApiError');
 const districtsService = require('../districts/districts.service');
 const { syncDriverDistrictRoom } = require('../../sockets/roomSync');
 const { assertFreshGps } = require('./gps-eligibility');
+const { withCancellationOutcome } = require('../orders/order-payload');
 
 async function getProfile(driverId, deviceId) {
   const driver = await prisma.driver.findUnique({
@@ -218,7 +219,7 @@ async function getHistory(driver, { page, limit }) {
   ]);
 
   // History never exposes customer contact; the call action belongs to active trips.
-  const safeOrders = orders.map(({ clientPhone: _clientPhone, ...order }) => order);
+  const safeOrders = orders.map(({ clientPhone: _clientPhone, ...order }) => withCancellationOutcome(order));
   return {
     transactions: { items: transactions, total: transactionsTotal, page, limit },
     orders: { items: safeOrders, total: ordersTotal, page, limit }
