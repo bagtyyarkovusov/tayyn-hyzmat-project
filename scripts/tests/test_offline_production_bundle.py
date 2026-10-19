@@ -53,6 +53,9 @@ elif args[0]!='tag': sys.exit(2)
         self.assertEqual(manifest["images"]["api"]["ref"], "tayyn-offline/api:test-release")
         self.assertFalse(manifest["packageDependencyClosureVerified"])
         self.assertTrue((self.output / "images.tar").is_file())
+        for relative in ("scripts/production/reset-release-1.21.py", "deploy/production/rollout-1.21-reset-policy.json",
+                         "docs/production-reset-1.21.md"):
+            self.assertEqual((self.output / relative).read_bytes(), (ROOT / relative).read_bytes())
         self.assertFalse((self.output / ".env").exists())
         self.assertFalse((self.output / ".local").exists())
         monitor = self.output.with_name(self.output.name + "-monitor")

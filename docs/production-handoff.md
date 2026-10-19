@@ -8,6 +8,10 @@ The first production release is installed on the main VPS from the verified clea
 
 The bootstrap began with one approved admin and the nine versioned saved regions. Current authenticated overview evidence reports two drivers, one active order and four completed trips; these records were not created by this handoff session. Do not seed synthetic drivers, orders, chats, balances, or Railway records into production.
 
+## Release 1.21 reset preparation
+
+The separate [guarded 1.21 reset](production-reset-1.21.md) supports explicit installed and final migration stages, exactly one existing admin, nine saved regions, and deletion of every operational table including driver activity audits. Both stage catalogs and the final migration checksum (`d314749`, `4972e792…`) are pinned from real Prisma deployments on disposable PostgreSQL 17. The normal path is migration first, then the final-stage reset. The frozen 1.20 tool is unchanged. Preparation and synthetic tmpfs tests do not establish live backup/restore or production execution. Follow the new migration-before-reset maintenance sequence and its exceptional owner-restored ambiguity gate; no production access, reset or deployment was performed for this implementation.
+
 ## Target topology
 
 Use two Ubuntu 24.04 LTS amd64 VDS instances:
