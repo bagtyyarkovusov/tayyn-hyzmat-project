@@ -30,6 +30,8 @@ public class DriverShiftPlugin extends Plugin {
   private long locationGeneration;
   private String locationRequestKey;
   private final Handler timer = new Handler(Looper.getMainLooper());
+  // Separate from timer: finishLocation clears every timer callback.
+  private final Handler startRetry = new Handler(Looper.getMainLooper());
   private PluginCall locationCall;
 
   private JSObject nativeStatus() {
@@ -212,16 +214,29 @@ public class DriverShiftPlugin extends Plugin {
       call.reject("Разрешите GPS телефона.");
       return;
     }
-    if (ShiftService.status(getContext()).optBoolean("running")) {
-      call.reject("Смена уже запущена.");
-      return;
-    }
     Intent intent =
         new Intent(getContext(), ShiftService.class)
             .putExtra("apiBase", endpoint.replaceAll("/+$", ""))
             .putExtra("token", token)
             .putExtra("userId", call.getString("userId", ""))
             .putExtra("leaseDurationMs", call.getLong("leaseDurationMs", 60000L));
+    startWhenIdle(call, intent, SystemClock.elapsedRealtime() + 3000);
+  }
+
+  /** A quick Offline→Online waits for the closing service instance to be destroyed. */
+  private void startWhenIdle(PluginCall call, Intent intent, long deadline) {
+    switch (ShiftStartGate.request(
+        ShiftService.status(getContext()).optBoolean("running"),
+        ShiftService.stopping(),
+        SystemClock.elapsedRealtime() < deadline)) {
+      case WAIT:
+        startRetry.postDelayed(() -> startWhenIdle(call, intent, deadline), 50);
+        return;
+      case REJECT:
+        call.reject("Смена уже запущена.");
+        return;
+      default:
+    }
     try {
       ContextCompat.startForegroundService(getContext(), intent);
       call.resolve();

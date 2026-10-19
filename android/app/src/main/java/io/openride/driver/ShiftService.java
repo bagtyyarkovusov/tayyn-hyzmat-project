@@ -154,6 +154,12 @@ public final class ShiftService extends Service {
         && SystemClock.elapsedRealtime() < service.leaseDeadline;
   }
 
+  /** A shift is shutting down; this instance is about to be destroyed. */
+  static boolean stopping() {
+    ShiftService service = instance;
+    return service != null && service.closing;
+  }
+
   public static void end(Context context) {
     end(context, null);
   }
@@ -175,7 +181,8 @@ public final class ShiftService extends Service {
 
   @Override
   public int onStartCommand(Intent intent, int flags, int startId) {
-    if (intent == null || intent.getStringExtra("token") == null || token != null) {
+    if (!ShiftStartGate.adopts(
+        intent != null && intent.getStringExtra("token") != null, token != null, closing)) {
       if (token == null) stopSelf();
       return START_NOT_STICKY;
     }
