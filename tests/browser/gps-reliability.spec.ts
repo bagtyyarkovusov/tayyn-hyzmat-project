@@ -11,12 +11,15 @@ const require = createRequire(
 );
 const { PrismaClient } = require("@prisma/client");
 const ownedUsers: string[] = [];
+const ownedDistricts: string[] = [];
 test.afterEach(async () => {
   const ids = ownedUsers.splice(0);
-  if (!ids.length) return;
+  const districts = ownedDistricts.splice(0);
+  if (!ids.length && !districts.length) return;
   const prisma = new PrismaClient();
   try {
     await prisma.user.deleteMany({ where: { id: { in: ids } } });
+    await prisma.district.deleteMany({ where: { id: { in: districts } } });
   } finally {
     await prisma.$disconnect();
   }
@@ -216,6 +219,151 @@ test("hidden off-shift acquisition is cancelled and stale callbacks cannot repla
     await context.close();
   }
 });
+
+test("restoring an active browser shift reloads region counts after its first fresh same-region fix", async ({
+  browser,
+}) => {
+  const context = await browser.newContext();
+  const prisma = new PrismaClient();
+  try {
+    const district = await prisma.district.create({
+      data: {
+        name: "GPS recovery counts",
+        centerLat: 12,
+        centerLng: 12,
+        boundary: [
+          [
+            [11.9, 11.9],
+            [11.9, 12.1],
+            [12.1, 12.1],
+            [12.1, 11.9],
+            [11.9, 11.9],
+          ],
+        ],
+      },
+    });
+    ownedDistricts.push(district.id);
+    const session = await fixture(context, "+99360000749");
+    const headers = { Authorization: `Bearer ${session.accessToken}` };
+    const profile = await (
+      await context.request.get(`${process.env.TEST_API_URL}/driver/profile`, {
+        headers,
+      })
+    ).json();
+    const admin = await loginFixture(context.request, "+99360000000");
+    expect(
+      (
+        await context.request.post(
+          `${process.env.TEST_API_URL}/admin/drivers/${profile.id}/balance`,
+          {
+            headers: { Authorization: `Bearer ${admin.accessToken}` },
+            data: {
+              operationId: crypto.randomUUID(),
+              type: "TOPUP",
+              amount: 100,
+            },
+          },
+        )
+      ).ok(),
+    ).toBe(true);
+    expect(
+      (
+        await context.request.post(
+          `${process.env.TEST_API_URL}/driver/status`,
+          {
+            headers,
+            data: {
+              isOnline: true,
+              isAvailable: true,
+              position: { lat: 12, lng: 12, capturedAt: Date.now() },
+            },
+          },
+        )
+      ).ok(),
+    ).toBe(true);
+    const page = await context.newPage();
+    const districtsLoaded = page.waitForResponse("**/api/districts");
+    await page.goto("/driverDashboard");
+    await (await districtsLoaded).finished();
+    await expect
+      .poll(() => page.evaluate(() => (window as any).gpsRequests.length))
+      .toBe(1);
+    const card = page
+      .getByRole("group", { name: "Регионы", exact: true })
+      .getByRole("button", { name: /GPS recovery counts/ });
+    await expect(card.getByText("—:—", { exact: true })).toBeVisible();
+    await page.evaluate(() =>
+      (window as any).gpsRequests[0].success({
+        coords: { latitude: 12, longitude: 12, accuracy: 10 },
+        timestamp: Date.now(),
+      }),
+    );
+    await expect(page.getByRole("status", { name: /^GPS:/ })).toHaveAttribute(
+      "data-state",
+      "ready",
+    );
+    await expect(card.getByText("0:1", { exact: true })).toBeVisible();
+  } finally {
+    await context.close();
+    await prisma.$disconnect();
+  }
+});
+
+for (const [failure, code, phone] of [
+  ["timeout", 3, "+99360000750"],
+  ["unavailable position", 2, "+99360000751"],
+] as const) {
+  test(`restored browser permission shows searching after ${failure} without a fix`, async ({
+    browser,
+  }) => {
+    const context = await browser.newContext();
+    try {
+      await context.grantPermissions([]);
+      await fixture(context, phone);
+      const page = await context.newPage();
+      await page.clock.install();
+      await page.goto("/driverDashboard");
+      await expect
+        .poll(() => page.evaluate(() => (window as any).gpsRequests.length))
+        .toBe(1);
+      expect(
+        await page.evaluate(
+          async () =>
+            (await navigator.permissions.query({ name: "geolocation" })).state,
+        ),
+      ).toBe("denied");
+      await page.evaluate(() =>
+        (window as any).gpsRequests[0].failed({
+          code: 1,
+          PERMISSION_DENIED: 1,
+        }),
+      );
+      const gps = page.getByRole("status", { name: /^GPS:/ });
+      await expect(gps).toHaveAttribute("data-state", "blocked");
+      await context.grantPermissions(["geolocation"]);
+      expect(
+        await page.evaluate(
+          async () =>
+            (await navigator.permissions.query({ name: "geolocation" })).state,
+        ),
+      ).toBe("granted");
+      await page.clock.fastForward(11_000);
+      await expect
+        .poll(() => page.evaluate(() => (window as any).gpsRequests.length))
+        .toBe(2);
+      await expect(gps).toHaveAttribute("data-state", "searching");
+      await page.evaluate(
+        (code) =>
+          (window as any).gpsRequests[1].failed({ code, PERMISSION_DENIED: 1 }),
+        code,
+      );
+      await expect(gps).toHaveAttribute("data-state", "searching");
+      await expect(page.getByLabel("Местоположение GPS")).toHaveCount(0);
+    } finally {
+      await context.close();
+    }
+  });
+}
 
 test("native acquisition retries after timeout without prompting, and Online owns coarse/location-off recovery", async ({
   browser,

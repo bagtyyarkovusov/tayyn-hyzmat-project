@@ -939,11 +939,15 @@ async function reportBrowserFix() {
       { ...state.position, capturedAt: state.locationUpdatedAt },
     );
     if (!current()) return;
+    const recovered = !state.gpsReady;
     lastLocationSent = Date.now();
     locationSyncFailureAt = 0;
     state.gpsReady = true;
     state.locationSyncError = "";
     if (state.profile) state.profile.districtId = data.districtId;
+    // Readiness loss clears card counts. A same-region fix does not cause a
+    // districts:stats broadcast, so reload the snapshot once reporting recovers.
+    if (recovered) await refresh();
   } catch (error) {
     if (current()) markLocationSyncFailure(errorMessage(error));
   } finally {
@@ -1010,6 +1014,13 @@ async function acquireGps(explicit: boolean): Promise<void> {
         state.gpsBlocked = true;
         throw new Error("Браузер не поддерживает геолокацию.");
       }
+      if (state.gpsBlocked && navigator.permissions) {
+        const permission = await navigator.permissions
+          .query({ name: "geolocation" })
+          .catch(() => null);
+        if (!current()) return;
+        if (permission) state.gpsBlocked = permission.state === "denied";
+      }
       if (gpsWatch === undefined)
         gpsWatch = navigator.geolocation.watchPosition(
           (fix) => {
@@ -1022,8 +1033,9 @@ async function acquireGps(explicit: boolean): Promise<void> {
             }
           },
           (error) => {
-            if (!current() || error.code !== error.PERMISSION_DENIED) return;
-            state.gpsBlocked = true;
+            if (!current()) return;
+            state.gpsBlocked = error.code === error.PERMISSION_DENIED;
+            if (!state.gpsBlocked) return;
             state.gpsFixReady = false;
             state.gpsReady = false;
             if (state.profile?.isOnline)
@@ -1038,8 +1050,8 @@ async function acquireGps(explicit: boolean): Promise<void> {
         navigator.geolocation.getCurrentPosition(
           (fix) => resolve(fromBrowserFix(fix)),
           (error) => {
-            if (current() && error.code === error.PERMISSION_DENIED)
-              state.gpsBlocked = true;
+            if (current())
+              state.gpsBlocked = error.code === error.PERMISSION_DENIED;
             reject(
               new Error(
                 error.code === error.PERMISSION_DENIED
