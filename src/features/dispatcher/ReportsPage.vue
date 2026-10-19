@@ -14,8 +14,6 @@ const { data, loading, error, load } = useResource(
   [],
   [
     "order:cancelled",
-    "order:reoffered",
-    "order:cancellation-resolved",
     "driver:updated",
     "districts:stats",
     "balance:updated",

@@ -92,10 +92,9 @@ async function submit() {
         cause.status >= 500 ||
         cause.status === 409);
     // A 409 carries the server's sign-in/dispatcher guidance for an existing phone.
-    error.value =
-      recovery.value
-        ? "Не удалось подтвердить создание аккаунта. Попробуйте войти с этим номером и паролем. Если вход недоступен, обратитесь к диспетчеру."
-        : errorMessage(cause);
+    error.value = recovery.value
+      ? "Не удалось подтвердить создание аккаунта. Попробуйте войти с этим номером и паролем. Если вход недоступен, обратитесь к диспетчеру."
+      : errorMessage(cause);
   } finally {
     if (controller === request) {
       controller = null;
