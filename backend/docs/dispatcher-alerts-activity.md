@@ -49,4 +49,11 @@ Red/green evidence:
 - Repeated approval/block history: baseline returned one approval instead of three; append-only status history then passed. Repeated already-approved action adds no entry. Retried balance operation remains one ledger event.
 - Unread recovery: baseline lacked `total` and previews; now latest-per-driver previews, shared read cursors, outgoing/broadcast exclusion, and driver-role denial pass.
 
-Final command results are reported in the implementation handoff after the full disposable suite completes. All fixtures are synthetic; no shared or production database writes were made.
+Final verification:
+
+- `pnpm --filter openride-backend typecheck`: passed (backend build plus test types).
+- `pnpm --filter openride-backend test:unit`: 7/7 passed.
+- `pnpm --filter openride-backend test:integration`: 181/181 passed, zero skipped, 121.13 seconds, runner exit 0; owned PostgreSQL container removed.
+- `git diff --check -- backend`: passed.
+
+This includes four new integration cases: durable order resolutions, repeated driver transitions and balance replay, unread recovery/read cursors/auth, and populated legacy migration with missing actor. Only formatting changed in `getActivity` after the full runner compiled; behavior stayed identical. All fixtures are synthetic; no shared or production database writes were made.
