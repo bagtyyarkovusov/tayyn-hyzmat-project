@@ -70,7 +70,7 @@ Initialization refuses any existing public tables before applying migrations. It
 
 ## Apply an update
 
-Retain the current and previous bundles and image IDs. Confirm the new migrations are compatible with existing data and determine whether the previous API can read the resulting schema. Transfer a new immutable release, verify its checksums and package needs, then run:
+Retain the current and previous bundles and image IDs; see [Prune old releases](#prune-old-releases). Confirm the new migrations are compatible with existing data and determine whether the previous API can read the resulting schema. Transfer a new immutable release, verify its checksums and package needs, then run:
 
 ```sh
 sudo python3 /opt/tayyn/releases/<new-release>/scripts/production/apply-release.py \
@@ -86,6 +86,17 @@ Image loading finishes before downtime begins. The updater then stops API/web/pr
 The operations configuration must point at the old current release before the update. Its Compose env files include `/etc/tayyn/app.env` and `/opt/tayyn/current/release.env`; it uses only `deploy/production/compose.production.yaml`. Image references in the new release override runtime defaults. Compose never pulls at deployment time. PostgreSQL 17 patch updates are supported; a major upgrade requires a separate tested migration plan.
 
 The updater does not certify Yandex authorization, quota timing, FCM delivery, WebSocket fanout or Android lifecycle behavior. Run the handoff acceptance checks and encrypted restore drill before calling the release ready.
+
+### Prune old releases
+
+After the new release passes its acceptance checks, review a retention plan. Without `--apply`, the command prints a JSON plan and changes nothing:
+
+```sh
+sudo python3 /opt/tayyn/current/scripts/production/prune-releases.py --keep 2
+sudo python3 /opt/tayyn/current/scripts/production/prune-releases.py --keep 2 --apply
+```
+
+`--keep` must be at least 2. The release `/opt/tayyn/current` points to is always kept, along with the `keep - 1` newest previous `vps-N-<sha>` releases and any release newer than current. Each older release is removed together with its `tayyn-offline/{api,web,db,proxy}:<release>` tags. Tags are untagged by name, never by image ID, because db/proxy images often share IDs across releases. A release is refused if any container, running or stopped, uses one of its tags. Transfer directories under `/opt/tayyn/incoming/` older than `--incoming-age-hours` (default 24) are removed. Symlinks, unexpected names and paths outside these roots are listed as `ignored` and never touched. Volumes, databases and backups are never pruned. The command shares the updater lock, so it cannot run during an apply.
 
 ## Recover a failed update
 
