@@ -1,116 +1,49 @@
 # Release 1.21 integration checkpoint
 
-## Candidate ancestry
+Status recorded on 2026-10-19 before final release verification. This checkpoint records completed integration and the remaining release gates. It does not establish a completed rollout.
 
-The local candidate is `feat/release-121-integrated` in the T3 worktree
-`t3-81d1129b`. It starts at fetched `origin/main`
-`edbc57a2021c486f0c2cf077ad54d3c2b3fdfc2e`.
+## Integrated candidate
 
-- GPS `98a00ffd0ab35e363677b03e89679a8f762e45dc` was fast-forwarded.
-- GPS follow-up `aafe02d515ae3ab6f2f2be6fb68f9cef1089dbf2`, including test
-  guard proof `d0690ee`, was merged without conflicts in `62bdb49`. UI ancestry
-  and the narrow cancellation cleanup were preserved.
-- Geocoder `82e769643c57790e81e68e7792bbdda492d68b44` was merged with its
-  original history in `de40087`. The only conflict was additive English and
-  Russian release-note bullets. Both sets were retained.
-- Cancellation UI `eca38991949921187c77f8dd4304ab1928cf3d23` was merged in
-  `cb0793b`. Only release notes conflicted. GPS/geocoder notes, planned signup
-  scope and the cancellation verification gate were retained. The component's
-  uncommitted worktree edits were excluded.
-- Cancellation backend and signup without approval still need
-  verified component commits from the parent coordinator. Backend WIP
-  `5e3d118` is explicitly excluded pending tests. Independent reviews of the
-  pinned UI commit are pending.
+The release source is `feat/release-121-integrated` in worktree `t3-81d1129b`. The handoff source commit is `371d2390b748a4b2169e33b0bd05e20ca30d3daf`; subsequent release edits must be included in final CI and artifact provenance. Current `origin/main` at handoff, `a13f8685b82ba0b09cacf982208e37db7cbf2ed1`, is an ancestor of the candidate.
 
-GPS review of `98a00ff` found two P2 issues: region-count refresh after
-GPS recovery and a red status that remains after browser permission changes
-from denied to granted followed by a timeout. Follow-up `aafe02d` addresses
-both and adds the account-switch standards test. The parent reports 17 targeted
-browser passes, typecheck, formatting and modern build passing, with all three
-new regressions demonstrated failing before the fixes. Independent round-two
-GPS reviews are pending. These are component results, not a full integrated
-release verification.
+All component work is integrated. Do not cherry-pick the component branches again.
 
-The approved signup handoff for issue #150 adds immediate active
-self-registration with an initial session, immediate admin-created accounts
-and removal of approval language, queues, counters and actions across driver
-and dispatcher UI. New
-accounts remain offline, without a region and with zero balance. Existing
-block/unblock, credential security, GPS and shift requirements remain. The
-implementation owner is in T3 worktree `t3-ecce4e60` on
-`feat/driver-signup-no-approval-121`; a stable commit is pending.
+| Component                                                   | Integrated source                                                                            |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Dispatcher-only cancellation and acceptance-time fare debit | `414f8ab`; governed by [the cancellation contract](dispatcher-cancellation-1.21-contract.md) |
+| GPS reliability and passive status icons                    | `2e4391a`, including `98a00ff` and `aafe02d`                                                 |
+| Signup without approval, issue #150                         | `aabcae8`                                                                                    |
+| Guarded fresh production reset                              | `555bceb`; [reset procedure](../production-reset-1.21.md)                                    |
+| Microdistrict address labels and offline startup coverage   | Included through merged PRs #145 and #147                                                    |
+| Final integration fixes and passive-GPS browser fixtures    | `e28195e`, `a296ce0`, `371d239`                                                              |
 
-No component was cherry-picked. This is a preliminary local candidate, not a
-release approval. Reset tooling belongs to a separate task.
-The final release goal includes a fresh production reset that preserves one
-existing admin identity and password and the exact nine region geometries.
-The reset owner handles that work; this checkpoint changes no reset files.
+The full quoted fare is deducted once at acceptance. Start and Complete never deduct again. Drivers have no cancellation action. The dispatcher chooses with or without refund for assigned unfinished trips. Cancellation-review banners, review/reoffer controls and the cancellation chime are removed. Chat and incoming-order alerts remain.
 
-## Narrow driver cleanup
+Self-registration creates an active account and signs the driver in immediately. Dispatcher-created accounts are active without replacing the dispatcher session. New accounts start offline, with no region and zero balance. GPS and connection indicators are passive; Online owns location recovery.
 
-`useDriver.ts` no longer permits `cancel` through `transition`, so the generic
-driver transition request cannot target `/orders/cancel`. The cancellation
-success notice was removed. No other driver behavior changed. In particular,
-`order:cancelled` refresh, cancellation-before-accept-response protection,
-notification-event-specific invalidation and GPS session guards remain intact.
+## Completed verification and limits
 
-UI commit `eca3899` removes the `ActiveTrip.vue` cancellation control and its
-`transition("cancel")` caller. The integration-owned cleanup remains the only
-change to `useDriver.ts` after the pinned GPS commit.
+These results come from the integrated handoff and its recorded logs. They are not CI results for the final release candidate.
 
-Dependencies were installed with the frozen lockfile and Prisma Client was
-generated locally. Frontend typecheck passed after the GPS follow-up merge.
-Backend typecheck passed before the UI merge. Formatting of
-`useDriver.ts` and `git diff --check` passed. Full verification is deferred until
-the component source is cohesive. The parent reports six real-browser UI passes;
-the 13 cancellation matrix cases await the stable backend and a run by the UI
-owner. Component verification reported by the parent is separate from
-verification of this merged tree.
+| Check                                 | Recorded result                                                                              |
+| ------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Typecheck and formatting              | Passed before the final test-only fixture update                                             |
+| Backend unit tests                    | 7/7 passed                                                                                   |
+| Disposable-database integration tests | 213/213 passed, `/tmp/int121b.log`                                                           |
+| Modern and legacy web build           | Passed, `/tmp/build121.log`                                                                  |
+| Dispatcher cancellation browser spec  | 12/12 passed, `/tmp/cancel-spec2.log`                                                        |
+| Driver feed browser spec              | 20/20 passed, `/tmp/feed-spec.log`                                                           |
+| Reset tool local tests                | 6 passed; 11 skipped because the database drill opt-in was absent                            |
+| Reset drill CI                        | PR #152 production-backup-drill job passed, including disposable reset tests                 |
+| Full integrated browser run           | Interrupted after 36 passing tests, exit 143, `/tmp/e2e121-full.log`. No completed full pass |
 
-## Integrated verification after component handoff
+Earlier native component checks passed, but final integrated native build, unit and lint checks are pending. The final integrated app has no completed emulator smoke. Browser and native tests do not establish physical GPS/GMS reception, manufacturer battery behavior or audible notification cancellation on a phone.
 
-First merge each stable component commit once, preserve its ancestry, and
-resolve product/release wording against the canonical cancellation contract.
-Do not change `dispatcher-cancellation-1.21-contract.md` during integration.
+## Remaining release gates
 
-Run typecheck, formatting, unit tests and disposable-database integration tests
-as required by `CONTRIBUTING.md`. Then run focused real browser regressions
-through `pnpm test:e2e` against the real HTTP and Socket.IO server and its new
-disposable PostgreSQL container. Use the component's cancellation browser specs
-alongside GPS reliability, private/public offer and geocoder coverage.
+1. Review the cohesive integrated candidate against main for spec and coding standards. Run the existing five CI jobs on the final candidate, including full browser, backend, native and disposable reset checks. Fix actual failures and merge the reviewed green candidate.
+2. Run one brief emulator smoke against an isolated synthetic backend. Verify immediate signup and reload, automatic GPS and Online, offer details and Back/X, one acceptance debit with no driver cancel, dispatcher cancellation with each refund choice across two orders, and a chat alert. Record hardware and audio limits honestly.
+3. Build and verify the signed production APK, version `1.21`, code `22`, using the production endpoints and signing identity. Record its source commit, checksum, package and signing certificate. Prepare the signed offline VPS bundles and publish verified artifacts with the English and Russian notes.
+4. Follow the reviewed reset and rollout procedure. Keep exactly the existing admin identity/password and all nine saved regions with their exact current geometries. Remove driver, order, balance, chat and other operational data through the guarded tool; retain the system metadata required by that tool. Record production verification in the operations handoff.
 
-The integrated checks must observe:
-
-- Acceptance debits the immutable full quote once. Start and completion never
-  charge again, and rejected/replayed operations leave the ledger unchanged.
-- Drivers have no cancellation control. The compatibility driver cancellation
-  endpoint returns 403. Dispatcher cancellation exposes the correct refund
-  choice for assigned unfinished stages, with exactly one refund or no refund.
-- Unaccepted cancellation shows BEFORE_ACCEPTANCE. Historical NO_DEBIT reports
-  refundAmount 0, and ambiguous historical rows remain UNKNOWN.
-- Dispatcher cancellation clears the driver's active trip, refreshes balance
-  and public region counts through real sockets, and cannot restore a trip from
-  a delayed acceptance response. Replays return 409.
-- Notification invalidation closes only the matching offer event. Delayed
-  responses do not close a newer unrelated offer. Retired review, reoffer and
-  final-cancel controls are absent.
-- GPS icons stay passive, off-shift fixes never upload, and account switching
-  rejects callbacks from the previous session. GPS recovery refreshes region
-  counts and permission recovery does not leave a false red status after a
-  timeout. A microdistrict house label remains visible without a street and
-  geocoder failure preserves coordinates.
-- Self-registration opens the driver dashboard with a usable session that
-  survives reload, with zero balance, no region and no active shift.
-  Admin-created credentials work without replacing the admin session. New
-  accounts appear without approval tasks in the admin dashboard, list and
-  detail views. Duplicate signup and blocking still protect existing accounts.
-
-For visible manual review, start `pnpm preview:isolated`, use only its ignored
-`.local/browser-context.json` URLs and synthetic credentials, and open dispatcher
-and driver browser sessions at a mobile viewport. Check the cancellation dialog,
-active-trip removal, balance/history labels, GPS status and signup/account UI.
-Stop that preview after recording evidence. Browser and native automated
-results do not establish physical-phone GPS/GMS behavior.
-
-Signing, publishing, deployment, production reset and merging to main are not
-part of this checkpoint.
+Signing, publication, production reset and rollout remain pending at this checkpoint. No artifact checksum or deployment success is claimed here.
