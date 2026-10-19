@@ -104,9 +104,11 @@ async function fixture(browser: Browser) {
   }
   async function online() {
     await driverPage.goto("/driverDashboard");
-    await driverPage
-      .getByRole("button", { name: "Включить GPS", exact: true })
-      .click();
+    // GPS starts automatically; wait until the passive status shows a fix
+    // so the server has a fresh location before the shift opens.
+    await expect(
+      driverPage.getByRole("status", { name: /^GPS:/ }),
+    ).toHaveAttribute("data-state", "ready");
     await driverPage
       .getByRole("button", { name: "Выйти на линию", exact: true })
       .click();
