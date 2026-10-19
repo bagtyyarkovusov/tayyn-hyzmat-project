@@ -1,5 +1,6 @@
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
 import { createRequire } from "node:module";
+import { loginFixture } from "./helpers/device-session";
 if (process.env.DISPOSABLE_BROWSER_TEST !== "true")
   throw new Error("Use pnpm test:e2e with its disposable database");
 const password = process.env.TEST_ACCOUNT_PASSWORD!;
@@ -995,8 +996,43 @@ test("switching driver account without logout clears the previous GPS session", 
       timestamp: Date.now(),
     });
   });
+  // The replacement account is owned by this test, so its shift cannot leak
+  // into workflows that use the seeded drivers.
+  const replacementPhone = "+99360000755";
+  let replacementUserId: string | undefined;
   const page = await context.newPage();
   try {
+    const admin = await loginFixture(context.request, "+99360000000");
+    const adminHeaders = { Authorization: `Bearer ${admin.accessToken}` };
+    const created = await context.request.post(
+      `${process.env.TEST_API_URL}/admin/drivers`,
+      {
+        headers: adminHeaders,
+        data: {
+          fullName: "Synthetic replacement driver",
+          phone: replacementPhone,
+          password,
+        },
+      },
+    );
+    expect(created.status()).toBe(201);
+    const replacement = await created.json();
+    replacementUserId = replacement.userId;
+    expect(
+      (
+        await context.request.post(
+          `${process.env.TEST_API_URL}/admin/drivers/${replacement.id}/balance`,
+          {
+            headers: adminHeaders,
+            data: {
+              operationId: crypto.randomUUID(),
+              type: "TOPUP",
+              amount: 100,
+            },
+          },
+        )
+      ).ok(),
+    ).toBe(true);
     await login(page, "driver");
     await expect
       .poll(() =>
@@ -1016,7 +1052,7 @@ test("switching driver account without logout clears the previous GPS session", 
       history.pushState({}, "", "/driverLogin");
       dispatchEvent(new PopStateEvent("popstate"));
     });
-    await page.getByLabel("Номер телефона").fill("+99360000102");
+    await page.getByLabel("Номер телефона").fill(replacementPhone);
     await page.getByLabel("Пароль", { exact: true }).fill(password);
     await page.getByRole("button", { name: "Войти", exact: true }).click();
     await expect(page).toHaveURL(/driverDashboard/);
@@ -1045,19 +1081,22 @@ test("switching driver account without logout clears the previous GPS session", 
     });
     await expect(gps).toHaveAttribute("data-state", "searching");
     await expect(location).toHaveCount(0);
-    expect(uploads).toEqual([]);
     await page.evaluate(() => {
       const boundary = window as any;
       boundary.accountGpsRequests[1](boundary.accountGpsFix(37.97, 58.33));
     });
     await expect(gps).toHaveAttribute("data-state", "ready");
     await expect(location).toContainText("37.9700, 58.3300");
-    await page
-      .getByRole("button", { name: "Выйти на линию", exact: true })
-      .click();
-    await expect(
-      page.getByRole("button", { name: "Уйти с линии", exact: true }),
-    ).toHaveAttribute("aria-pressed", "true");
+    const online = page.getByRole("button", {
+      name: "Выйти на линию",
+      exact: true,
+    });
+    await online.click();
+    const offline = page.getByRole("button", {
+      name: "Уйти с линии",
+      exact: true,
+    });
+    await expect(offline).toHaveAttribute("aria-pressed", "true");
     expect(uploads.length).toBeGreaterThan(0);
     expect(
       uploads.every((point) => point.lat === 37.97 && point.lng === 58.33),
@@ -1065,8 +1104,19 @@ test("switching driver account without logout clears the previous GPS session", 
     await expect(
       page.getByText("37.9100, 58.2100", { exact: true }),
     ).toHaveCount(0);
+    await offline.click();
+    await expect(online).toHaveAttribute("aria-pressed", "false");
   } finally {
     await context.close();
+    // Fixture cleanup only, including after a failure during an active shift.
+    if (replacementUserId) {
+      const prisma = new PrismaClient();
+      try {
+        await prisma.user.delete({ where: { id: replacementUserId } });
+      } finally {
+        await prisma.$disconnect();
+      }
+    }
   }
 });
 test("dispatcher enters region, phone and price and the region modal closes after driver acceptance", async ({

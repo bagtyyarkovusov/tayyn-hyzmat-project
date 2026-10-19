@@ -241,13 +241,6 @@ onUnmounted(() => {
 <template>
   <div class="driver-map-shell flex h-full min-h-0 w-full flex-col">
     <h1 class="sr-only">Карта водителя</h1>
-    <p
-      v-if="state.gpsError"
-      role="alert"
-      class="px-3 py-2 text-sm text-destructive"
-    >
-      {{ state.gpsError }}
-    </p>
     <section
       class="relative min-h-0 flex-1 overflow-hidden bg-muted"
       aria-label="Карта водителя"
@@ -274,11 +267,8 @@ onUnmounted(() => {
       >
         <Car class="size-5" aria-hidden="true" />
       </Button>
-      <p
-        v-if="state.position && !positionFresh"
-        role="status"
-        class="absolute inset-x-16 top-3 z-10 mx-auto w-fit rounded-lg bg-background/95 px-3 py-2 text-center text-xs text-muted-foreground shadow-sm"
-      >
+      <!-- GPS freshness is shown by the grey marker; text is screen-reader only. -->
+      <p v-if="state.position && !positionFresh" role="status" class="sr-only">
         Последнее положение · {{ lastPositionTime }}
       </p>
       <p

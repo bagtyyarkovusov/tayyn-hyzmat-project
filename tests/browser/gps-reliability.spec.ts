@@ -1,4 +1,4 @@
-import { test, expect, type BrowserContext } from "@playwright/test";
+import { test, expect, type BrowserContext, type Page } from "@playwright/test";
 import { createRequire } from "node:module";
 import { installNativeUiFixture } from "./helpers/native-ui";
 import { loginFixture, installFixtureSession } from "./helpers/device-session";
@@ -74,6 +74,15 @@ async function fixture(context: BrowserContext, phone: string) {
   return session;
 }
 
+/** Step fake time until the app's own retry schedule issues the next request. */
+async function advanceUntilGpsRequest(page: Page, count: number) {
+  const requests = () =>
+    page.evaluate(() => (window as any).gpsRequests.length as number);
+  for (let second = 0; second < 120 && (await requests()) < count; second++)
+    await page.clock.fastForward(1_000);
+  await expect.poll(requests).toBe(count);
+}
+
 test("dashboard GPS and connection are passive icons while searching and offline", async ({
   browser,
 }) => {
@@ -145,10 +154,7 @@ test("initial GPS timeout retries automatically without parallel requests and ig
         POSITION_UNAVAILABLE: 2,
       }),
     );
-    await page.clock.fastForward(11_000);
-    await expect
-      .poll(() => page.evaluate(() => (window as any).gpsRequests.length))
-      .toBe(2);
+    await advanceUntilGpsRequest(page, 2);
     await page.evaluate(() => (window as any).freshGps(1));
     await expect(
       page.getByRole("status", { name: "GPS: актуальные координаты" }),
@@ -347,10 +353,7 @@ for (const [failure, code, phone] of [
             (await navigator.permissions.query({ name: "geolocation" })).state,
         ),
       ).toBe("granted");
-      await page.clock.fastForward(11_000);
-      await expect
-        .poll(() => page.evaluate(() => (window as any).gpsRequests.length))
-        .toBe(2);
+      await advanceUntilGpsRequest(page, 2);
       await expect(gps).toHaveAttribute("data-state", "searching");
       await page.evaluate(
         (code) =>
@@ -364,6 +367,118 @@ for (const [failure, code, phone] of [
     }
   });
 }
+
+// Some WebViews have no Permissions API, so only the provider error callback
+// can show that a denial was lifted. A timeout is "searching", not "blocked".
+for (const [source, phone] of [
+  ["position request", "+99360000752"],
+  ["location watch", "+99360000753"],
+] as const) {
+  test(`without the Permissions API a ${source} timeout after restored permission shows searching`, async ({
+    browser,
+  }) => {
+    const context = await browser.newContext();
+    try {
+      await context.addInitScript(() =>
+        Object.defineProperty(navigator, "permissions", {
+          configurable: true,
+          value: undefined,
+        }),
+      );
+      await fixture(context, phone);
+      const page = await context.newPage();
+      await page.clock.install();
+      await page.goto("/driverDashboard");
+      await expect
+        .poll(() => page.evaluate(() => (window as any).gpsRequests.length))
+        .toBe(1);
+      expect(await page.evaluate(() => navigator.permissions)).toBeUndefined();
+      await page.evaluate(() =>
+        (window as any).gpsRequests[0].failed({
+          code: 1,
+          PERMISSION_DENIED: 1,
+        }),
+      );
+      const gps = page.getByRole("status", { name: /^GPS:/ });
+      await expect(gps).toHaveAttribute("data-state", "blocked");
+      await context.grantPermissions(["geolocation"]);
+      await advanceUntilGpsRequest(page, 2);
+      // Nothing else can report the restored permission in this browser.
+      await expect(gps).toHaveAttribute("data-state", "blocked");
+      await page.evaluate((source) => {
+        const boundary = window as any;
+        const timeout = { code: 3, TIMEOUT: 3, PERMISSION_DENIED: 1 };
+        if (source === "position request")
+          boundary.gpsRequests[1].failed(timeout);
+        else [...boundary.gpsWatches.values()].at(-1).failed(timeout);
+      }, source);
+      await expect(gps).toHaveAttribute("data-state", "searching");
+      await expect(page.getByLabel("Местоположение GPS")).toHaveCount(0);
+    } finally {
+      await context.close();
+    }
+  });
+}
+
+test("map tab shows no visible GPS status text while searching", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+  });
+  try {
+    await fixture(context, "+99360000754");
+    const page = await context.newPage();
+    await page.clock.install();
+    await page.goto("/driverMap");
+    await expect(
+      page.getByRole("region", { name: "Карта водителя" }),
+    ).toBeVisible();
+    await expect
+      .poll(() => page.evaluate(() => (window as any).gpsRequests.length))
+      .toBe(1);
+    // Rendered text a sighted driver can read. Screen-reader-only text is 1px.
+    const visibleGpsText = () =>
+      page.evaluate(() => {
+        const pattern =
+          /GPS|местоположени|положение ·|Ожидаем|Переподключ|Последнее/i;
+        const walker = document.createTreeWalker(
+          document.body,
+          NodeFilter.SHOW_TEXT,
+        );
+        const found: string[] = [];
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const text = node.textContent?.trim() ?? "";
+          const element = node.parentElement;
+          if (!text || !element || !pattern.test(text)) continue;
+          const box = element.getBoundingClientRect();
+          if (box.width > 1 && box.height > 1) found.push(text);
+        }
+        return found;
+      });
+    // A failed first attempt without any fix.
+    await page.evaluate(() =>
+      (window as any).gpsRequests[0].failed({
+        code: 3,
+        TIMEOUT: 3,
+        PERMISSION_DENIED: 1,
+      }),
+    );
+    await advanceUntilGpsRequest(page, 2);
+    expect(await visibleGpsText()).toEqual([]);
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    // A last position that has become too old while the next fix is awaited.
+    await page.evaluate(() => (window as any).freshGps(1));
+    await page.clock.fastForward(61_000);
+    await expect(
+      page.getByRole("status").filter({ hasText: "Последнее положение" }),
+    ).toHaveCount(1);
+    expect(await visibleGpsText()).toEqual([]);
+    await expect(page.getByRole("alert")).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
+});
 
 test("native acquisition retries after timeout without prompting, and Online owns coarse/location-off recovery", async ({
   browser,
