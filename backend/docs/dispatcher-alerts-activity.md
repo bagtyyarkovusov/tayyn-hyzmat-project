@@ -29,7 +29,7 @@ There is one latest unread inbound message per approved driver. Rows are newest-
 
 Order cancellation/reoffer/final-cancel records come from durable `OrderResolutionAudit` rows, including the actual driver/admin actor. Reoffering preserves the original cancellation entry, order number and timestamp. Competing/repeated resolution calls returning 409 add no audit. Balance events reuse the existing transaction ledger, including its operation-id replay protection. Chat contents do not enter Activity.
 
-Cancellation notification sound identity remains the existing canonical `notificationEventId` on both socket payloads and recovered orders (equivalent to `order:<order-id>:<offer-attempt-id>` or a private attempt). Reoffering creates a fresh attempt. Recovery should display persisted cancellations silently; only genuinely new live events should play sounds.
+Cancellation notification sound identity remains the existing canonical `notificationEventId` on both socket payloads and recovered orders (equivalent to `order:<order-id>:<offer-attempt-id>` or a private attempt). Reoffering creates a fresh attempt. Recovery should display persisted cancellations silently; only genuinely new live events should play sounds. Resolution socket/API payloads additionally carry `resolvedNotificationEventId` and `resolvedOfferAttemptId`, identifying the exact cancelled attempt being resolved. Clients must match this field before silencing a pending chime; matching only order ID can silence a newer cancellation when delayed reoffer events race.
 
 ## Migration and deployment
 

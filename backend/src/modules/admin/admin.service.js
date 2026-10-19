@@ -283,7 +283,9 @@ async function unblockDriver(driverId, actorId) {
     return result;
   });
 
-  safeEmit((io) => io.to(rooms.driver(driverId)).emit('driver:approved', { driverId }));
+  safeEmit((io) => {
+    io.to(rooms.driver(driverId)).emit('driver:approved', { driverId });
+  });
   await districtsService.broadcastDistrictStats();
   logger.info({ driverId, actorId }, 'Driver unblocked');
   return updated;

@@ -7,7 +7,7 @@ const logger = require('../../config/logger');
 const districtsService = require('../districts/districts.service');
 const { haversineDistanceKm } = require('../../utils/geo');
 const { holdOrderQuote, captureOrderQuote, releaseOrderQuote, acceptedPrice } = require('./order-charge');
-const { orderPayload, invalidation } = require('./order-payload');
+const { orderPayload, invalidation, notificationEventId } = require('./order-payload');
 const { randomUUID } = require('node:crypto');
 const { lockedBalance } = require('../balance/locked-balance');
 const { assertShiftControl, lockDeviceSession } = require('../driver/shift-ownership');
@@ -637,7 +637,14 @@ async function resolveCancellation(orderId, actorId, action) {
     const updated = await tx.order.update({ where: { id: orderId }, data, include: { district: true } });
     await tx.orderResolutionAudit.create({ data: { orderId, actorId, action, offerAttemptId: current.offerAttemptId, nextOfferAttemptId: action === 'REOFFER' ? updated.offerAttemptId : null, driverId: current.driverId, reason: '' } });
     if (action === 'REOFFER') await notifications.enqueueOrder(tx, updated);
-    return orderPayload(updated);
+    return {
+      ...orderPayload(updated),
+      // The updated payload has a fresh attempt after REOFFER. Preserve the
+      // exact cancellation identity being resolved so clients cannot silence
+      // a newer cancellation for the same order when events arrive late.
+      resolvedOfferAttemptId: current.offerAttemptId,
+      resolvedNotificationEventId: notificationEventId(current)
+    };
   });
   notifications.wake();
   if (action === 'REOFFER') await refreshOrderRecipients();

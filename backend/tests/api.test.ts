@@ -3509,3 +3509,18 @@ test('dispatcher Activity migration preserves only known legacy status facts wit
     await tx.$executeRawUnsafe(`DROP SCHEMA "${schema}" CASCADE`);
   });
 });
+
+test('cancellation resolution socket carries the exact resolved attempt identity across a reoffer', async () => {
+  const job = await order(35);
+  assert.equal((await request('/orders/accept', driverToken, { orderId: job.id })).status, 200);
+  const cancelled = (await request('/orders/cancel', driverToken, { orderId: job.id })).data;
+  const admin = await socket(adminToken);
+  const eventPromise = nextSocketEvent<any>(admin, 'order:reoffered');
+  const response = await request(`/admin/orders/${job.id}/reoffer`, adminToken, {});
+  assert.equal(response.status, 200);
+  const event = await eventPromise;
+  assert.equal(response.data.resolvedNotificationEventId, cancelled.notificationEventId);
+  assert.equal(event.resolvedNotificationEventId, cancelled.notificationEventId);
+  assert.equal(response.data.resolvedOfferAttemptId, cancelled.offerAttemptId);
+  assert.notEqual(response.data.notificationEventId, cancelled.notificationEventId);
+});
