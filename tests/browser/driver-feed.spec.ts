@@ -768,7 +768,7 @@ test("dispatcher balance shows the acceptance deduction without a second debit",
     });
     async function wallet() {
       const response = await f.adminGet(
-        `/admin/drivers/${f.driverId}/history?page=1&limit=200`,
+        `/admin/drivers/${f.driverId}/history?page=1&limit=100`,
       );
       expect(response.ok()).toBe(true);
       const body = await response.json();

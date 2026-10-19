@@ -123,8 +123,11 @@ async function fixture(browser: Browser) {
           driverId: driver.id,
           districtId: process.env.TEST_REGION_ID,
           pickupAddress: "Историческая отмена 1.21",
-          cancellationOutcome: outcome,
-          cancellationRefundAmount: 0,
+          pickupLat: 37.96,
+          pickupLng: 58.32,
+          // UNKNOWN is only the API fallback for a row with no recorded outcome.
+          cancellationOutcome: outcome === "UNKNOWN" ? null : outcome,
+          cancellationRefundAmount: outcome === "UNKNOWN" ? null : 0,
           cancelledAt: new Date(),
         },
       });
@@ -345,13 +348,14 @@ for (const stage of ["ACCEPTED", "WAITING", "STARTED"] as const) {
           : stage === "WAITING"
             ? ["waiting"]
             : []) {
-          const refreshed = f.balanceRefresh(475);
           expect(
             (
               await f.driverPost(`/orders/${action}`, { orderId: order.id })
             ).ok(),
           ).toBe(true);
-          await f.expectBalance(475, refreshed);
+          // These fixture calls bypass the driver screen, which has no live
+          // event for them; expectBalance proves the screen after a reload.
+          await f.expectBalance(475);
           expect(await f.ledger()).toEqual(afterAcceptance);
         }
         const card = await f.showOrder(order);
