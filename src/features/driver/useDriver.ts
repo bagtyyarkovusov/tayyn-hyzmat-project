@@ -615,7 +615,7 @@ async function accept(orderId: string, etaMinutes: number) {
   });
 }
 async function transition(
-  action: "waiting" | "start" | "complete" | "cancel",
+  action: "waiting" | "start" | "complete",
   reason?: string,
 ) {
   if (!state.active || !requireShiftControl()) return;
@@ -632,7 +632,6 @@ async function transition(
     if (generation !== sessionGeneration) return;
     state.noticeEventId = `${generation}:${orderId}:${attemptId}:${action}`;
     if (action === "complete") state.notice = "Поездка завершена.";
-    if (action === "cancel") state.notice = "Заказ отменён.";
   });
 }
 function nativeAccountRequest() {
