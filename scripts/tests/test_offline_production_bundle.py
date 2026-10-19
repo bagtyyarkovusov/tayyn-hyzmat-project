@@ -65,6 +65,30 @@ elif args[0]!='tag': sys.exit(2)
             expected, relative = row.split("  ", 1)
             self.assertEqual(hashlib.sha256((self.output / relative).read_bytes()).hexdigest(), expected)
 
+    def test_version_alias_is_recorded_without_changing_release_references(self):
+        self.command += ["--version", "v1.20.1"]
+        result = self.run_builder()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads((self.output / "manifest.json").read_text())
+        self.assertEqual(manifest["version"], "v1.20.1")
+        self.assertEqual(manifest["release"], "test-release")
+        self.assertEqual(manifest["images"]["web"]["ref"], "tayyn-offline/web:test-release")
+        self.assertIn("API_IMAGE=tayyn-offline/api:test-release\n", (self.output / "release.env").read_text())
+        monitor = self.output.with_name(self.output.name + "-monitor")
+        self.assertEqual(json.loads((monitor / "manifest.json").read_text())["version"], "v1.20.1")
+
+    def test_version_is_optional_and_recorded_as_null(self):
+        result = self.run_builder()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNone(json.loads((self.output / "manifest.json").read_text())["version"])
+
+    def test_invalid_version_fails_before_creating_an_export(self):
+        for version in ("1.20.1", "v1.20", "v01.2.3", "vps-4"):
+            result = subprocess.run([*self.command, "--version", version], env=self.environment, text=True, capture_output=True)
+            self.assertNotEqual(result.returncode, 0, version)
+            self.assertIn("Invalid version", result.stderr)
+            self.assertFalse(self.output.exists())
+
     def test_wrong_platform_fails_before_creating_an_export(self):
         result = self.run_builder(FAKE_ARCH="arm64")
         self.assertNotEqual(result.returncode, 0)
