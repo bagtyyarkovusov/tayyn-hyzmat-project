@@ -117,6 +117,10 @@ async function fixture(browser: Browser, name = "Водитель оповеще
   };
   return {
     adminPost,
+    recancelOrder: async (orderId: string) => {
+      await driverPost("/orders/accept", { orderId });
+      await driverPost("/orders/cancel", { orderId });
+    },
     cancelOrder: async () => {
       await driverPost("/driver/status", {
         isOnline: true,
@@ -1051,6 +1055,37 @@ test("cancellation alerts use a distinct chime after chat without overlap or rec
   }
 });
 
+test("Activity refreshes when an order is cancelled and reoffered while open", async ({
+  browser,
+}) => {
+  const f = await fixture(browser);
+  try {
+    await f.adminPage.goto("/adminReports");
+    await expect(
+      f.adminPage.getByRole("heading", { name: "Активность", exact: true }),
+    ).toBeVisible();
+    const order = await f.cancelOrder();
+    const row = f.adminPage
+      .locator("main")
+      .getByRole("listitem")
+      .filter({ hasText: `#${order.orderNumber}` });
+    await expect(row).toContainText("Отменён заказ");
+    await f.adminPost(`/admin/orders/${order.id}/reoffer`);
+    await expect(row).toHaveCount(2);
+    await expect(
+      row.filter({ hasText: "Повторно предложен заказ" }),
+    ).toBeVisible();
+    await expect(
+      row.getByRole("link", {
+        name: `Заказ #${order.orderNumber}`,
+        exact: true,
+      }),
+    ).toHaveCount(2);
+  } finally {
+    await f.close();
+  }
+});
+
 test("Activity retains order decisions with actor, time and order links", async ({
   browser,
 }) => {
@@ -1079,6 +1114,18 @@ test("Activity retains order decisions with actor, time and order links", async 
       await expect(row.locator("time")).toHaveAttribute("datetime", /T/);
     await f.adminPage.reload();
     await expect(rows).toHaveCount(2);
+    await rows
+      .filter({ hasText: "Отменён заказ" })
+      .getByRole("link", { name: `Заказ #${order.orderNumber}`, exact: true })
+      .click();
+    await expect(f.adminPage).toHaveURL(
+      new RegExp(`status=all.*orderNumber=${order.orderNumber}`),
+    );
+    await expect(
+      f.adminPage
+        .getByRole("article")
+        .filter({ hasText: `#${order.orderNumber}` }),
+    ).toBeVisible();
   } finally {
     await f.close();
   }
@@ -1199,6 +1246,82 @@ test("resolving a cancellation prevents its delayed chime", async ({
     expect((await sound(f.adminPage)).plays.map((p) => p.source)).toEqual([
       "/sounds/admin-chat-chime.wav",
     ]);
+  } finally {
+    await f.close();
+  }
+});
+
+test("Activity refreshes approvals and blocks from another dispatcher screen", async ({
+  browser,
+}) => {
+  const f = await fixture(browser);
+  try {
+    await f.adminPage.goto("/adminReports");
+    await expect(
+      f.adminPage.getByRole("heading", { name: "Активность", exact: true }),
+    ).toBeVisible();
+    await f.adminPost(`/admin/drivers/${f.driverId}/block`, {
+      reason: "Проверка активности",
+    });
+    await expect(
+      f.adminPage
+        .locator("main")
+        .getByRole("listitem")
+        .filter({ hasText: "Заблокирован водитель Водитель оповещений" }),
+    ).toHaveCount(1);
+    await f.adminPost(`/admin/drivers/${f.driverId}/approve`);
+    await expect(
+      f.adminPage
+        .locator("main")
+        .getByRole("listitem")
+        .filter({ hasText: "Одобрен водитель Водитель оповещений" }),
+    ).toHaveCount(1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("delayed old reoffer cannot silence the new cancellation attempt", async ({
+  browser,
+}) => {
+  const f = await fixture(browser);
+  let releaseReoffer: (() => void) | undefined;
+  try {
+    await f.adminPage.routeWebSocket("**/socket.io/**", (socket) => {
+      const server = socket.connectToServer();
+      server.onMessage((message) => {
+        if (String(message).includes('"order:reoffered"'))
+          releaseReoffer = () => socket.send(message);
+        else socket.send(message);
+      });
+      socket.onMessage((message) => server.send(message));
+    });
+    await dashboard(f.adminPage);
+    await f.adminPage.clock.pauseAt(Date.now());
+    const order = await f.cancelOrder();
+    const banner = f.adminPage.getByRole("region", {
+      name: "Отмены требуют решения",
+      exact: true,
+    });
+    await expect(banner).toContainText(`Заказ #${order.orderNumber}`);
+    await expect
+      .poll(async () => (await sound(f.adminPage)).plays.length)
+      .toBe(1);
+    await f.adminPost(`/admin/orders/${order.id}/reoffer`);
+    await expect.poll(() => Boolean(releaseReoffer)).toBe(true);
+    await f.recancelOrder(order.id);
+    await expect(banner).toContainText(`Заказ #${order.orderNumber}`);
+    const recovered = f.adminPage.waitForResponse(
+      (r) => r.url().includes("/admin/orders/cancellation-review") && r.ok(),
+    );
+    releaseReoffer!();
+    await recovered;
+    await f.adminPage.clock.fastForward(3100);
+    expect(
+      (await sound(f.adminPage)).plays.filter(
+        (p) => p.source === "/sounds/admin-cancellation-chime.wav",
+      ),
+    ).toHaveLength(2);
   } finally {
     await f.close();
   }

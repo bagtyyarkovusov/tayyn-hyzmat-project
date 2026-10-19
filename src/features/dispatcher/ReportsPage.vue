@@ -17,7 +17,7 @@ const { data, loading, error, load } = useResource(
     "order:reoffered",
     "order:cancellation-resolved",
     "driver:updated",
-    "district:stats",
+    "districts:stats",
     "balance:updated",
   ],
 );
@@ -59,7 +59,7 @@ const { data, loading, error, load } = useResource(
             v-if="event.orderNumber"
             :to="{
               path: '/adminOrders',
-              query: { orderNumber: event.orderNumber },
+              query: { status: 'all', orderNumber: event.orderNumber },
             }"
             class="mt-1 inline-flex min-h-11 items-center text-sm font-semibold underline underline-offset-4"
             >Заказ #{{ event.orderNumber }}</RouterLink

@@ -37,14 +37,21 @@ onMounted(() => {
   );
   for (const event of ["order:reoffered", "order:cancellation-resolved"]) {
     stops.push(
-      adminSession.on(event, (order: { id?: string; orderId?: string }) => {
-        const orderId = order?.id ?? order?.orderId;
-        const id = orderId ? pending.get(orderId) : undefined;
-        if (id && orderId) {
-          pending.delete(orderId);
-          sound.cancel(id);
-        }
-      }),
+      adminSession.on(
+        event,
+        (order: {
+          id?: string;
+          orderId?: string;
+          resolvedNotificationEventId?: string;
+        }) => {
+          const orderId = order?.id ?? order?.orderId;
+          const id = orderId ? pending.get(orderId) : undefined;
+          if (id && orderId && order.resolvedNotificationEventId === id) {
+            pending.delete(orderId);
+            sound.cancel(id);
+          }
+        },
+      ),
     );
   }
 });
