@@ -63,6 +63,8 @@ function storedUserId(): string {
     return "";
   }
 }
+/** How long the service may run without reaching the server before it stops. */
+export const NATIVE_SHIFT_LEASE_MS = 60000;
 let generation = 0;
 export async function startNativeShift() {
   if (!nativeAndroid) return;
@@ -115,7 +117,7 @@ export async function startNativeShift() {
     await nativeShift.start({
       apiBase,
       shiftToken: data.shiftToken,
-      leaseDurationMs: 60000,
+      leaseDurationMs: NATIVE_SHIFT_LEASE_MS,
       userId: storedUserId() || "",
     });
     if (current !== generation) {

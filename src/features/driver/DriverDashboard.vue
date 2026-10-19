@@ -22,10 +22,10 @@ import {
   useDriver,
   canControlShift,
   connectionRecovering,
+  dispatcherConnected,
   OFFER_BACK_GUARD_MS,
 } from "./useDriver";
 import { useDriverAddress } from "./useDriverAddress";
-import { nativeAndroid } from "./nativeShift";
 import { money } from "./model";
 import { localRegionAt } from "./local-region";
 import IncomingOrder from "./components/IncomingOrder.vue";
@@ -33,7 +33,7 @@ import DriverFeedback from "./components/DriverFeedback.vue";
 import ActiveTripFeed from "./components/ActiveTripFeed.vue";
 import ActiveTrip from "./components/ActiveTrip.vue";
 import AvailableOrders from "./components/AvailableOrders.vue";
-const { state, setOnline, session, closeIncoming } = useDriver({
+const { state, setOnline, closeIncoming } = useDriver({
   localGps: true,
 });
 const { address } = useDriverAddress(
@@ -45,21 +45,14 @@ const { address } = useDriverAddress(
     capturedAt: () => state.locationUpdatedAt,
     onlineRequest: () => state.addressLookupRequest,
     transitionPending: () => state.busy,
-    connected: () =>
-      nativeAndroid && state.profile?.isOnline && canControlShift()
-        ? state.nativeConnected
-        : session.state.connected,
+    connected: dispatcherConnected,
   },
 );
 const selected = ref<string | null>(null);
 const visibility = useDocumentVisibility();
 const networkOnline = useOnline();
 const connectionReady = computed(
-  () =>
-    networkOnline.value &&
-    (nativeAndroid && state.profile?.isOnline && canControlShift()
-      ? state.nativeConnected
-      : session.state.connected),
+  () => networkOnline.value && dispatcherConnected(),
 );
 const connectionState = computed(() =>
   connectionReady.value
