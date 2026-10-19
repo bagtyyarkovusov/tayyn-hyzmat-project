@@ -7,6 +7,9 @@ The local candidate is `feat/release-121-integrated` in the T3 worktree
 `edbc57a2021c486f0c2cf077ad54d3c2b3fdfc2e`.
 
 - GPS `98a00ffd0ab35e363677b03e89679a8f762e45dc` was fast-forwarded.
+- GPS follow-up `aafe02d515ae3ab6f2f2be6fb68f9cef1089dbf2`, including test
+  guard proof `d0690ee`, was merged without conflicts in `62bdb49`. UI ancestry
+  and the narrow cancellation cleanup were preserved.
 - Geocoder `82e769643c57790e81e68e7792bbdda492d68b44` was merged with its
   original history in `de40087`. The only conflict was additive English and
   Russian release-note bullets. Both sets were retained.
@@ -14,21 +17,24 @@ The local candidate is `feat/release-121-integrated` in the T3 worktree
   `cb0793b`. Only release notes conflicted. GPS/geocoder notes, planned signup
   scope and the cancellation verification gate were retained. The component's
   uncommitted worktree edits were excluded.
-- Cancellation backend, GPS follow-up and signup without approval still need
+- Cancellation backend and signup without approval still need
   verified component commits from the parent coordinator. Backend WIP
   `5e3d118` is explicitly excluded pending tests. Independent reviews of the
   pinned UI commit are pending.
 
-GPS review of `98a00ff` found two pending P2 issues: region-count refresh after
+GPS review of `98a00ff` found two P2 issues: region-count refresh after
 GPS recovery and a red status that remains after browser permission changes
-from denied to granted followed by a timeout. The GPS owner is fixing these
-and adding the account-switch standards test. This checkpoint does not mark
-GPS ready.
+from denied to granted followed by a timeout. Follow-up `aafe02d` addresses
+both and adds the account-switch standards test. The parent reports 17 targeted
+browser passes, typecheck, formatting and modern build passing, with all three
+new regressions demonstrated failing before the fixes. Independent round-two
+GPS reviews are pending. These are component results, not a full integrated
+release verification.
 
 The approved signup handoff for issue #150 adds immediate active
 self-registration with an initial session, immediate admin-created accounts
-and removal of approval
-language, queues, counters and actions across driver and dispatcher UI. New
+and removal of approval language, queues, counters and actions across driver
+and dispatcher UI. New
 accounts remain offline, without a region and with zero balance. Existing
 block/unblock, credential security, GPS and shift requirements remain. The
 implementation owner is in T3 worktree `t3-ecce4e60` on
@@ -53,8 +59,8 @@ UI commit `eca3899` removes the `ActiveTrip.vue` cancellation control and its
 change to `useDriver.ts` after the pinned GPS commit.
 
 Dependencies were installed with the frozen lockfile and Prisma Client was
-generated locally. Frontend typecheck passed after the UI merge. Backend
-typecheck passed before the UI merge. Formatting of
+generated locally. Frontend typecheck passed after the GPS follow-up merge.
+Backend typecheck passed before the UI merge. Formatting of
 `useDriver.ts` and `git diff --check` passed. Full verification is deferred until
 the component source is cohesive. The parent reports six real-browser UI passes;
 the 13 cancellation matrix cases await the stable backend and a run by the UI
