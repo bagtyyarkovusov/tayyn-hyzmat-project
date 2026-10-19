@@ -7,6 +7,7 @@ const {
   orderIdParamSchema,
   listDriversQuerySchema,
   blockSchema,
+  cancelOrderSchema,
   blockDriverSchema,
   resolveOrderSchema,
   balanceAdjustSchema,
@@ -93,12 +94,11 @@ router.post(
 // so this is currently the only way an order enters the system at all.
 router.post('/orders/:id/private-offer', validate({ params: orderIdParamSchema, body: privateOfferSchema }), controller.privateOffer);
 router.post('/orders', validate({ body: createOrderSchema }), controller.createOrder);
-router.get('/orders/cancellation-review', validate({ query: historyQuerySchema }), asyncHandler(async (req, res) => res.json(await require('./admin.service').listOrders({ ...req.query, status: 'cancelled', cancellationReviewRequired: true }))));
-router.post('/orders/:id/reoffer', validate({ params: orderIdParamSchema, body: z.object({}).strict() }), asyncHandler(async (req, res) => res.json(await require('../orders/orders.service').resolveCancellation(req.params.id, req.user.id, 'REOFFER'))));
-router.post('/orders/:id/final-cancel', validate({ params: orderIdParamSchema, body: z.object({}).strict() }), asyncHandler(async (req, res) => res.json(await require('../orders/orders.service').resolveCancellation(req.params.id, req.user.id, 'FINAL_CANCEL'))));
+router.get('/orders/cancellation-review', validate({ query: historyQuerySchema }), asyncHandler(async (req, res) => res.json({ items: [], total: 0, page: req.query.page, limit: req.query.limit })));
+router.post('/orders/:id/reoffer', validate({ params: orderIdParamSchema, body: z.object({}).strict() }), asyncHandler(async () => { throw require('../../utils/ApiError').conflict('Сценарий повторного предложения отключён'); }));
+router.post('/orders/:id/final-cancel', validate({ params: orderIdParamSchema, body: z.object({}).strict() }), asyncHandler(async () => { throw require('../../utils/ApiError').conflict('Сценарий финальной отмены отключён'); }));
 router.get('/orders', validate({ query: listOrdersQuerySchema }), controller.listOrders);
-// Dispatcher cancellation is available only before STARTED; completion is audited separately.
-router.post('/orders/:id/cancel', validate({ params: orderIdParamSchema, body: blockSchema }), controller.cancelOrder);
+router.post('/orders/:id/cancel', validate({ params: orderIdParamSchema, body: cancelOrderSchema }), controller.cancelOrder);
 router.post('/orders/:id/force-resolve', validate({ params: orderIdParamSchema, body: resolveOrderSchema }), controller.forceResolveOrder);
 
 // Durable driver, balance and order-resolution history, with actor attribution.

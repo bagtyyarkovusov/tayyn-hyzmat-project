@@ -24,10 +24,12 @@ The pilot coordinates dispatcher-created rides and driver claims within regions.
 
 **Reservation deadline**: The fixed end of a private offer’s exclusive acceptance window. The dispatcher’s fallback choice determines whether it then becomes public or stays unassigned.
 
-**Quote hold**: TMT reserved for an accepted trip until Start or pre-start cancellation. It reduces available funds without reducing the total balance.
+**Accepted quote**: The full fare fixed when a driver claims an order. It is deducted from the driver's prepaid balance at acceptance, independently of the customer's direct payment to the driver.
 
-**Capture**: The deduction of a held quote when a driver starts the trip.
+**Acceptance debit**: The single deduction of the accepted quote. Arrival, Start and completion do not deduct it again.
 
-**Cancellation review**: Unresolved dispatcher work created when a driver cancels before arrival. The dispatcher resolves it by reoffering the same order or finally cancelling it.
+**Dispatcher cancellation**: Closure of an unfinished order by a dispatcher. An assigned order either returns the original debit or retains it, and frees the driver immediately. An unaccepted order has no debit to return.
+
+**Cancellation outcome**: The recorded financial result of cancellation: with refund, without refund, before acceptance, or no original debit. An unknown historical outcome means the original result cannot be proven.
 
 **Offer attempt**: One delivery window for an order. Reoffering an order creates a distinct attempt while preserving the order number.

@@ -1493,7 +1493,9 @@ test("regional queues and counts recover through updates, reconnect and reload",
       trip.getByText("Прибытие: 20 мин", { exact: true }),
     ).toBeVisible();
     await trip.getByRole("button", { name: "Close", exact: true }).click();
-    await expect(driver.getByLabel("Баланс")).toHaveText("500 TMT");
+    // 1.21 debits the full 12 TMT quote at acceptance; this screen was
+    // reloaded after acceptance, so it cannot show a stale figure.
+    await expect(driver.getByLabel("Баланс")).toHaveText("488 TMT");
     await driver.screenshot({
       path: "test-results/driver-live-trip-strip.png",
       animations: "disabled",
@@ -1503,6 +1505,18 @@ test("regional queues and counts recover through updates, reconnect and reload",
     await driver.screenshot({ path: "test-results/driver-trip-dialog.png" });
     for (const name of ["Я на месте", "Начать поездку", "Завершить поездку"])
       await driver.getByRole("button", { name, exact: true }).click();
+    await expect(
+      driver.getByRole("region", { name: "Текущая поездка", exact: true }),
+    ).toHaveCount(0);
+    // Completion never charges again: server balance first, then the screen.
+    const driverToken = await driver.evaluate(() =>
+      localStorage.getItem("openride.driver.accessToken"),
+    );
+    const completedBalance = await driver.request.get("/api/driver/balance", {
+      headers: { Authorization: `Bearer ${driverToken}` },
+    });
+    expect(completedBalance.ok()).toBe(true);
+    expect(Number((await completedBalance.json()).amount)).toBe(488);
     await expect(driver.getByLabel("Баланс")).toHaveText("488 TMT");
     await test.step("refresh GPS without losing readiness after completing the recovered trip", () =>
       startGps(driver, point));

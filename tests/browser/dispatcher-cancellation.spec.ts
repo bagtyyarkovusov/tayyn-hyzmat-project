@@ -1,4 +1,10 @@
-import { test, expect, type Browser } from "@playwright/test";
+import {
+  test,
+  expect,
+  type Browser,
+  type Request,
+  type Response,
+} from "@playwright/test";
 import { createRequire } from "node:module";
 import { loginFixture, installFixtureSession } from "./helpers/device-session";
 
@@ -117,8 +123,11 @@ async function fixture(browser: Browser) {
           driverId: driver.id,
           districtId: process.env.TEST_REGION_ID,
           pickupAddress: "Историческая отмена 1.21",
-          cancellationOutcome: outcome,
-          cancellationRefundAmount: 0,
+          pickupLat: 37.96,
+          pickupLng: 58.32,
+          // UNKNOWN is only the API fallback for a row with no recorded outcome.
+          cancellationOutcome: outcome === "UNKNOWN" ? null : outcome,
+          cancellationRefundAmount: outcome === "UNKNOWN" ? null : 0,
           cancelledAt: new Date(),
         },
       });
@@ -128,12 +137,94 @@ async function fixture(browser: Browser) {
       await prisma.$disconnect();
     }
   }
-  async function balance(amount: string) {
+  async function serverBalance() {
     const response = await driverContext.request.get(`${api}/driver/balance`, {
       headers: driverHeaders,
     });
     expect(response.ok()).toBe(true);
-    expect(Number((await response.json()).amount)).toBe(Number(amount));
+    return Number((await response.json()).amount);
+  }
+  /** The driver's own ledger, newest first, exactly as the public history API returns it. */
+  async function ledger() {
+    const response = await driverContext.request.get(
+      `${api}/driver/history?page=1&limit=200`,
+      { headers: driverHeaders },
+    );
+    expect(response.ok()).toBe(true);
+    const body = await response.json();
+    return (
+      body.transactions.items as {
+        id: string;
+        orderId: string | null;
+        type: string;
+        status: string;
+        amount: string;
+        balanceAfter: string;
+      }[]
+    ).map((entry) => ({
+      id: entry.id,
+      orderId: entry.orderId,
+      type: entry.type,
+      status: entry.status,
+      amount: Number(entry.amount),
+      balanceAfter: Number(entry.balanceAfter),
+    }));
+  }
+  /** Ledger rows attributed to one order, oldest first. */
+  async function orderLedger(orderId: string) {
+    return (await ledger())
+      .filter((entry) => entry.orderId === orderId)
+      .reverse()
+      .map(({ type, amount, balanceAfter }) => ({
+        type,
+        amount,
+        balanceAfter,
+      }));
+  }
+  /**
+   * Resolves with the first driver-page balance read that is issued after
+   * this call and returns `amount`. Register it before the action so a
+   * screen value left over from an earlier read can never satisfy it.
+   */
+  function balanceRefresh(amount?: number) {
+    const issued = new Set<Request>();
+    const track = (request: Request) => {
+      if (
+        request.method() === "GET" &&
+        new URL(request.url()).pathname.endsWith("/driver/balance")
+      )
+        issued.add(request);
+    };
+    driverPage.on("request", track);
+    return driverPage
+      .waitForResponse(
+        async (response) =>
+          issued.has(response.request()) &&
+          (amount === undefined ||
+            Number((await response.json()).amount) === amount),
+        // Fail at this step, well inside the test timeout, when the screen
+        // never re-reads its balance.
+        { timeout: 10_000 },
+      )
+      .finally(() => driverPage.off("request", track));
+  }
+  /**
+   * Server balance first; then the driver screen after a read issued since
+   * the server check (the live refresh when given, and always a reload).
+   */
+  async function expectBalance(amount: number, live?: Promise<Response>) {
+    expect(await serverBalance()).toBe(amount);
+    const label = driverPage.getByLabel("Баланс", { exact: true });
+    if (live) {
+      await live;
+      await expect(label).toHaveText(`${amount} TMT`);
+    }
+    const reloaded = balanceRefresh();
+    if (new URL(driverPage.url()).pathname === "/driverDashboard")
+      await driverPage.reload();
+    else await driverPage.goto("/driverDashboard");
+    expect(Number((await (await reloaded).json()).amount)).toBe(amount);
+    await expect(label).toHaveText(`${amount} TMT`);
   }
   async function showOrder(order: { orderNumber: number }) {
     await adminPage.goto(
@@ -167,7 +258,11 @@ async function fixture(browser: Browser) {
     create,
     historical,
     online,
-    balance,
+    serverBalance,
+    ledger,
+    orderLedger,
+    balanceRefresh,
+    expectBalance,
     showOrder,
     cancelRequests,
     close,
@@ -186,21 +281,41 @@ test("driver trip details have no cancellation action at any unfinished stage", 
       name: "Предложение заказа",
       exact: true,
     });
-    await incoming
-      .getByRole("button", { name: "Принять заказ", exact: true })
-      .click();
+    const steps = ["Я на месте", "Начать поездку", "Завершить поездку"];
     const trip = f.driverPage.getByRole("dialog", {
       name: "Управление поездкой",
       exact: true,
     });
-    for (const next of ["Я на месте", "Начать поездку", "Завершить поездку"]) {
+    const accepted = f.balanceRefresh(475);
+    await incoming
+      .getByRole("button", { name: "Принять заказ", exact: true })
+      .click();
+    await expect(
+      trip.getByRole("button", { name: steps[0], exact: true }),
+    ).toBeVisible();
+    await f.expectBalance(475, accepted);
+    expect(await f.orderLedger(order.id)).toEqual([
+      { type: "PAYMENT", amount: -25, balanceAfter: 475 },
+    ]);
+    const afterAcceptance = await f.ledger();
+    for (const [index, step] of steps.entries()) {
       await expect(
-        trip.getByRole("button", { name: next, exact: true }),
+        trip.getByRole("button", { name: step, exact: true }),
       ).toBeVisible();
       await expect(
         trip.getByRole("button", { name: /Отменить|Подтвердить отмену/ }),
       ).toHaveCount(0);
-      await trip.getByRole("button", { name: next, exact: true }).click();
+      const refreshed = f.balanceRefresh(475);
+      await trip.getByRole("button", { name: step, exact: true }).click();
+      const next = steps[index + 1];
+      if (next)
+        await expect(
+          trip.getByRole("button", { name: next, exact: true }),
+        ).toBeVisible();
+      else await expect(trip).toHaveCount(0);
+      // Arrival, start and completion never charge again.
+      await f.expectBalance(475, refreshed);
+      expect(await f.ledger()).toEqual(afterAcceptance);
     }
     await expect(trip).toHaveCount(0);
     expect(f.cancelRequests).toEqual([]);
@@ -218,6 +333,7 @@ for (const stage of ["ACCEPTED", "WAITING", "STARTED"] as const) {
       try {
         await f.online();
         const order = await f.create();
+        const accepted = f.balanceRefresh(475);
         expect(
           (
             await f.driverPost("/orders/accept", {
@@ -226,18 +342,25 @@ for (const stage of ["ACCEPTED", "WAITING", "STARTED"] as const) {
             })
           ).ok(),
         ).toBe(true);
-        await f.balance("475");
+        await f.expectBalance(475, accepted);
+        const payment = [{ type: "PAYMENT", amount: -25, balanceAfter: 475 }];
+        expect(await f.orderLedger(order.id)).toEqual(payment);
+        const afterAcceptance = await f.ledger();
         for (const action of stage === "STARTED"
           ? ["waiting", "start"]
           : stage === "WAITING"
             ? ["waiting"]
-            : [])
+            : []) {
           expect(
             (
               await f.driverPost(`/orders/${action}`, { orderId: order.id })
             ).ok(),
           ).toBe(true);
-        await f.balance("475");
+          // These fixture calls bypass the driver screen, which has no live
+          // event for them; expectBalance proves the screen after a reload.
+          await f.expectBalance(475);
+          expect(await f.ledger()).toEqual(afterAcceptance);
+        }
         const card = await f.showOrder(order);
         await expect(
           card.getByRole("button", {
@@ -261,19 +384,36 @@ for (const stage of ["ACCEPTED", "WAITING", "STARTED"] as const) {
           exact: true,
         });
         await expect(dialog.getByRole("textbox")).toHaveCount(0);
+        const settledAmount = refund ? 500 : 475;
+        const cancelled = f.balanceRefresh(settledAmount);
         await dialog.getByRole("button", { name: action, exact: true }).click();
         await expect(dialog).toHaveCount(0);
         await expect(card.getByText(label, { exact: true })).toBeVisible();
-        await f.balance(refund ? "500" : "475");
         await expect(
           f.driverPage.getByRole("region", {
             name: "Текущая поездка",
             exact: true,
           }),
         ).toHaveCount(0);
-        await expect(
-          f.driverPage.getByLabel("Баланс", { exact: true }),
-        ).toHaveText(refund ? "500 TMT" : "475 TMT");
+        await f.expectBalance(settledAmount, cancelled);
+        expect(await f.orderLedger(order.id)).toEqual(
+          refund
+            ? [...payment, { type: "REFUND", amount: 25, balanceAfter: 500 }]
+            : payment,
+        );
+        // A repeated cancellation of either outcome is rejected without
+        // touching the wallet or the ledger.
+        const settled = await f.ledger();
+        for (const outcome of ["WITH_REFUND", "WITHOUT_REFUND"])
+          expect(
+            (
+              await f.adminPost(`/admin/orders/${order.id}/cancel`, {
+                outcome,
+              })
+            ).status(),
+          ).toBe(409);
+        await f.expectBalance(settledAmount);
+        expect(await f.ledger()).toEqual(settled);
         await f.adminPage.reload();
         await expect(card.getByText(label, { exact: true })).toBeVisible();
         await expect(
@@ -312,6 +452,7 @@ test("unaccepted cancellation has one action and records before-acceptance outco
   const f = await fixture(browser);
   try {
     const order = await f.create();
+    const before = await f.ledger();
     const card = await f.showOrder(order);
     await expect(
       card.getByRole("button", { name: /Отменить .*возврат/ }),
@@ -330,7 +471,9 @@ test("unaccepted cancellation has one action and records before-acceptance outco
     await expect(
       card.getByText("Отменён до принятия", { exact: true }),
     ).toBeVisible();
-    await f.balance("500");
+    await f.expectBalance(500);
+    expect(await f.orderLedger(order.id)).toEqual([]);
+    expect(await f.ledger()).toEqual(before);
     await f.adminPage.reload();
     await expect(
       card.getByText("Отменён до принятия", { exact: true }),
@@ -355,6 +498,7 @@ test("a stale dispatcher cancellation refreshes the recorded winner after 409", 
         })
       ).ok(),
     ).toBe(true);
+    await f.expectBalance(475);
     const card = await f.showOrder(order);
     await card
       .getByRole("button", { name: "Отменить с возвратом", exact: true })
@@ -370,6 +514,18 @@ test("a stale dispatcher cancellation refreshes the recorded winner after 409", 
         })
       ).ok(),
     ).toBe(true);
+    await f.expectBalance(475);
+    expect(await f.orderLedger(order.id)).toEqual([
+      { type: "PAYMENT", amount: -25, balanceAfter: 475 },
+    ]);
+    const settled = await f.ledger();
+    const rejected = f.adminPage.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname.endsWith(
+          `/admin/orders/${order.id}/cancel`,
+        ),
+    );
     await dialog
       .getByRole("button", { name: "Отменить с возвратом", exact: true })
       .click();
@@ -383,7 +539,9 @@ test("a stale dispatcher cancellation refreshes the recorded winner after 409", 
     await expect(
       card.getByText("Отменён с возвратом", { exact: true }),
     ).toHaveCount(0);
-    await f.balance("475");
+    expect((await rejected).status()).toBe(409);
+    await f.expectBalance(475);
+    expect(await f.ledger()).toEqual(settled);
   } finally {
     await f.close();
   }
@@ -404,6 +562,8 @@ test("cancellation server errors keep the chosen action available for retry", as
         })
       ).ok(),
     ).toBe(true);
+    await f.expectBalance(475);
+    const afterAcceptance = await f.ledger();
     const card = await f.showOrder(order);
     const action = "Отменить без возврата";
     await card.getByRole("button", { name: action, exact: true }).click();
@@ -430,7 +590,8 @@ test("cancellation server errors keep the chosen action available for retry", as
       "Заказ уже изменён",
     );
     expect(failures).toBe(1);
-    await f.balance("475");
+    await f.expectBalance(475);
+    expect(await f.ledger()).toEqual(afterAcceptance);
     await f.adminPage.unroute(`**/admin/orders/${order.id}/cancel`);
     await expect(
       dialog.getByRole("button", { name: action, exact: true }),
@@ -440,7 +601,8 @@ test("cancellation server errors keep the chosen action available for retry", as
     await expect(
       card.getByText("Отменён без возврата", { exact: true }),
     ).toBeVisible();
-    await f.balance("475");
+    await f.expectBalance(475);
+    expect(await f.ledger()).toEqual(afterAcceptance);
   } finally {
     await f.close();
   }
@@ -471,7 +633,7 @@ for (const [outcome, label] of [
       await expect(history.locator("summary")).toContainText(label);
       await history.locator("summary").click();
       await expect(history.getByText(label, { exact: true })).toHaveCount(2);
-      await f.balance("500");
+      await f.expectBalance(500);
     } finally {
       await f.close();
     }

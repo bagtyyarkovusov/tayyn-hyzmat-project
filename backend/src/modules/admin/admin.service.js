@@ -14,7 +14,7 @@ const authService = require('../auth/auth.service');
 const { hashPassword } = require('../../utils/password');
 
 const { MAX_WALLET_AMOUNT } = require('../../utils/money-policy');
-const { orderPayload } = require('../orders/order-payload');
+const { orderPayload, withCancellationOutcome } = require('../orders/order-payload');
 const { lockedBalance, walletSummary } = require('../balance/locked-balance');
 
 const D = (value) => new Prisma.Decimal(value ?? 0);
@@ -360,7 +360,7 @@ async function adjustBalance(driverId, { amount, type, note, operationId }, acto
     // Keep room to return an active trip's actual debit on cancellation.
     // Locking the driver serializes this check with accept/cancel/complete.
     const refundable = await tx.transaction.aggregate({
-      where: { balanceId: balance.id, type: 'PAYMENT', order: { status: { in: ['ACCEPTED', 'WAITING'] }, assignments: { none: {} } } },
+      where: { balanceId: balance.id, type: 'PAYMENT', order: { status: { in: ['ACCEPTED', 'WAITING', 'STARTED'] } } },
       _sum: { amount: true }
     });
     const reservedRefund = D(refundable._sum.amount).abs();
@@ -446,7 +446,7 @@ async function getHistory(driverId, { page, limit }) {
     driver: { id: driver.id, fullName: driver.user.fullName, phone: driver.user.archivedPhone || driver.user.phone, status: driver.status },
     balance: (await withWallets([driver]))[0].user.balance ?? null,
     transactions: { items: transactions, total: transactionsTotal, page, limit },
-    orders: { items: orders, total: ordersTotal, page, limit }
+    orders: { items: orders.map(withCancellationOutcome), total: ordersTotal, page, limit }
   };
 }
 
@@ -544,7 +544,7 @@ async function listOrders({ status, page, limit, customerPhone, driverPhone, ord
   const [items, total] = await Promise.all([
     prisma.order.findMany({
       where,
-      orderBy: status === "cancelled" ? [{ cancellationReviewRequired: "desc" }, { cancelledAt: "desc" }, { id: "desc" }] : [{ createdAt: "desc" }, { id: "desc" }],
+      orderBy: status === "cancelled" ? [{ cancelledAt: "desc" }, { id: "desc" }] : [{ createdAt: "desc" }, { id: "desc" }],
       skip: (page - 1) * limit,
       take: limit,
       include: {

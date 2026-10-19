@@ -31,10 +31,7 @@ const complete = asyncHandler(async (req, res) => {
   res.json(order);
 });
 
-const cancel = asyncHandler(async (req, res) => {
-  const order = await service.cancel(req.body.orderId, req.driver, req.body.reason);
-  res.json(order);
-});
+const cancel = asyncHandler(async () => service.cancel());
 
 const acceptPrivateOffer = asyncHandler(async (req, res) => res.json(await service.accept(req.body.orderId, req.driver, req.body.etaMinutes, req.body.privateOfferExpiresAt)));
 const privateOffer = asyncHandler(async (req, res) => res.json(await service.getPrivateOffer(req.driver)));
