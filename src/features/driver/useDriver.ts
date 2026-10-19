@@ -933,21 +933,19 @@ async function reportBrowserFix() {
   const current = () => account.current() && epoch === gpsEpoch;
   locationSending = true;
   state.locationSyncPending = true;
+  let recovered = false;
   try {
     const { data } = await driverApi.post<{ districtId: string | null }>(
       "/driver/location",
       { ...state.position, capturedAt: state.locationUpdatedAt },
     );
     if (!current()) return;
-    const recovered = !state.gpsReady;
+    recovered = !state.gpsReady;
     lastLocationSent = Date.now();
     locationSyncFailureAt = 0;
     state.gpsReady = true;
     state.locationSyncError = "";
     if (state.profile) state.profile.districtId = data.districtId;
-    // Readiness loss clears card counts. A same-region fix does not cause a
-    // districts:stats broadcast, so reload the snapshot once reporting recovers.
-    if (recovered) await refresh();
   } catch (error) {
     if (current()) markLocationSyncFailure(errorMessage(error));
   } finally {
@@ -956,6 +954,10 @@ async function reportBrowserFix() {
       state.locationSyncPending = false;
     }
   }
+  // Readiness loss clears card counts. A same-region fix does not cause a
+  // districts:stats broadcast, so reload the snapshot once reporting recovers.
+  // The report is already settled; refresh applies its own session guards.
+  if (recovered && current()) void refresh();
 }
 function fromBrowserFix(fix: GeolocationPosition): LocalFix {
   return {
