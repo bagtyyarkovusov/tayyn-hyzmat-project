@@ -2,20 +2,11 @@
 import { computed, ref } from "vue";
 import { Phone, Navigation, MapPin, Flag } from "lucide-vue-next";
 import { Button } from "@/shared/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "@/shared/ui/dialog";
 import { useDriver } from "../useDriver";
 import { money, statusLabels } from "../model";
 import { tripNavigation, openTripNavigation } from "../navigation";
 defineProps<{ embedded?: boolean }>();
 const { state, transition } = useDriver();
-const cancelOpen = ref(false);
 const navigation = computed(() => tripNavigation(state.active));
 const navigationError = ref("");
 async function openNavigation() {
@@ -26,15 +17,6 @@ async function openNavigation() {
   } catch {
     navigationError.value = "Не удалось открыть карту. Повторите попытку.";
   }
-}
-// A pending cancellation owns its confirmation: Back, Escape and X are refused.
-function setCancelOpen(open: boolean) {
-  if (!open && state.busy) return;
-  cancelOpen.value = open;
-}
-async function cancel() {
-  await transition("cancel");
-  if (!state.active) cancelOpen.value = false;
 }
 </script>
 <template>
@@ -120,37 +102,7 @@ async function cancel() {
         :disabled="state.busy"
         @click="transition('complete')"
         >Завершить поездку</Button
-      ><Button
-        v-if="state.active.status === 'ACCEPTED'"
-        class="min-h-12 whitespace-normal py-3"
-        data-touch-target
-        variant="ghost"
-        :disabled="state.busy"
-        @click="cancelOpen = true"
-        >Отменить заказ</Button
       >
     </div>
-    <Dialog :open="cancelOpen" @update:open="setCancelOpen"
-      ><DialogContent :aria-describedby="undefined"
-        ><DialogHeader
-          ><DialogTitle>Отменить текущий заказ?</DialogTitle></DialogHeader
-        ><DialogFooter
-          ><Button
-            class="min-h-12 whitespace-normal py-3"
-            data-touch-target
-            variant="outline"
-            @click="setCancelOpen(false)"
-            >Продолжить поездку</Button
-          ><Button
-            class="min-h-12 whitespace-normal py-3"
-            data-touch-target
-            variant="destructive"
-            :disabled="state.busy"
-            @click="cancel"
-            >Подтвердить отмену</Button
-          ></DialogFooter
-        ></DialogContent
-      ></Dialog
-    >
   </section>
 </template>

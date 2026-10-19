@@ -1,3 +1,4 @@
+import type { CancellationOutcome } from "@/shared/order-cancellation";
 export interface Page<T> {
   items: T[];
   total: number;
@@ -53,9 +54,8 @@ export interface Driver {
 export interface Order {
   id: string;
   orderNumber: number;
-  cancellationReviewRequired?: boolean;
-  resolutionActions?: ("REOFFER" | "FINAL_CANCEL")[];
-  notificationEventId?: string;
+  cancellationOutcome?: CancellationOutcome | null;
+  cancellationRefundAmount?: number | string | null;
   offerAttemptId?: string;
   status: string;
   district?: District;
