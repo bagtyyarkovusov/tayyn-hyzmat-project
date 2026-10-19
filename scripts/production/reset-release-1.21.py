@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -224,6 +225,19 @@ class Database:
         return snapshot
 
 
+def has_polygon_geometry(boundary):
+    # Match admin districtBoundarySchema: Yandex [lat, lng] rings, not GeoJSON.
+    # Inspect only; retained row text and every saved coordinate stay untouched.
+    return isinstance(boundary, list) and bool(boundary) and all(
+        isinstance(ring, list) and len(ring) >= 3 and all(
+            isinstance(point, list) and len(point) == 2 and all(
+                type(coordinate) in (int, float) and -limit <= coordinate <= limit and math.isfinite(coordinate)
+                for coordinate, limit in zip(point, (90, 180))
+            ) for point in ring
+        ) for ring in boundary
+    )
+
+
 def verify_preserved(policy, variant, snapshot):
     retained = {name: [json.loads(row) for row in rows] for name, rows in snapshot['retained'].items()}
     users, admins, regions = (retained[t] for t in ('users', 'admins', 'districts'))
@@ -234,7 +248,7 @@ def verify_preserved(policy, variant, snapshot):
     if sorted([r['id'], r['name']] for r in regions) != policy['canonical_regions']:
         raise ValueError('Exactly nine canonical region identities are required')
     # Existing saved geometry wins over bootstrap defaults, including later owner edits.
-    if any(not isinstance(r['boundary'], list) or len(r['boundary']) < 3 for r in regions):
+    if any(not has_polygon_geometry(r.get('boundary')) for r in regions):
         raise ValueError('Every saved region must already have polygon geometry')
     migrations = retained['_prisma_migrations']
     actual = sorted([m['migration_name'], m['checksum']] for m in migrations)

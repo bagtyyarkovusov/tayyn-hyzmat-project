@@ -4,6 +4,8 @@ This procedure is separate from the frozen [1.20 reset](production-reset-1.20.md
 
 The owner authorized retaining exactly one existing ADMIN user and its paired admin profile, with the existing password hash, credential version and every other field unchanged. Retain exactly the nine canonical region IDs/names with their complete existing saved rows and polygon geometries. The repository export identifies regions; it is never used to overwrite saved geometry. Missing/extra/renamed regions, missing polygons, extra or unpaired admins require investigation before reset. The command never creates identities or regions.
 
+Saved geometry must match the backend boundary schema: a nonempty array of rings, each with at least three `[lat, lng]` pairs. Coordinates must be finite numbers within latitude `[-90, 90]` and longitude `[-180, 180]`. Flat point arrays, GeoJSON objects and missing or malformed rings are refused. Validation only reads the saved values; it never closes, reorders, rounds or normalizes geometry. Complete saved row text remains bound by the existing preservation guards.
+
 Preserve `_prisma_migrations`, settings, geocoder quota/budget rows and the order-number sequence value/called state/definition. Preserve infrastructure, configuration, secrets, TLS, monitoring and backups outside the database. Delete all operational rows, including admin financial/chat/session rows and `driver_activity_audits`, which has no FK cascade. The explicit 17-table delete list is:
 
 - `driver_activity_audits`
@@ -241,7 +243,8 @@ The new suite calls the public CLI against actual migrated PostgreSQL 17 databas
 - both pinned stages and policy pins against the checked-in migration bytes;
 - refusal of unpinned or inconsistent policies;
 - read-only inspection;
-- exact admin credential rows and edited saved geometry;
+- exact admin credential rows and edited saved nested-ring geometry, including multiple rings and coordinate range endpoints;
+- rejection of missing, flat, GeoJSON, malformed, nonnumeric and out-of-range geometry during inspection and execution, without writes;
 - all 17 zero counts including audits;
 - sequence continuation and idempotency;
 - rejection of unknown catalogs (including dropped CHECK/unique index and changed defaults/enums), wrong stages and wrong or failed migration history;

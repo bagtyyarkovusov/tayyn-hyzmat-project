@@ -127,7 +127,7 @@ class StagedResetDrillTests(unittest.TestCase):
             regions = json.loads((ROOT / 'backend/prisma/data/default-regions.json').read_text())['regions']
             for region in regions:
                 # Saved polygons are intentionally different from bootstrap, to prove no reseeding.
-                row = dict(id=region['id'], name=region['name'], boundary=[[37, 58], [37, 59], [38, 58]])
+                row = dict(id=region['id'], name=region['name'], boundary=[[[37, 58], [37, 59], [38, 58]]])
                 encoded = json.dumps(row, ensure_ascii=False).replace("'", "''")
                 cls.cluster.sql("INSERT INTO districts(id,name,center_lat,center_lng,boundary) SELECT j->>'id',j->>'name',37,58,j->'boundary' FROM (SELECT '" + encoded + "'::jsonb j) t;", 'tayyn_tpl_installed')
             audit = ROOT / 'backend/prisma/migrations/20261018200000_driver_activity_audits/migration.sql'
@@ -238,6 +238,41 @@ class StagedResetDrillTests(unittest.TestCase):
                 self.assertEqual(json.loads(state['users'])[0], json.loads(before['users'])[0])
                 self.assertEqual(self.cluster.sql("SELECT nextval('order_number_seq')", database).strip(), '74')
 
+    def test_nested_multiple_rings_preserve_complete_saved_rows(self):
+        database = self.fresh()
+        self.cluster.sql("UPDATE districts SET boundary='[[[-90,-180],[0.125,180],[90,0],[-90,-180]],[[1,2],[2,3],[3,4]]]'::jsonb", database)
+        before = self.state(database)
+        path, report = self.snapshot(database)
+        self.assertEqual(self.state(database), before)
+        result = self.execute(database, path)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['geometry_sha256'], report['geometry_sha256'])
+        after = self.state(database)
+        for table in ('admins', 'districts', '_prisma_migrations', 'settings', 'geocoder_budget', 'sequence'):
+            self.assertEqual(after[table], before[table], table)
+        self.assertEqual(json.loads(after['users']), [row for row in json.loads(before['users']) if row['role'] == 'ADMIN'])
+
+    def test_missing_or_malformed_geometry_refuses_inspection_and_reset_without_writes(self):
+        database = self.fresh()
+        path, _ = self.snapshot(database)
+        for boundary in (
+            'null', '[]', '[[]]', '[[[1,2],[2,3]]]',
+            '[[1,2],[2,3],[3,4]]',
+            '{"type":"Polygon","coordinates":[[[1,2],[2,3],[3,4]]]}',
+            '[[[1,2],[2,3],null]]', '[[[1,2],[2,3],[3]]]',
+            '[[[1,2],[2,3],[3,4,5]]]', '[[[1,2],[2,3],[true,4]]]',
+            '[[[1,2],[2,3],["3",4]]]', '[[[1,2],[2,3],[91,4]]]',
+            '[[[1,2],[2,3],[3,-181]]]', '[[[1,2],[2,3],[1e400,4]]]',
+            '[[[1,2],[2,3],[3,4]],[]]',
+        ):
+            with self.subTest(boundary=boundary):
+                self.cluster.sql("UPDATE districts SET boundary='" + boundary + "'::jsonb WHERE id=(SELECT id FROM districts LIMIT 1)", database)
+                before = self.state(database)
+                for result in (cli(*self.args(database)), self.execute(database, path)):
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn('Every saved region must already have polygon geometry', result.stderr)
+                self.assertEqual(self.state(database), before)
+
     def test_reviewed_premigration_fallback_migrates_to_empty_final_schema(self):
         database = self.fresh('installed-pre-migration')
         self.cluster.sql("INSERT INTO transactions(id,balance_id,order_id,type,amount,balance_after) VALUES ('ambiguous-payment','balance-driver','order-a','PAYMENT',-1,99)", database)
@@ -289,7 +324,7 @@ class StagedResetDrillTests(unittest.TestCase):
                     'DELETE FROM admins', "DELETE FROM admins; UPDATE users SET role='DRIVER' WHERE role='ADMIN'",
                     "UPDATE districts SET name='Unexpected' WHERE id=(SELECT id FROM districts LIMIT 1)",
                     'DELETE FROM districts WHERE id=(SELECT id FROM districts LIMIT 1)',
-                    "INSERT INTO districts(id,name,center_lat,center_lng,boundary) VALUES ('tenth-region','Tenth',37,58,'[[37,58],[37,59],[38,58]]')",
+                    "INSERT INTO districts(id,name,center_lat,center_lng,boundary) VALUES ('tenth-region','Tenth',37,58,'[[[37,58],[37,59],[38,58]]]')",
                     "UPDATE districts SET boundary='null'::jsonb WHERE id=(SELECT id FROM districts LIMIT 1)",
                     "UPDATE _prisma_migrations SET finished_at=NULL WHERE migration_name='" + MIGRATION_NAME + "'",
                     "UPDATE _prisma_migrations SET checksum=repeat('0',64) WHERE migration_name='" + MIGRATION_NAME + "'"):
@@ -313,7 +348,7 @@ class StagedResetDrillTests(unittest.TestCase):
 
     def test_snapshot_tamper_stale_credentials_and_geometry_refuse(self):
         for sql in ("UPDATE users SET password_hash='replacement' WHERE role='ADMIN'",
-                    "UPDATE districts SET boundary='[[1,2],[2,3],[3,4]]'::jsonb WHERE id=(SELECT id FROM districts LIMIT 1)"):
+                    "UPDATE districts SET boundary='[[[1,2],[2,3],[3,4]]]'::jsonb WHERE id=(SELECT id FROM districts LIMIT 1)"):
             database = self.fresh()
             path, _ = self.snapshot(database)
             self.cluster.sql(sql, database)
