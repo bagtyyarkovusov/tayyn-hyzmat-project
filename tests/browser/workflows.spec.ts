@@ -3905,7 +3905,7 @@ test("dispatcher retries a lost wallet response without applying the adjustment 
   expect(ledger.transactions.items[0].balanceAfter).toBe("15");
 });
 
-test("driver cancellation is visible only before marking arrival", async ({
+test("driver cancellation is absent before and after marking arrival", async ({
   browser,
 }) => {
   const adminContext = await browser.newContext(),
@@ -3953,7 +3953,7 @@ test("driver cancellation is visible only before marking arrival", async ({
     await expect(trip).toBeVisible();
     await expect(
       trip.getByRole("button", { name: "Отменить заказ", exact: true }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await trip.getByRole("button", { name: "Я на месте", exact: true }).click();
     await expect(
       trip.getByRole("button", { name: "Отменить заказ", exact: true }),
