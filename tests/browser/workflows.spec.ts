@@ -973,19 +973,45 @@ test("GPS is required to go online and Online recovers after permission is grant
 test("switching driver account without logout clears the previous GPS session", async ({
   browser,
 }) => {
-  const context = await browser.newContext({
-    permissions: ["geolocation"],
-    geolocation: { latitude: 37.96, longitude: 58.32, accuracy: 10 },
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const boundary = window as any;
+    boundary.accountGpsRequests = [];
+    boundary.accountGpsWatches = [];
+    Object.defineProperty(navigator, "geolocation", {
+      value: {
+        getCurrentPosition: (success: any) =>
+          boundary.accountGpsRequests.push(success),
+        watchPosition: (success: any) => {
+          boundary.accountGpsWatches.push(success);
+          return boundary.accountGpsWatches.length;
+        },
+        // Keep the captured callbacks so the test can deliver a late OS event.
+        clearWatch: () => {},
+      },
+    });
+    boundary.accountGpsFix = (latitude: number, longitude: number) => ({
+      coords: { latitude, longitude, accuracy: 10, heading: null, speed: null },
+      timestamp: Date.now(),
+    });
   });
   const page = await context.newPage();
   try {
     await login(page, "driver");
-    await expect(page.getByRole("status", { name: /^GPS:/ })).toHaveAttribute(
-      "data-state",
-      "ready",
-    );
-    await expectLocalGpsFix(page);
-    // Navigate through browser history without reloading the application singleton.
+    await expect
+      .poll(() =>
+        page.evaluate(() => (window as any).accountGpsRequests.length),
+      )
+      .toBe(1);
+    await page.evaluate(() => {
+      const boundary = window as any;
+      boundary.accountGpsRequests[0](boundary.accountGpsFix(37.91, 58.21));
+    });
+    const gps = page.getByRole("status", { name: /^GPS:/ });
+    const location = page.getByLabel("Местоположение GPS");
+    await expect(gps).toHaveAttribute("data-state", "ready");
+    await expect(location).toContainText("37.9100, 58.2100");
+    // Navigate without reloading the singleton or losing the old OS callbacks.
     await page.evaluate(() => {
       history.pushState({}, "", "/driverLogin");
       dispatchEvent(new PopStateEvent("popstate"));
@@ -994,11 +1020,51 @@ test("switching driver account without logout clears the previous GPS session", 
     await page.getByLabel("Пароль", { exact: true }).fill(password);
     await page.getByRole("button", { name: "Войти", exact: true }).click();
     await expect(page).toHaveURL(/driverDashboard/);
-    await expect(page.getByRole("status", { name: /^GPS:/ })).toHaveAttribute(
-      "data-state",
-      /searching|blocked|ready/,
-    );
-    await expect(page.getByRole("status", { name: /^GPS:/ })).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(() => (window as any).accountGpsRequests.length),
+      )
+      .toBe(2);
+    const uploads: Array<{ lat: number; lng: number }> = [];
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        /\/driver\/(location|status)$/.test(new URL(request.url()).pathname)
+      ) {
+        const body = request.postDataJSON();
+        const position = body.position ?? body;
+        if (typeof position.lat === "number") uploads.push(position);
+      }
+    });
+    // The replacement account has not received its own location callback yet.
+    await expect(gps).toHaveAttribute("data-state", "searching");
+    await expect(location).toHaveCount(0);
+    await page.evaluate(() => {
+      const boundary = window as any;
+      boundary.accountGpsWatches[0](boundary.accountGpsFix(37.91, 58.21));
+    });
+    await expect(gps).toHaveAttribute("data-state", "searching");
+    await expect(location).toHaveCount(0);
+    expect(uploads).toEqual([]);
+    await page.evaluate(() => {
+      const boundary = window as any;
+      boundary.accountGpsRequests[1](boundary.accountGpsFix(37.97, 58.33));
+    });
+    await expect(gps).toHaveAttribute("data-state", "ready");
+    await expect(location).toContainText("37.9700, 58.3300");
+    await page
+      .getByRole("button", { name: "Выйти на линию", exact: true })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Уйти с линии", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(uploads.length).toBeGreaterThan(0);
+    expect(
+      uploads.every((point) => point.lat === 37.97 && point.lng === 58.33),
+    ).toBe(true);
+    await expect(
+      page.getByText("37.9100, 58.2100", { exact: true }),
+    ).toHaveCount(0);
   } finally {
     await context.close();
   }
