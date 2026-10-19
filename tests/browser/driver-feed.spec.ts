@@ -62,9 +62,10 @@ async function fixture(
     await page.goto("/driverDashboard");
     // GPS starts automatically; wait until the passive status shows a fix
     // so the server has a fresh location before the shift opens.
-    await expect(
-      page.getByRole("status", { name: /^GPS:/ }),
-    ).toHaveAttribute("data-state", "ready");
+    await expect(page.getByRole("status", { name: /^GPS:/ })).toHaveAttribute(
+      "data-state",
+      "ready",
+    );
     await page
       .getByRole("button", { name: "Выйти на линию", exact: true })
       .click();

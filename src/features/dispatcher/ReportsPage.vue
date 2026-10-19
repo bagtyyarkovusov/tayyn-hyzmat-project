@@ -12,12 +12,7 @@ const { data, loading, error, load } = useResource(
       })
     ).data.items,
   [],
-  [
-    "order:cancelled",
-    "driver:updated",
-    "districts:stats",
-    "balance:updated",
-  ],
+  ["order:cancelled", "driver:updated", "districts:stats", "balance:updated"],
 );
 </script>
 <template>
