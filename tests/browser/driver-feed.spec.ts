@@ -4,6 +4,7 @@ import {
   type Browser,
   type Locator,
   type Page,
+  type Request,
 } from "@playwright/test";
 import { createRequire } from "node:module";
 const require = createRequire(
@@ -134,6 +135,19 @@ async function fixture(
         data,
       });
     }
+    async function adminGet(path: string) {
+      return context.request.get(`${process.env.TEST_API_URL}${path}`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+    }
+    async function serverBalance() {
+      const response = await context.request.get(
+        `${process.env.TEST_API_URL}/driver/balance`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      expect(response.ok()).toBe(true);
+      return Number((await response.json()).amount);
+    }
     await installFixtureSession(context, "admin", adminSession, "");
     return {
       page,
@@ -141,6 +155,8 @@ async function fixture(
       create,
       post,
       adminPost,
+      adminGet,
+      serverBalance,
       driverId: user.driver.id,
       phone: user.phone as string,
       close,
@@ -245,7 +261,10 @@ for (const viewport of [
   test(`active trip has a direct next step and client call without page scrolling at ${viewport.width}x${viewport.height}`, async ({
     browser,
   }) => {
-    const { page, create, post, close } = await fixture(browser, viewport);
+    const { page, create, post, serverBalance, close } = await fixture(
+      browser,
+      viewport,
+    );
     try {
       const order = await create("Торговый центр, главный вход");
       expect(
@@ -317,6 +336,10 @@ for (const viewport of [
         .getByRole("button", { name: "Завершить поездку", exact: true })
         .click();
       await expect(feed).toHaveCount(0);
+      // Server first, then a freshly loaded screen rather than text left
+      // over from acceptance.
+      expect(await serverBalance()).toBe(475);
+      await page.reload();
       await expect(page.getByLabel("Баланс")).toHaveText("475 TMT");
     } finally {
       await close();
@@ -743,19 +766,75 @@ test("dispatcher balance shows the acceptance deduction without a second debit",
     const order = await f.create("Проверка удержанной суммы", {
       priceEstimated: 40,
     });
+    async function wallet() {
+      const response = await f.adminGet(
+        `/admin/drivers/${f.driverId}/history?page=1&limit=200`,
+      );
+      expect(response.ok()).toBe(true);
+      const body = await response.json();
+      return {
+        amount: Number(body.balance.amount),
+        ledger: (
+          body.transactions.items as {
+            id: string;
+            orderId: string | null;
+            type: string;
+            amount: string;
+            balanceAfter: string;
+          }[]
+        ).map((entry) => ({
+          id: entry.id,
+          orderId: entry.orderId,
+          type: entry.type,
+          amount: Number(entry.amount),
+          balanceAfter: Number(entry.balanceAfter),
+        })),
+      };
+    }
+    const totals = adminPage
+      .locator("section")
+      .filter({ has: adminPage.getByLabel("Сумма, TMT", { exact: true }) });
+    /** A fresh dispatcher page load, so no earlier on-screen total can pass. */
+    async function openWallet() {
+      const issued = new Set<Request>();
+      const track = (request: Request) => {
+        if (
+          new URL(request.url()).pathname.endsWith(
+            `/admin/drivers/${f.driverId}/history`,
+          )
+        )
+          issued.add(request);
+      };
+      adminPage.on("request", track);
+      const loaded = adminPage.waitForResponse((response) =>
+        issued.has(response.request()),
+      );
+      await adminPage.goto(`/adminDrivers/${f.driverId}`);
+      await loaded.finally(() => adminPage.off("request", track));
+      await adminPage
+        .getByRole("button", { name: "Баланс", exact: true })
+        .click();
+      await expect(totals.getByText("460 TMT", { exact: true })).toBeVisible();
+    }
     expect(
       (
         await f.post("/orders/accept", { orderId: order.id, etaMinutes: 10 })
       ).ok(),
     ).toBe(true);
-    await adminPage.goto(`/adminDrivers/${f.driverId}`);
-    await adminPage
-      .getByRole("button", { name: "Баланс", exact: true })
-      .click();
-    const totals = adminPage
-      .locator("section")
-      .filter({ has: adminPage.getByLabel("Сумма, TMT", { exact: true }) });
-    await expect(totals.getByText("460 TMT", { exact: true })).toBeVisible();
+    const afterAcceptance = await wallet();
+    expect(afterAcceptance.amount).toBe(460);
+    expect(await f.serverBalance()).toBe(460);
+    expect(
+      afterAcceptance.ledger.map(({ orderId, type, amount, balanceAfter }) => ({
+        orderId,
+        type,
+        amount,
+        balanceAfter,
+      })),
+    ).toEqual([
+      { orderId: order.id, type: "PAYMENT", amount: -40, balanceAfter: 460 },
+    ]);
+    await openWallet();
     await expect(totals.getByText("Удержано", { exact: true })).toHaveCount(0);
     await expect(totals).toContainText(
       "Полная стоимость списывается при принятии заказа",
@@ -764,7 +843,10 @@ test("dispatcher balance shows the acceptance deduction without a second debit",
       expect(
         (await f.post(`/orders/${action}`, { orderId: order.id })).ok(),
       ).toBe(true);
-      await expect(totals.getByText("460 TMT", { exact: true })).toBeVisible();
+      // Same wallet and the very same ledger rows: no second debit.
+      expect(await wallet()).toEqual(afterAcceptance);
+      expect(await f.serverBalance()).toBe(460);
+      await openWallet();
     }
   } finally {
     await adminPage.close();
