@@ -202,6 +202,9 @@ async function fixture(browser: Browser) {
           issued.has(response.request()) &&
           (amount === undefined ||
             Number((await response.json()).amount) === amount),
+        // Fail at this step, well inside the test timeout, when the screen
+        // never re-reads its balance.
+        { timeout: 10_000 },
       )
       .finally(() => driverPage.off("request", track));
   }
