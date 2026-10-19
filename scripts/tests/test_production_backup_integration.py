@@ -49,6 +49,9 @@ class BackupIntegrationTests(unittest.TestCase):
                 else:
                     self.fail("Owned PostgreSQL did not become ready")
                 sql("tayyn", "CREATE TABLE synthetic_ledger(id integer PRIMARY KEY, amount numeric NOT NULL); INSERT INTO synthetic_ledger VALUES (1,15.5),(2,-3.25);")
+                sql("tayyn", "CREATE TABLE users(id text PRIMARY KEY, full_name text NOT NULL); CREATE TABLE drivers(id text PRIMARY KEY, user_id text, approved_by text, approved_at timestamp(3), blocked_by text, blocked_at timestamp(3), block_reason text); INSERT INTO users VALUES ('admin','Original dispatcher'),('driver','Synthetic driver'); INSERT INTO drivers VALUES ('driver-a','driver','admin','2026-10-01','missing-actor','2026-10-02','Synthetic block');")
+                migration = SCRIPT.parents[2] / "backend/prisma/migrations/20261018200000_driver_activity_audits/migration.sql"
+                sql("tayyn", migration.read_text())
                 identity = root / "owner.agekey"
                 command(["age-keygen", "-o", str(identity)])
                 recipient = command(["age-keygen", "-y", str(identity)]).stdout.decode().strip()
@@ -65,6 +68,9 @@ class BackupIntegrationTests(unittest.TestCase):
                 command(cli + ["restore", "--archive", str(archive), "--identity", str(identity), "--database", "tayyn_restore_verified"])
                 fingerprint = "SELECT id,amount FROM synthetic_ledger ORDER BY id"
                 self.assertEqual(sql("tayyn", fingerprint), sql("tayyn_restore_verified", fingerprint))
+                audits = "SELECT id,actor_name,driver_name,action,reason,created_at FROM driver_activity_audits ORDER BY id"
+                self.assertEqual(sql("tayyn", audits), sql("tayyn_restore_verified", audits))
+                self.assertEqual(sql("tayyn_restore_verified", "SELECT count(*) FROM driver_activity_audits").strip(), b"2")
                 tampered = root / "tampered.dump.age"
                 payload = bytearray(archive.read_bytes())
                 payload[-5] ^= 1

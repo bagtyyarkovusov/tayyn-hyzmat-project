@@ -195,7 +195,6 @@ async function logout() {
       },
     ]"
   >
-    <AdminMessageAlert v-if="!driver" />
     <DriverOfferOverlay
       v-if="verifiedDriverView && route.path !== '/driverDashboard'"
     />
@@ -297,7 +296,13 @@ async function logout() {
           /></Button>
         </div>
       </header>
-      <CancellationReviewBanner v-if="!driver" />
+      <div
+        v-if="!driver"
+        class="dispatcher-alerts grid max-h-[40dvh] shrink-0 overflow-y-auto overscroll-contain border-b bg-card md:grid-cols-[repeat(auto-fit,minmax(20rem,1fr))] empty:hidden"
+      >
+        <CancellationReviewBanner />
+        <AdminMessageAlert />
+      </div>
       <p
         v-if="driver && !networkOnline"
         role="status"

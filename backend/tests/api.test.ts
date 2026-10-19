@@ -3408,3 +3408,119 @@ test('driver cancellation reaches every signed-in driver socket with its exact a
     assert.equal(event.status, 'CANCELLED');
   }
 });
+
+test('dispatcher Activity retains each cancellation and resolution with order number and actual actor', async () => {
+  const job = await order(35);
+  assert.equal((await request('/orders/accept', driverToken, { orderId: job.id })).status, 200);
+  assert.equal((await request('/orders/cancel', driverToken, { orderId: job.id })).status, 200);
+  const before = (await request('/admin/activity?limit=100', adminToken)).data.items.filter((event: any) => event.orderId === job.id);
+  assert.equal(before.length, 1);
+  assert.equal(before[0].type, 'order_cancelled');
+  assert.equal(before[0].actor, 'Synthetic driver');
+  assert.equal(before[0].orderNumber, job.orderNumber);
+  assert.match(before[0].summary, new RegExp(`#${job.orderNumber}`));
+  assert.equal((await request(`/admin/orders/${job.id}/reoffer`, adminToken, {})).status, 200);
+  assert.equal((await request(`/admin/orders/${job.id}/reoffer`, adminToken, {})).status, 409);
+  const after = (await request('/admin/activity?limit=100', adminToken)).data.items.filter((event: any) => event.orderId === job.id);
+  assert.equal(after.length, 2);
+  assert.ok(after.some((event: any) => event.id === before[0].id && event.type === 'order_cancelled' && event.at === before[0].at));
+  assert.ok(after.some((event: any) => event.type === 'order_reoffered' && event.actor === 'Test dispatcher'));
+  assert.equal((await request('/orders/accept', otherToken, { orderId: job.id })).status, 200);
+  assert.equal((await request('/orders/cancel', otherToken, { orderId: job.id })).status, 200);
+  assert.equal((await request(`/admin/orders/${job.id}/final-cancel`, adminToken, {})).status, 200);
+  assert.equal((await request(`/admin/orders/${job.id}/final-cancel`, adminToken, {})).status, 409);
+  const final = (await request('/admin/activity?limit=100', adminToken)).data.items.filter((event: any) => event.orderId === job.id);
+  assert.equal(final.length, 4);
+  assert.equal(final.filter((event: any) => event.type === 'order_cancelled').length, 2);
+  assert.ok(final.some((event: any) => event.type === 'order_final_cancelled' && event.actor === 'Test dispatcher'));
+  const directly = await order(20);
+  assert.equal((await request(`/admin/orders/${directly.id}/cancel`, adminToken, {})).status, 200);
+  const direct = (await request('/admin/activity?limit=100', adminToken)).data.items.filter((event: any) => event.orderId === directly.id);
+  assert.equal(direct.length, 1);
+  assert.equal(direct[0].actor, 'Test dispatcher');
+});
+
+test('dispatcher Activity preserves repeated approval and block events after driver state changes', async () => {
+  const created = await request('/admin/drivers', adminToken, { phone: '+99360000871', fullName: 'Activity repeat driver', password });
+  assert.equal(created.status, 201);
+  const driverId = created.data.id;
+  assert.equal((await request(`/admin/drivers/${driverId}/block`, adminToken, { reason: 'First pause' })).status, 200);
+  assert.equal((await request(`/admin/drivers/${driverId}/unblock`, adminToken, {})).status, 200);
+  assert.equal((await request(`/admin/drivers/${driverId}/block`, adminToken, { reason: 'Second pause' })).status, 200);
+  assert.equal((await request(`/admin/drivers/${driverId}/unblock`, adminToken, {})).status, 200);
+  assert.equal((await request(`/admin/drivers/${driverId}/approve`, adminToken, {})).status, 200);
+  const history = (await request('/admin/activity?limit=100', adminToken)).data.items.filter((event: any) => event.driverId === driverId);
+  assert.equal(history.filter((event: any) => event.type === 'driver_approved').length, 3);
+  assert.equal(history.filter((event: any) => event.type === 'driver_blocked').length, 2);
+  assert.equal(new Set(history.map((event: any) => event.id)).size, 5);
+  assert.ok(history.every((event: any) => event.actor === 'Test dispatcher' && !Number.isNaN(Date.parse(event.at))));
+  assert.ok(history.some((event: any) => event.summary.includes('First pause')));
+  assert.ok(history.some((event: any) => event.summary.includes('Second pause')));
+  const operationId = randomUUID();
+  for (let retry = 0; retry < 2; retry++) assert.equal((await request(`/admin/drivers/${driverId}/balance`, adminToken, { amount: 50, type: 'TOPUP', operationId })).status, 200);
+  const withBalance = (await request('/admin/activity?limit=100', adminToken)).data.items.filter((event: any) => event.type === 'balance_adjusted' && event.summary.includes('Activity repeat driver'));
+  assert.equal(withBalance.length, 1);
+  assert.equal(withBalance[0].actor, 'Test dispatcher');
+});
+
+test('dispatcher unread previews recover the latest message per driver and respect shared read cursors', async () => {
+  await prisma.message.deleteMany();
+  await prisma.driver.updateMany({ data: { lastReadByAdminAt: null, lastReadByAdminMessageId: null } });
+  const driver = (await request('/driver/profile', driverToken)).data;
+  const other = (await request('/driver/profile', otherToken)).data;
+  const first = await request('/driver/messages', driverToken, { body: 'Older unread preview' });
+  const newest = await request('/driver/messages', driverToken, { body: 'Newest unread preview' });
+  const otherMessage = await request('/driver/messages', otherToken, { body: 'Second driver preview' });
+  await request('/admin/messages', adminToken, { broadcast: true, body: 'Exclude admin broadcasts' });
+  const inbox = (await request('/admin/messages/unread', adminToken)).data;
+  assert.equal(inbox.total, 2);
+  assert.deepEqual(inbox.driverIds.sort(), [driver.id, other.id].sort());
+  assert.deepEqual(inbox.items.map((item: any) => [item.driverId, item.driverName, item.message.body]), [
+    [other.id, 'Synthetic driver', 'Second driver preview'], [driver.id, 'Synthetic driver', 'Newest unread preview']
+  ]);
+  assert.equal(inbox.items[0].message.id, otherMessage.data.id);
+  assert.equal(inbox.items[1].message.id, newest.data.id);
+  assert.equal((await request(`/admin/drivers/${driver.id}/messages/read`, adminToken, { throughMessageId: first.data.id })).status, 204);
+  assert.equal((await request('/admin/messages/unread', adminToken)).data.total, 2);
+  assert.equal((await request(`/admin/drivers/${driver.id}/messages/read`, adminToken, { throughMessageId: newest.data.id })).status, 204);
+  const remaining = (await request('/admin/messages/unread', adminToken)).data;
+  assert.equal(remaining.total, 1);
+  assert.deepEqual(remaining.driverIds, [other.id]);
+  assert.equal(remaining.items[0].message.body, 'Second driver preview');
+  assert.equal((await request('/admin/messages/unread', driverToken)).status, 403);
+});
+
+test('dispatcher Activity migration preserves only known legacy status facts without inventing actors', async () => {
+  const migration = readFileSync(join(process.cwd(), 'prisma/migrations/20261018200000_driver_activity_audits/migration.sql'), 'utf8');
+  const schema = `activity_migration_${randomUUID().replaceAll('-', '')}`;
+  await prisma.$transaction(async tx => {
+    await tx.$executeRawUnsafe(`CREATE SCHEMA "${schema}"`);
+    await tx.$executeRawUnsafe(`SET LOCAL search_path TO "${schema}"`);
+    await tx.$executeRawUnsafe('CREATE TABLE users (id TEXT PRIMARY KEY, full_name TEXT)');
+    await tx.$executeRawUnsafe('CREATE TABLE drivers (id TEXT PRIMARY KEY, user_id TEXT, approved_by TEXT, approved_at TIMESTAMP(3), blocked_by TEXT, blocked_at TIMESTAMP(3), block_reason TEXT)');
+    await tx.$executeRawUnsafe("INSERT INTO users VALUES ('admin','Original dispatcher'), ('driver','Legacy driver')");
+    await tx.$executeRawUnsafe("INSERT INTO drivers VALUES ('known','driver','admin','2026-10-01','missing-actor','2026-10-02','Legacy reason'), ('unknown','driver',NULL,NULL,NULL,NULL,NULL)");
+    for (const statement of migration.replace(/--[^\n]*/g, '').split(';').map(value => value.trim()).filter(Boolean)) await tx.$executeRawUnsafe(statement);
+    const rows = await tx.$queryRawUnsafe<Array<{ action: string; actor_name: string | null; driver_name: string; reason: string | null; at: string }>>("SELECT action, actor_name, driver_name, reason, to_char(created_at, 'YYYY-MM-DD') AS at FROM driver_activity_audits ORDER BY created_at");
+    assert.deepEqual(rows, [
+      { action: 'APPROVED', actor_name: 'Original dispatcher', driver_name: 'Legacy driver', reason: null, at: '2026-10-01' },
+      { action: 'BLOCKED', actor_name: null, driver_name: 'Legacy driver', reason: 'Legacy reason', at: '2026-10-02' }
+    ]);
+    await tx.$executeRawUnsafe(`DROP SCHEMA "${schema}" CASCADE`);
+  });
+});
+
+test('cancellation resolution socket carries the exact resolved attempt identity across a reoffer', async () => {
+  const job = await order(35);
+  assert.equal((await request('/orders/accept', driverToken, { orderId: job.id })).status, 200);
+  const cancelled = (await request('/orders/cancel', driverToken, { orderId: job.id })).data;
+  const admin = await socket(adminToken);
+  const eventPromise = nextSocketEvent<any>(admin, 'order:reoffered');
+  const response = await request(`/admin/orders/${job.id}/reoffer`, adminToken, {});
+  assert.equal(response.status, 200);
+  const event = await eventPromise;
+  assert.equal(response.data.resolvedNotificationEventId, cancelled.notificationEventId);
+  assert.equal(event.resolvedNotificationEventId, cancelled.notificationEventId);
+  assert.equal(response.data.resolvedOfferAttemptId, cancelled.offerAttemptId);
+  assert.notEqual(response.data.notificationEventId, cancelled.notificationEventId);
+});

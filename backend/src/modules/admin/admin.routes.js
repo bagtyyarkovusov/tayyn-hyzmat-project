@@ -101,8 +101,7 @@ router.get('/orders', validate({ query: listOrdersQuerySchema }), controller.lis
 router.post('/orders/:id/cancel', validate({ params: orderIdParamSchema, body: blockSchema }), controller.cancelOrder);
 router.post('/orders/:id/force-resolve', validate({ params: orderIdParamSchema, body: resolveOrderSchema }), controller.forceResolveOrder);
 
-// "Кто и что делал" - see admin.service.js#getActivity for exactly what
-// this aggregates and its one honest gap (order cancellations have no actor).
+// Durable driver, balance and order-resolution history, with actor attribution.
 router.get('/activity', validate({ query: activityQuerySchema }), controller.activity);
 
 // "Границы районов" editor (AdminDistrictBoundaries.vue) - separate from

@@ -60,13 +60,17 @@ async function withWallets(drivers) {
 
 async function createDriver({ phone, fullName, password }, actorId) {
   const passwordHash = await hashPassword(password);
-  const user = await prisma.user.create({
-    data: {
-      role: 'DRIVER', phone, fullName, passwordHash,
-      driver: { create: { status: 'APPROVED', approvedAt: new Date(), approvedBy: actorId } },
-      balance: { create: { amount: 0, currency: 'TMT' } }
-    },
-    select: { driver: { select: { id: true } } }
+  const user = await prisma.$transaction(async tx => {
+    const user = await tx.user.create({
+      data: {
+        role: 'DRIVER', phone, fullName, passwordHash,
+        driver: { create: { status: 'APPROVED', approvedAt: new Date(), approvedBy: actorId } },
+        balance: { create: { amount: 0, currency: 'TMT' } }
+      },
+      select: { driver: { select: { id: true } } }
+    });
+    await recordDriverActivity(tx, user.driver.id, actorId, 'APPROVED');
+    return user;
   });
   const driver = await getDriver(user.driver.id);
   safeEmit(io => io.to(rooms.admins()).emit('driver:registered', driver));
@@ -129,17 +133,29 @@ async function withUnreadFlag(drivers) {
   });
 }
 
-// Backs AdminNav.vue's global "new message" badge - cheap enough to call on
-// every admin page load (see AdminNav.vue's mounted()) since it only
-// selects 3 columns per driver, not the full list/balance/vehicle payload
-// listDrivers returns.
+// One statement reads the shared cursor and latest inbound message from the
+// same database snapshot. GET never marks messages read.
+async function listUnreadMessages() {
+  const rows = await prisma.$queryRaw`
+    SELECT d.id AS "driverId", u.full_name AS "driverName", m.id,
+      m.sender_id AS "senderId", m.receiver_id AS "receiverId", m.body,
+      m.sent_at AS "sentAt", m.is_broadcast AS "isBroadcast"
+    FROM drivers d JOIN users u ON u.id = d.user_id
+    CROSS JOIN LATERAL (
+      SELECT id, sender_id, receiver_id, body, sent_at, is_broadcast
+      FROM messages WHERE sender_id = d.user_id AND is_broadcast = false
+      ORDER BY sent_at DESC, id DESC LIMIT 1
+    ) m
+    WHERE d.status = 'APPROVED' AND (
+      d.last_read_by_admin_at IS NULL OR m.sent_at > d.last_read_by_admin_at OR
+      (m.sent_at = d.last_read_by_admin_at AND d.last_read_by_admin_message_id IS NOT NULL AND m.id > d.last_read_by_admin_message_id)
+    )
+    ORDER BY m.sent_at DESC, m.id DESC`;
+  const items = rows.map(({ driverId, driverName, ...message }) => ({ driverId, driverName, message }));
+  return { driverIds: items.map(item => item.driverId), items, total: items.length };
+}
 async function listUnreadDriverIds() {
-  const drivers = await prisma.driver.findMany({
-    where: { status: 'APPROVED' },
-    select: { id: true, userId: true, lastReadByAdminAt: true, lastReadByAdminMessageId: true }
-  });
-  const withFlags = await withUnreadFlag(drivers);
-  return withFlags.filter((d) => d.hasUnreadMessage).map((d) => d.id);
+  return (await listUnreadMessages()).driverIds;
 }
 
 // Called when an admin opens a driver's chat thread (see
@@ -185,16 +201,27 @@ async function getDriver(driverId) {
   return (await withWallets([omitPushToken(driver)]))[0];
 }
 
+async function recordDriverActivity(tx, driverId, actorId, action, reason = null) {
+  const [driver, actor] = await Promise.all([
+    tx.driver.findUniqueOrThrow({ where: { id: driverId }, include: { user: { select: { fullName: true } } } }),
+    tx.user.findUniqueOrThrow({ where: { id: actorId }, select: { fullName: true } })
+  ]);
+  await tx.driverActivityAudit.create({ data: { driverId, actorId, actorName: actor.fullName, driverName: driver.user.fullName, action, reason } });
+}
+
 async function approveDriver(driverId, actorId) {
   const driver = await findDriverOrThrow(driverId);
   const updated = await prisma.$transaction(async tx => {
     await tx.$queryRaw`SELECT id FROM users WHERE id = ${driver.userId} FOR UPDATE`;
+    const previous = await tx.driver.findUniqueOrThrow({ where: { id: driverId } });
     const user = await tx.user.findUniqueOrThrow({ where: { id: driver.userId } });
     if (user.status === 'BLOCKED') throw ApiError.conflict('Аккаунт удалён. Восстановление недоступно', { code: 'ACCOUNT_DELETED' });
-    return tx.driver.update({
+    const result = await tx.driver.update({
       where: { id: driverId },
       data: { status: 'APPROVED', approvedAt: new Date(), approvedBy: actorId, blockedAt: null, blockReason: null }
     });
+    if (previous.status !== 'APPROVED') await recordDriverActivity(tx, driverId, actorId, 'APPROVED');
+    return result;
   });
 
   safeEmit((io) => {
@@ -211,6 +238,7 @@ async function blockDriver(driverId, actorId, reason) {
 
   const updated = await prisma.$transaction(async tx => {
     await tx.$queryRaw`SELECT id FROM users WHERE id = ${driver.userId} FOR UPDATE`;
+    const previous = await tx.driver.findUniqueOrThrow({ where: { id: driverId } });
     await authService.revokeSessionGeneration(tx, driver.userId);
     const result = await tx.driver.update({
       where: { id: driverId },
@@ -219,6 +247,7 @@ async function blockDriver(driverId, actorId, reason) {
         blockReason: reason || null, isOnline: false, shiftDeviceId: null, isAvailable: false
       }
     });
+    if (previous.status !== 'BLOCKED') await recordDriverActivity(tx, driverId, actorId, 'BLOCKED', reason || null);
     return result;
   });
   await authService.publishSessionRevocation(driver.userId);
@@ -243,15 +272,20 @@ async function unblockDriver(driverId, actorId) {
   const driver = await findDriverOrThrow(driverId);
   const updated = await prisma.$transaction(async tx => {
     await tx.$queryRaw`SELECT id FROM users WHERE id = ${driver.userId} FOR UPDATE`;
+    const previous = await tx.driver.findUniqueOrThrow({ where: { id: driverId } });
     const user = await tx.user.findUniqueOrThrow({ where: { id: driver.userId } });
     if (user.status === 'BLOCKED') throw ApiError.conflict('Аккаунт удалён. Восстановление недоступно', { code: 'ACCOUNT_DELETED' });
-    return tx.driver.update({
+    const result = await tx.driver.update({
       where: { id: driverId },
       data: { status: 'APPROVED', blockedAt: null, blockReason: null, blockedBy: null, approvedAt: new Date(), approvedBy: actorId }
     });
+    if (previous.status !== 'APPROVED') await recordDriverActivity(tx, driverId, actorId, 'APPROVED');
+    return result;
   });
 
-  safeEmit((io) => io.to(rooms.driver(driverId)).emit('driver:approved', { driverId }));
+  safeEmit((io) => {
+    io.to(rooms.driver(driverId)).emit('driver:approved', { driverId });
+  });
   await districtsService.broadcastDistrictStats();
   logger.info({ driverId, actorId }, 'Driver unblocked');
   return updated;
@@ -287,6 +321,7 @@ async function deleteDriver(driverId, actorId) {
       blockReason: 'Аккаунт удалён', isOnline: false, isAvailable: false,
       pendingDeviceId: null, pendingDeviceLabel: null, pendingDeviceRequestedAt: null
     } });
+    await recordDriverActivity(tx, driverId, actorId, 'BLOCKED', 'Аккаунт удалён');
   });
   safeEmit(io => {
     io.to(rooms.driver(driverId)).emit('session:revoked', { message: 'Аккаунт удалён' });
@@ -555,86 +590,63 @@ async function listOrders({ status, page, limit, customerPhone, driverPhone, ord
   };
 }
 
-// "Кто и что делал" - a real activity feed built from data the schema
-// already tracks (Driver.approvedBy/blockedBy, Transaction.createdBy),
-// resolved from opaque user-id strings to actual admin names in one batch
-// lookup, rather than a dedicated audit-log table (none exists - adding one
-// would mean a schema migration on a live database, out of scope for a
-// frontend-driven feature request). Order cancellations are included too,
-// but with no admin identity: Order has no "cancelledBy" column, so all we
-// can honestly show for that one event type is the free-text cancelReason
-// already recorded (which driver-side and admin-side cancels both set to a
-// distinguishing default, e.g. "Отменено администратором") - not a name.
+// Merge durable source records; order resolution history survives reoffer.
 async function getActivity({ limit = 50 } = {}) {
-  const [approvals, blocks, transactions, cancellations] = await Promise.all([
-    prisma.driver.findMany({
-      where: { approvedAt: { not: null } },
-      orderBy: { approvedAt: 'desc' },
-      take: limit,
-      include: { user: { select: { fullName: true } } }
-    }),
-    prisma.driver.findMany({
-      where: { blockedAt: { not: null } },
-      orderBy: { blockedAt: 'desc' },
-      take: limit,
-      include: { user: { select: { fullName: true } } }
+  const [driverEvents, transactions, resolutions] = await Promise.all([
+    prisma.driverActivityAudit.findMany({
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: limit
     }),
     prisma.transaction.findMany({
       where: { createdBy: { not: null } },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: limit,
       include: { balance: { include: { user: { select: { fullName: true } } } } }
     }),
-    prisma.order.findMany({
-      where: { status: 'CANCELLED' },
-      orderBy: { cancelledAt: 'desc' },
-      take: limit,
-      include: { driver: { include: { user: { select: { fullName: true } } } } }
+    prisma.orderResolutionAudit.findMany({
+      where: { action: { in: ['DRIVER_CANCELLED', 'ADMIN_CANCELLED', 'REOFFER', 'FINAL_CANCEL', 'FORCE_COMPLETED'] } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: limit,
+      include: { actor: { select: { fullName: true } }, order: { select: { orderNumber: true } } }
     })
   ]);
-
-  const actorIds = new Set();
-  approvals.forEach((d) => d.approvedBy && actorIds.add(d.approvedBy));
-  blocks.forEach((d) => d.blockedBy && actorIds.add(d.blockedBy));
-  transactions.forEach((t) => t.createdBy && actorIds.add(t.createdBy));
-
-  const actors = actorIds.size
-    ? await prisma.user.findMany({ where: { id: { in: [...actorIds] } }, select: { id: true, fullName: true } })
-    : [];
-  const actorName = new Map(actors.map((a) => [a.id, a.fullName]));
-
+  const actorIds = [...new Set(transactions.map(t => t.createdBy).filter(Boolean))];
+  const actors = await prisma.user.findMany({
+    where: { id: { in: actorIds } }, select: { id: true, fullName: true }
+  });
+  const actorName = new Map(actors.map(actor => [actor.id, actor.fullName]));
+  const names = {
+    DRIVER_CANCELLED: ['order_cancelled', 'Отменён заказ'],
+    ADMIN_CANCELLED: ['order_cancelled', 'Отменён заказ'],
+    REOFFER: ['order_reoffered', 'Повторно предложен заказ'],
+    FINAL_CANCEL: ['order_final_cancelled', 'Окончательно отменён заказ'],
+    FORCE_COMPLETED: ['order_force_completed', 'Завершён диспетчером заказ']
+  };
   const events = [
-    ...approvals.map((d) => ({
-      id: `approve-${d.id}`,
-      type: 'driver_approved',
-      at: d.approvedAt,
-      actor: actorName.get(d.approvedBy) || null,
-      summary: `Одобрен водитель ${d.user.fullName}`
+    ...driverEvents.map(event => ({
+      id: `driver-${event.id}`,
+      type: event.action === 'APPROVED' ? 'driver_approved' : 'driver_blocked',
+      at: event.createdAt,
+      actor: event.actorName,
+      driverId: event.driverId,
+      summary: `${event.action === 'APPROVED' ? 'Одобрен' : 'Заблокирован'} водитель ${event.driverName}${event.reason ? ` (${event.reason})` : ''}`
     })),
-    ...blocks.map((d) => ({
-      id: `block-${d.id}`,
-      type: 'driver_blocked',
-      at: d.blockedAt,
-      actor: actorName.get(d.blockedBy) || null,
-      summary: `Заблокирован водитель ${d.user.fullName}${d.blockReason ? ` (${d.blockReason})` : ''}`
-    })),
-    ...transactions.map((t) => ({
+    ...transactions.map(t => ({
       id: `tx-${t.id}`,
       type: 'balance_adjusted',
       at: t.createdAt,
       actor: actorName.get(t.createdBy) || null,
       summary: `Баланс ${t.balance.user.fullName}: ${Number(t.amount) >= 0 ? '+' : ''}${t.amount} TMT (${t.type})`
     })),
-    ...cancellations.map((o) => ({
-      id: `cancel-${o.id}`,
-      type: 'order_cancelled',
-      at: o.cancelledAt,
-      actor: null,
-      summary: `Отменён заказ ${o.driver ? 'у ' + o.driver.user.fullName : '(не назначен)'}${o.cancelReason ? `: ${o.cancelReason}` : ''}`
+    ...resolutions.map(event => ({
+      id: `resolution-${event.id}`,
+      type: names[event.action][0],
+      at: event.createdAt,
+      actor: event.actor.fullName,
+      orderId: event.orderId,
+      orderNumber: event.order.orderNumber,
+      driverId: event.driverId,
+      summary: `${names[event.action][1]} #${event.order.orderNumber}${event.reason ? `: ${event.reason}` : ''}`
     }))
   ];
-
-  events.sort((a, b) => new Date(b.at) - new Date(a.at));
+  events.sort((a, b) => new Date(b.at) - new Date(a.at) || b.id.localeCompare(a.id));
   return events.slice(0, limit);
 }
 
@@ -692,5 +704,6 @@ module.exports = {
   listDistricts,
   updateDistrictBoundary,
   markMessagesRead,
-  listUnreadDriverIds
+  listUnreadDriverIds,
+  listUnreadMessages
 };

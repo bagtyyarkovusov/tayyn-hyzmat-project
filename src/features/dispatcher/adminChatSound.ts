@@ -2,7 +2,10 @@ const cooldownMs = 3_000;
 const maximumPlaybackMs = 750;
 
 /** Optional browser audio. Banners remain available when coordination or audio fails. */
-export function createAdminChatSound(adminId: () => string | null) {
+export function createAdminChatSound(
+  adminId: () => string | null,
+  kind: "chat" | "cancellation" = "chat",
+) {
   // Logout clears the reactive account before this shell unmounts. Cleanup
   // must still target the account that received this tab's message preview.
   const account = adminId();
@@ -11,6 +14,7 @@ export function createAdminChatSound(adminId: () => string | null) {
   let playing: { id: string; audio: HTMLAudioElement } | null = null;
   let deadline: ReturnType<typeof setTimeout> | undefined;
   const cancelled = new Set<string>();
+  const pending = new Map<string, ReturnType<typeof setTimeout>>();
 
   function key(id: string) {
     return `tayyn.admin.chat-sound.${id}`;
@@ -31,6 +35,8 @@ export function createAdminChatSound(adminId: () => string | null) {
 
   function rememberCancellation(id: string) {
     cancelled.add(id);
+    clearTimeout(pending.get(id));
+    pending.delete(id);
     if (cancelled.size > 100)
       cancelled.delete(cancelled.values().next().value as string);
     stopLocal(id);
@@ -65,25 +71,64 @@ export function createAdminChatSound(adminId: () => string | null) {
 
   async function play(id: string, isCurrent: () => boolean) {
     const eligible = () =>
-      !disposed && adminId() === account && !cancelled.has(id) && isCurrent();
-    if (!account || !eligible()) return;
+      !disposed &&
+      adminId() === account &&
+      !cancelled.has(id) &&
+      requestedMessageId === id &&
+      isCurrent();
     requestedMessageId = id;
+    if (!account || !eligible()) return;
     if (!navigator.locks) return;
     try {
       await navigator.locks.request(key(account), () => {
         if (!eligible()) return;
         const cancellation = localStorage.getItem(`${key(account)}.cancel`);
         if (cancellation && JSON.parse(cancellation).id === id) return;
+        const eventKey = `${key(account)}.events`;
+        const heard: string[] = JSON.parse(
+          localStorage.getItem(eventKey) || "[]",
+        );
+        const identity = `${kind}:${id}`;
+        if (heard.includes(identity)) return;
+        const remember = () =>
+          localStorage.setItem(
+            eventKey,
+            JSON.stringify([...heard.slice(-99), identity]),
+          );
         const now = Date.now();
         const last = Number(localStorage.getItem(key(account)));
-        if (last > 0 && now >= last && now - last < cooldownMs) return;
+        if (last > 0 && now >= last && now - last < cooldownMs) {
+          if (localStorage.getItem(`${key(account)}.kind`) === kind) {
+            // A rapid same-kind burst shares one chime, even across tabs.
+            remember();
+          } else {
+            clearTimeout(pending.get(id));
+            pending.set(
+              id,
+              setTimeout(
+                () => {
+                  pending.delete(id);
+                  if (eligible()) void play(id, isCurrent);
+                },
+                cooldownMs - (now - last) + 10,
+              ),
+            );
+          }
+          return;
+        }
         // Claim the shared cooldown under the lock before any playback. If
         // storage is unavailable, fail silent rather than duplicate tab audio.
         localStorage.setItem(key(account), String(now));
+        localStorage.setItem(`${key(account)}.kind`, kind);
+        remember();
         if (!eligible()) return;
         stopLocal();
-        const audio = new Audio("/sounds/admin-chat-chime.wav");
-        audio.volume = 0.25;
+        const audio = new Audio(
+          kind === "chat"
+            ? "/sounds/admin-chat-chime.wav"
+            : "/sounds/admin-cancellation-chime.wav",
+        );
+        audio.volume = kind === "chat" ? 0.25 : 0.4;
         audio.loop = false;
         playing = { id, audio };
         const stop = () => {
@@ -113,6 +158,8 @@ export function createAdminChatSound(adminId: () => string | null) {
   function dispose() {
     if (disposed) return;
     disposed = true;
+    pending.forEach(clearTimeout);
+    pending.clear();
     if (requestedMessageId) cancel(requestedMessageId);
     window.removeEventListener("storage", storageChanged);
     stopLocal();

@@ -377,6 +377,22 @@ model OrderAssignment {
 // complete. This is intentionally separate from cancelReason: a forced
 // completion is not a cancellation and must remain attributable to the admin
 // who performed it.
+// Snapshot names keep administrative history readable after profile changes.
+model DriverActivityAudit {
+  id         String   @id @default(uuid())
+  driverId   String   @map("driver_id")
+  actorId    String?  @map("actor_id")
+  actorName  String?  @map("actor_name")
+  driverName String   @map("driver_name")
+  action     String
+  reason     String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt, id])
+  @@index([driverId, createdAt])
+  @@map("driver_activity_audits")
+}
+
 model OrderResolutionAudit {
   id        String   @id @default(uuid())
   orderId   String   @map("order_id")
