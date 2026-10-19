@@ -50,12 +50,7 @@ public final class ShiftService extends Service {
     longitude = fix.getLongitude();
     accuracy = fix.getAccuracy();
     // The single worker serialises this with scheduled reports.
-    FirstReportPolicy policy = firstReport;
-    if (policy.fixAccepted())
-      worker.execute(
-          () -> {
-            if (policy.stillNeeded()) tick();
-          });
+    firstReport.fix(worker, this::tick);
   }
 
   public static void createChannels(Context context) {
@@ -219,8 +214,7 @@ public final class ShiftService extends Service {
       if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
           != PackageManager.PERMISSION_GRANTED) throw new SecurityException("location");
       acquisition = new LocationAcquisition(this, main);
-      acquisition.start(this::acceptLocation);
-      worker.scheduleWithFixedDelay(this::tick, 0, 10, TimeUnit.SECONDS);
+      FirstReportPolicy.start(worker, this::tick, () -> acquisition.start(this::acceptLocation));
     } catch (RuntimeException error) {
       finishShift("Разрешите точный GPS в настройках приложения.");
     }
