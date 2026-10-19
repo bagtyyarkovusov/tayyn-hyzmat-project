@@ -138,4 +138,4 @@ Caddy automatic TLS remains optional, but its validation failed on these hosts a
 
 The same GitHub build and `apply-release.py` command can be reused. SSH, DNS, secrets, persistent volumes and monitoring state remain separate from release files. Record the release directory, commit, artifact run, checksums, migration result, backup name and acceptance checks in the handoff after every deployment.
 
-A later operator command could automate artifact download, checksum comparison, upload and invocation of the existing updater. It should require an exact successful build and preserve these gates. Automatic database restoration, unreviewed deployment on every push, and changing SSH during an app update should remain outside that command.
+The [release operator helpers](../scripts/production/release/README.md) now cover artifact download, signature and checksum verification, upload, staging and invocation of the existing updater, with durable resumable steps. They require a signed, verified build and preserve these gates. Automatic database restoration, unreviewed deployment on every push, and changing SSH during an app update remain outside them.
