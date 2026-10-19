@@ -259,16 +259,21 @@ test("signed out offline registration stays a local form without submitting an a
 
 test("saved admin session shows the same immediate offline screen without mounting a dashboard", async ({
   page,
+  context,
 }) => {
-  await page.goto("/adminLogin");
-  await page.getByLabel("Номер телефона").fill("60000000");
-  await page
+  // Authenticate in a separate document: the overview heading appears before
+  // its nested requests finish, and those can otherwise race the offline reload.
+  const signInPage = await context.newPage();
+  await signInPage.goto("/adminLogin");
+  await signInPage.getByLabel("Номер телефона").fill("60000000");
+  await signInPage
     .getByLabel("Пароль", { exact: true })
     .fill(process.env.TEST_ACCOUNT_PASSWORD!);
-  await page.getByRole("button", { name: "Войти", exact: true }).click();
+  await signInPage.getByRole("button", { name: "Войти", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Обзор", exact: true }),
+    signInPage.getByRole("heading", { name: "Обзор", exact: true }),
   ).toBeVisible();
+  await signInPage.close();
   await page.addInitScript(() =>
     Object.defineProperty(navigator, "onLine", {
       configurable: true,
@@ -279,7 +284,7 @@ test("saved admin session shows the same immediate offline screen without mounti
   page.on("request", (request) => {
     if (request.url().includes("/api/admin/")) requests++;
   });
-  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.goto("/adminDashboard", { waitUntil: "domcontentloaded" });
   await expect(
     page.getByText("Нет интернета. Данные входа сохранены.", { exact: true }),
   ).toBeVisible({ timeout: 2000 });
