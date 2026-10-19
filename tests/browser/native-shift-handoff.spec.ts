@@ -126,6 +126,9 @@ test("starting a native shift keeps the connection indicator green until the ser
       "ready",
     );
     await screenshotHeader(page, "online");
+    await page.setViewportSize({ width: 360, height: 800 });
+    await screenshotHeader(page, "online-360");
+    await page.setViewportSize({ width: 390, height: 844 });
 
     // After the service has connected, losing it is a real disconnection.
     await page.evaluate(() => {
