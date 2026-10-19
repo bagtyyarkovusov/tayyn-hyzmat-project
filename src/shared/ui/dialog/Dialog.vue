@@ -4,7 +4,15 @@ import { DialogRoot, useForwardProps } from "reka-ui";
 import { reactiveOmit, useVModel } from "@vueuse/core";
 import { useOverlay } from "@/shared/overlays";
 
-const props = withDefaults(defineProps<DialogRootProps>(), { open: undefined });
+const props = withDefaults(
+  defineProps<
+    DialogRootProps & {
+      /** Native Back leaves a newly opened dialog alone for this long. */
+      backGuardMs?: number;
+    }
+  >(),
+  { open: undefined, backGuardMs: 0 },
+);
 const emits = defineEmits<DialogRootEmits>();
 
 const open =
@@ -14,8 +22,10 @@ const open =
         defaultValue: props.defaultOpen ?? false,
       })
     : useVModel(props, "open", emits, { passive: false });
-useOverlay(open);
-const forwarded = useForwardProps(reactiveOmit(props, "open", "defaultOpen"));
+useOverlay(open, () => props.backGuardMs);
+const forwarded = useForwardProps(
+  reactiveOmit(props, "open", "defaultOpen", "backGuardMs"),
+);
 </script>
 
 <template>

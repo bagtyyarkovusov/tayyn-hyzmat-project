@@ -1,19 +1,31 @@
 import { onUnmounted, ref, watch, type Ref } from "vue";
 
+type Entry = { close: () => void; openedAt: number; backGuardMs: number };
 // Open order, rather than component/DOM order, determines which overlay owns Back.
-const stack: Array<{ close: () => void }> = [];
+const stack: Entry[] = [];
 export const overlayRevision = ref(0);
-export function closeTopOverlay() {
+/** "closed" asked the top overlay to close (it may refuse and stay open).
+ * "guarded" means the top overlay opened within its Back guard and was left
+ * open. "none" means no overlay is open. */
+export function closeTopOverlay(
+  now = performance.now(),
+): "closed" | "guarded" | "none" {
   const top = stack.at(-1);
-  if (!top) return false;
+  if (!top) return "none";
+  if (now - top.openedAt < top.backGuardMs) return "guarded";
   top.close();
-  return true;
+  return "closed";
 }
-export function useOverlay(open: Ref<boolean | undefined>) {
-  const entry = {
+export function useOverlay(
+  open: Ref<boolean | undefined>,
+  backGuardMs: () => number = () => 0,
+) {
+  const entry: Entry = {
     close: () => {
       open.value = false;
     },
+    openedAt: 0,
+    backGuardMs: 0,
   };
   function remove() {
     const index = stack.indexOf(entry);
@@ -26,6 +38,8 @@ export function useOverlay(open: Ref<boolean | undefined>) {
     (active) => {
       remove();
       if (active) {
+        entry.openedAt = performance.now();
+        entry.backGuardMs = backGuardMs();
         stack.push(entry);
         overlayRevision.value++;
       }

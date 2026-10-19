@@ -79,7 +79,12 @@ let disposeNativeUi: (() => void) | undefined;
 let shellAlive = true;
 onMounted(async () => {
   const dispose = await installNativeUi(async () => {
-    if (closeTopOverlay()) return "handled";
+    const overlay = closeTopOverlay();
+    if (overlay === "closed") return "handled";
+    // A press just after an offer opens was aimed at the screen beneath it,
+    // usually the second minimize press. The offer stays; native applies its
+    // root policy (hint toast, or minimize on a second press within 2 s).
+    if (overlay === "guarded") return "root";
     if (driver.value && !auth.value && route.path !== "/driverDashboard") {
       await router.replace("/driverDashboard");
       return "handled";

@@ -13,7 +13,6 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 public final class DriverUiPlugin extends Plugin {
   private final Handler main = new Handler(Looper.getMainLooper());
   private final BackPressPolicy back = new BackPressPolicy();
-  private long nextRequest, pending;
   private boolean ready;
   private JSObject insets = new JSObject().put("top", 0).put("right", 0).put("bottom", 0).put("left", 0);
 
@@ -44,14 +43,14 @@ public final class DriverUiPlugin extends Plugin {
         WindowInsetsCompat current = ViewCompat.getRootWindowInsets(activity.getWindow().getDecorView());
         if (current != null && current.isVisible(WindowInsetsCompat.Type.ime())) {
           WindowCompat.getInsetsController(activity.getWindow(), activity.getWindow().getDecorView()).hide(WindowInsetsCompat.Type.ime());
-          back.reset(); pending = 0; return;
+          back.reset(); return;
         }
-        if (pending != 0) return;
         if (!ready) { root(); return; }
-        final long request = ++nextRequest;
-        pending = request;
+        final long request = back.request();
+        if (request == 0) return; // The web shell is still answering the last press.
         notifyListeners("back", new JSObject().put("requestId", request));
-        main.postDelayed(() -> { if (pending == request) { pending = 0; root(); } }, 1500);
+        // An unanswered press counts as a root press. Its late answer is ignored.
+        main.postDelayed(() -> { if (back.settle(request)) root(); }, 1500);
       }
     });
     ViewCompat.requestApplyInsets(activity.getWindow().getDecorView());
@@ -66,15 +65,14 @@ public final class DriverUiPlugin extends Plugin {
   @PluginMethod public void respondBack(PluginCall call) {
     getActivity().runOnUiThread(() -> {
       Long request = call.getLong("requestId");
-      if (request != null && pending == request) {
-        pending = 0;
+      if (request != null && back.settle(request)) {
         if ("root".equals(call.getString("result"))) root(); else back.reset();
       }
       call.resolve();
     });
   }
   @PluginMethod public void resetBack(PluginCall call) {
-    getActivity().runOnUiThread(() -> { back.reset(); pending = 0; call.resolve(); });
+    getActivity().runOnUiThread(() -> { back.reset(); call.resolve(); });
   }
   @PluginMethod public void theme(PluginCall call) {
     getActivity().runOnUiThread(() -> {
@@ -86,7 +84,7 @@ public final class DriverUiPlugin extends Plugin {
       call.resolve();
     });
   }
-  @PluginMethod public void detach(PluginCall call) { ready = false; pending = 0; back.reset(); call.resolve(); }
-  @Override protected void handleOnPause() { pending = 0; back.reset(); }
-  @Override protected void handleOnDestroy() { ready = false; pending = 0; main.removeCallbacksAndMessages(null); super.handleOnDestroy(); }
+  @PluginMethod public void detach(PluginCall call) { ready = false; back.reset(); call.resolve(); }
+  @Override protected void handleOnPause() { back.reset(); }
+  @Override protected void handleOnDestroy() { ready = false; back.reset(); main.removeCallbacksAndMessages(null); super.handleOnDestroy(); }
 }

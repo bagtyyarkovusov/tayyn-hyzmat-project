@@ -11,7 +11,11 @@ const require = createRequire(
 );
 const { PrismaClient } = require("@prisma/client");
 import { installNativeUiFixture } from "./helpers/native-ui";
-import { loginFixture, installFixtureSession } from "./helpers/device-session";
+import {
+  loginFixture,
+  installFixtureSession,
+  isolateBrowserClient,
+} from "./helpers/device-session";
 if (process.env.DISPOSABLE_BROWSER_TEST !== "true")
   throw new Error("Use disposable browser runner");
 
@@ -93,7 +97,9 @@ async function fixture(
         data,
       });
     }
-    async function close() {
+    /** After a UI logout the fixture token is revoked and logout has already
+     * released this device's shift. */
+    async function close({ loggedOut = false } = {}) {
       await context.setOffline(false);
       for (const orderId of createdOrderIds) {
         const response = await context.request.post(
@@ -105,9 +111,10 @@ async function fixture(
         );
         expect([200, 409]).toContain(response.status());
       }
-      expect((await post("/driver/status", { isOnline: false })).ok()).toBe(
-        true,
-      );
+      if (!loggedOut)
+        expect((await post("/driver/status", { isOnline: false })).ok()).toBe(
+          true,
+        );
       await context.close();
       // This database is disposable, but later browser specs share it.
       // Remove only identities and orders created by this fixture.
@@ -135,11 +142,45 @@ async function fixture(
       post,
       adminPost,
       driverId: user.driver.id,
+      phone: user.phone as string,
       close,
     };
   } finally {
     await prisma.$disconnect();
   }
+}
+async function pressNativeBack(page: Page) {
+  const requestId = await page.evaluate(() =>
+    (window as any).pressNativeBack(),
+  );
+  return nativeBackReply(page, requestId);
+}
+async function nativeBackReply(page: Page, requestId: number) {
+  let result: string | undefined;
+  await expect
+    .poll(async () => {
+      result = await page.evaluate(
+        (id) =>
+          (window as any).nativeBackReplies.find(
+            (reply: { requestId: number }) => reply.requestId === id,
+          )?.result,
+        requestId,
+      );
+      return result;
+    })
+    .toBeTruthy();
+  return result;
+}
+function gate() {
+  let reached!: () => void;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  const opened = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { held, reached, opened, release };
 }
 async function fits(page: Page) {
   const dimensions = await page.evaluate(() => ({
@@ -680,6 +721,7 @@ test("native Back closes the top overlay through its normal action then tabs ret
       exact: true,
     });
     await expect(incoming).toBeVisible();
+    await page.waitForTimeout(1000); // New offers ignore Back for one second.
     await back("handled");
     await expect(incoming).toHaveCount(0);
     await page
@@ -999,6 +1041,7 @@ test("failed private decline through native Back keeps the incoming offer and er
     await f.page.route("**/orders/private-offer/decline", (route) =>
       route.abort("failed"),
     );
+    await f.page.waitForTimeout(1000); // New offers ignore Back for one second.
     await f.page.evaluate(() => (window as any).pressNativeBack());
     await expect
       .poll(() =>
@@ -1065,6 +1108,330 @@ test("a delayed acceptance response cannot dismiss a same-order reoffer", async 
     await expect(incoming.getByRole("timer")).toBeVisible();
   } finally {
     release();
+    await f.close();
+  }
+});
+
+async function openDriverTab(page: Page, name: string) {
+  await page
+    .getByRole("navigation", { name: "Разделы водителя" })
+    .getByRole("link", { name, exact: true })
+    .click();
+}
+
+test("an action error toast shows once across driver tab remounts and again after a retry", async ({
+  browser,
+}) => {
+  const { page, create, post, close } = await fixture(browser);
+  try {
+    const order = await create("Проверка однократной ошибки");
+    expect(
+      (
+        await post("/orders/accept", { orderId: order.id, etaMinutes: 10 })
+      ).ok(),
+    ).toBe(true);
+    await page.reload();
+    const trip = page.getByRole("dialog", {
+      name: "Управление поездкой",
+      exact: true,
+    });
+    await expect(trip).toBeVisible();
+    await page.route("**/orders/waiting", (route) => route.abort("failed"));
+    const toast = page.getByRole("listitem", { name: "Сообщение водителю" });
+    async function failArrival() {
+      await trip
+        .getByRole("button", { name: "Я на месте", exact: true })
+        .click();
+      await expect(trip.getByRole("alert")).toBeVisible();
+      await trip.getByRole("button", { name: "Close", exact: true }).click();
+      await expect(toast).toBeVisible();
+      await page
+        .getByRole("button", { name: "Скрыть сообщение", exact: true })
+        .click();
+      await expect(toast).toHaveCount(0);
+    }
+    await failArrival();
+    for (const name of ["Профиль", "Карта", "Чат"]) {
+      await openDriverTab(page, name);
+      await expect(page).not.toHaveURL(/driverDashboard$/);
+      await openDriverTab(page, "Заказы");
+      await expect(
+        page.getByRole("heading", { name: "Заказы по районам" }),
+      ).toBeAttached();
+      await page.waitForTimeout(300); // Allow a remounted toast entrance to become observable.
+      expect(await toast.count()).toBe(0);
+    }
+    // An explicit retry is a new occurrence and is reported again.
+    await page.getByRole("button", { name: "Поездка", exact: true }).click();
+    await failArrival();
+  } finally {
+    await close();
+  }
+});
+
+test("Back and X are refused while a public offer acceptance is pending", async ({
+  browser,
+}) => {
+  const f = await fixture(browser, { width: 390, height: 844 }, true);
+  const accept = gate();
+  try {
+    await f.page.route("**/orders/accept", async (route) => {
+      // Hold before the server commits, so no socket event ends the dialog.
+      accept.reached();
+      await accept.opened;
+      await route.fallback();
+    });
+    await f.create("Назад во время принятия");
+    const incoming = f.page.getByRole("dialog", {
+      name: "Предложение заказа",
+      exact: true,
+    });
+    await expect(incoming).toBeVisible();
+    await f.page.waitForTimeout(1100); // Past the new-offer Back guard.
+    await incoming
+      .getByRole("button", { name: "Принять заказ", exact: true })
+      .click();
+    await accept.held;
+    expect(await pressNativeBack(f.page)).toBe("handled");
+    await expect(incoming).toBeVisible();
+    await incoming.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(incoming).toBeVisible();
+    accept.release();
+    await expect(
+      f.page.getByRole("dialog", { name: "Управление поездкой", exact: true }),
+    ).toBeVisible();
+    await expect(incoming).toHaveCount(0);
+  } finally {
+    accept.release();
+    await f.close();
+  }
+});
+
+test("the trip cancel confirmation refuses Back and Escape while cancellation is pending", async ({
+  browser,
+}) => {
+  const f = await fixture(browser, { width: 390, height: 844 }, true);
+  const cancel = gate();
+  try {
+    const order = await f.create("Назад во время отмены");
+    expect(
+      (
+        await f.post("/orders/accept", { orderId: order.id, etaMinutes: 10 })
+      ).ok(),
+    ).toBe(true);
+    await f.page.reload();
+    const trip = f.page.getByRole("dialog", {
+      name: "Управление поездкой",
+      exact: true,
+    });
+    await expect(trip).toBeVisible();
+    await f.page.route("**/orders/cancel", async (route) => {
+      // Hold before the server commits, so no socket event ends the dialog.
+      cancel.reached();
+      await cancel.opened;
+      await route.fallback();
+    });
+    await trip
+      .getByRole("button", { name: "Отменить заказ", exact: true })
+      .click();
+    const confirm = f.page.getByRole("dialog", {
+      name: "Отменить текущий заказ?",
+      exact: true,
+    });
+    await confirm
+      .getByRole("button", { name: "Подтвердить отмену", exact: true })
+      .click();
+    await cancel.held;
+    expect(await pressNativeBack(f.page)).toBe("handled");
+    await expect(confirm).toBeVisible();
+    await f.page.keyboard.press("Escape");
+    await expect(confirm).toBeVisible();
+    cancel.release();
+    await expect(confirm).toHaveCount(0);
+    await expect(
+      f.page.getByRole("region", { name: "Текущая поездка", exact: true }),
+    ).toHaveCount(0);
+  } finally {
+    cancel.release();
+    await f.close();
+  }
+});
+
+test("an unsent chat draft survives driver tab switches and is cleared by logout", async ({
+  browser,
+}) => {
+  const f = await fixture(browser);
+  const { page } = f;
+  let loggedOut = false;
+  try {
+    const composer = page.getByRole("textbox", {
+      name: "Сообщение диспетчеру",
+      exact: true,
+    });
+    await openDriverTab(page, "Чат");
+    await composer.fill("Черновик для диспетчера");
+    for (const name of ["Заказы", "Профиль", "Карта"]) {
+      await openDriverTab(page, name);
+      await expect(composer).toHaveCount(0);
+      await openDriverTab(page, "Чат");
+      await expect(composer).toHaveValue("Черновик для диспетчера");
+    }
+    await openDriverTab(page, "Профиль");
+    await page.getByRole("button", { name: "Выйти", exact: true }).click();
+    await expect(page).toHaveURL(/driverLogin/);
+    loggedOut = true;
+    await isolateBrowserClient(page.context());
+    await page.getByLabel("Номер телефона").fill(f.phone.slice(4));
+    await page
+      .getByLabel("Пароль", { exact: true })
+      .fill(process.env.TEST_ACCOUNT_PASSWORD!);
+    await page.getByRole("button", { name: "Войти", exact: true }).click();
+    await expect(page).toHaveURL(/driverDashboard/);
+    await openDriverTab(page, "Чат");
+    await expect(composer).toHaveValue("");
+  } finally {
+    await f.close({ loggedOut });
+  }
+});
+
+test("native Back within one second of a new offer is a root press and keeps the offer", async ({
+  browser,
+}) => {
+  const f = await fixture(browser, { width: 390, height: 844 }, true);
+  try {
+    const pickup = "Второе нажатие Назад";
+    // Press in the same task that observes the offer, as a second minimize
+    // press landing just after the offer opens would.
+    const firstPress = f.page.evaluate(
+      (pickup) =>
+        new Promise<number>((resolve) => {
+          const observer = new MutationObserver(() => {
+            const offer = [
+              ...document.querySelectorAll('[role="dialog"]'),
+            ].find((node) => node.textContent?.includes(pickup));
+            if (!offer) return;
+            observer.disconnect();
+            resolve((window as any).pressNativeBack());
+          });
+          observer.observe(document.body, { childList: true, subtree: true });
+        }),
+      pickup,
+    );
+    await f.create(pickup);
+    expect(await nativeBackReply(f.page, await firstPress)).toBe("root");
+    const incoming = f.page.getByRole("dialog", {
+      name: "Предложение заказа",
+      exact: true,
+    });
+    await expect(incoming).toBeVisible();
+    await f.page.waitForTimeout(1000);
+    expect(await pressNativeBack(f.page)).toBe("handled");
+    await expect(incoming).toHaveCount(0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("forced offline is not overwritten by an older refresh still in flight", async ({
+  browser,
+}) => {
+  const { page, context, close } = await fixture(browser);
+  const profile = gate();
+  const status = gate();
+  try {
+    let holdProfile = true;
+    await page.route("**/driver/profile", async (route) => {
+      if (!holdProfile) return route.fallback();
+      holdProfile = false;
+      const response = await route.fetch();
+      profile.reached();
+      await profile.opened;
+      await route.fulfill({ response });
+    });
+    await page.route("**/driver/status", async (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      status.reached();
+      await status.opened;
+      await route.fallback();
+    });
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await profile.held;
+    // Losing GPS permission forces the shift offline locally.
+    await context.clearPermissions();
+    await page
+      .getByRole("button", { name: "Включить GPS", exact: true })
+      .click();
+    await status.held;
+    const goOnline = page.getByRole("button", {
+      name: "Выйти на линию",
+      exact: true,
+    });
+    await expect(goOnline).toBeVisible();
+    const staleProfile = page.waitForResponse("**/driver/profile");
+    profile.release();
+    await staleProfile;
+    await page.waitForTimeout(300);
+    await expect(goOnline).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Уйти с линии", exact: true }),
+    ).toHaveCount(0);
+  } finally {
+    profile.release();
+    status.release();
+    await close();
+  }
+});
+
+test("a late acceptance response cannot restore an order cancelled meanwhile", async ({
+  browser,
+}) => {
+  const f = await fixture(browser);
+  const accept = gate();
+  const current = gate();
+  try {
+    await f.page.route("**/orders/accept", async (route) => {
+      const response = await route.fetch();
+      accept.reached();
+      await accept.opened;
+      await route.fulfill({ response });
+    });
+    const order = await f.create("Отменён до ответа принятия");
+    const incoming = f.page.getByRole("dialog", {
+      name: "Предложение заказа",
+      exact: true,
+    });
+    await incoming
+      .getByRole("button", { name: "Принять заказ", exact: true })
+      .click();
+    await accept.held;
+    expect(
+      (
+        await f.adminPost(`/admin/orders/${order.id}/cancel`, {
+          reason: "Отмена до ответа водителю",
+        })
+      ).ok(),
+    ).toBe(true);
+    // The order:cancelled refresh has removed the offer.
+    await expect(incoming).toHaveCount(0);
+    // Keep later current-order reads pending so only the late response could
+    // show a trip.
+    await f.page.route("**/orders/current", async (route) => {
+      await current.opened;
+      await route.fallback();
+    });
+    const lateAccept = f.page.waitForResponse("**/orders/accept");
+    accept.release();
+    await lateAccept;
+    await f.page.waitForTimeout(500);
+    await expect(
+      f.page.getByRole("dialog", { name: "Управление поездкой", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      f.page.getByRole("region", { name: "Текущая поездка", exact: true }),
+    ).toHaveCount(0);
+  } finally {
+    accept.release();
+    current.release();
     await f.close();
   }
 });

@@ -27,6 +27,11 @@ async function openNavigation() {
     navigationError.value = "Не удалось открыть карту. Повторите попытку.";
   }
 }
+// A pending cancellation owns its confirmation: Back, Escape and X are refused.
+function setCancelOpen(open: boolean) {
+  if (!open && state.busy) return;
+  cancelOpen.value = open;
+}
 async function cancel() {
   await transition("cancel");
   if (!state.active) cancelOpen.value = false;
@@ -125,7 +130,7 @@ async function cancel() {
         >Отменить заказ</Button
       >
     </div>
-    <Dialog v-model:open="cancelOpen"
+    <Dialog :open="cancelOpen" @update:open="setCancelOpen"
       ><DialogContent :aria-describedby="undefined"
         ><DialogHeader
           ><DialogTitle>Отменить текущий заказ?</DialogTitle></DialogHeader
@@ -134,7 +139,7 @@ async function cancel() {
             class="min-h-12 whitespace-normal py-3"
             data-touch-target
             variant="outline"
-            @click="cancelOpen = false"
+            @click="setCancelOpen(false)"
             >Продолжить поездку</Button
           ><Button
             class="min-h-12 whitespace-normal py-3"

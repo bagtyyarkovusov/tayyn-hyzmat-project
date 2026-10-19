@@ -6,7 +6,7 @@ import { useDriver } from "../useDriver";
 import OrderRoute from "./OrderRoute.vue";
 import { money } from "../model";
 defineProps<{ embedded?: boolean }>();
-const { state, accept, dismissIncoming, declinePrivateOffer } = useDriver();
+const { state, accept, closeIncoming } = useDriver();
 const eta = ref(10);
 </script>
 <template>
@@ -110,11 +110,7 @@ const eta = ref(10);
         class="min-h-11 w-full whitespace-normal"
         variant="ghost"
         :disabled="state.busy"
-        @click="
-          state.incoming.privateOfferExpiresAt
-            ? declinePrivateOffer()
-            : dismissIncoming()
-        "
+        @click="closeIncoming"
         >{{
           state.incoming.privateOfferExpiresAt
             ? "Отказаться"

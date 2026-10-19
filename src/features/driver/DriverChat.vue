@@ -7,13 +7,13 @@ import { useChatRecovery } from "@/shared/useChatRecovery";
 import { useChatScroll } from "@/shared/useChatScroll";
 import { driverApi, errorMessage } from "@/shared/api";
 import { driverSession } from "@/features/auth/session";
-import { useDriver } from "./useDriver";
+import { chatDraft, useDriver } from "./useDriver";
 import { closeChatAlerts } from "./alerts";
 import { date, type Message, type Page } from "./model";
 const { state } = useDriver();
 const { history, track, updated, followAfterSend } = useChatScroll();
 const messages = ref<Message[]>([]),
-  draft = ref(""),
+  draft = chatDraft,
   error = ref(""),
   loading = ref(false),
   sending = ref(false),
