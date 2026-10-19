@@ -97,8 +97,7 @@ const markMessagesRead = asyncHandler(async (req, res) => {
 });
 
 const unreadDriverIds = asyncHandler(async (req, res) => {
-  const driverIds = await service.listUnreadDriverIds();
-  res.json({ driverIds });
+  res.json(await service.listUnreadMessages());
 });
 
 const updateVehicle = asyncHandler(async (req, res) => {
