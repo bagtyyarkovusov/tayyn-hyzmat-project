@@ -39,7 +39,6 @@ router.post('/drivers/:id/profile', validate({ params: driverIdParamSchema, body
 router.post('/drivers', validate({ body: createDriverSchema }), controller.createDriver);
 router.get('/drivers', validate({ query: listDriversQuerySchema }), controller.listDrivers);
 router.get('/drivers/:id', validate({ params: driverIdParamSchema }), controller.getDriver);
-router.post('/drivers/:id/approve', validate({ params: driverIdParamSchema }), controller.approveDriver);
 router.post(
   '/drivers/:id/block',
   validate({ params: driverIdParamSchema, body: blockDriverSchema }),

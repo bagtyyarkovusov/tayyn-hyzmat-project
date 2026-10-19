@@ -6,7 +6,9 @@ const { phoneSchema } = require('../../utils/phone-policy');
 const registerDriverSchema = z.object({
   phone: phoneSchema,
   fullName: z.string().trim().min(2, 'Укажите имя').max(120),
-  password: newPasswordSchema
+  password: newPasswordSchema,
+  deviceId: z.string().trim().min(4).max(200),
+  deviceLabel: z.string().trim().max(200).optional()
 });
 
 const loginSchema = z.object({

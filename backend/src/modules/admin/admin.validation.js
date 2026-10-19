@@ -2,7 +2,7 @@ const { z } = require('zod');
 const { moneySchema } = require('../../utils/money-policy');
 const { registerDriverSchema } = require('../auth/auth.validation');
 const { phoneSchema } = require('../../utils/phone-policy');
-const createDriverSchema = registerDriverSchema;
+const createDriverSchema = registerDriverSchema.omit({ deviceId: true, deviceLabel: true });
 
 const driverIdParamSchema = z.object({
   id: z.string().uuid('Некорректный идентификатор водителя')
@@ -13,7 +13,7 @@ const orderIdParamSchema = z.object({
 });
 
 const listDriversQuerySchema = z.object({
-  status: z.enum(['PENDING', 'APPROVED', 'BLOCKED']).optional(),
+  status: z.enum(['APPROVED', 'BLOCKED']).optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20)
 });

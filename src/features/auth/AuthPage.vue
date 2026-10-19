@@ -1,6 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
+import {
+  onBeforeRouteLeave,
+  onBeforeRouteUpdate,
+  useRoute,
+  useRouter,
+} from "vue-router";
 import {
   ArrowRight,
   LoaderCircle,
@@ -15,7 +20,7 @@ import PhoneInput from "@/shared/ui/phone-input/PhoneInput.vue";
 import { passwordError, passwordHint } from "@/shared/password";
 import { Label } from "@/shared/ui/label";
 import { adminSession, driverSession } from "./session";
-import { errorMessage, publicRequest } from "@/shared/api";
+import { ApiError, errorMessage } from "@/shared/api";
 const route = useRoute();
 const development = import.meta.env.DEV;
 const router = useRouter();
@@ -28,7 +33,24 @@ const password = ref("");
 const fullName = ref("");
 const busy = ref(false);
 const error = ref("");
-const message = ref("");
+const recovery = ref(false);
+let controller: AbortController | null = null;
+function cancel() {
+  controller?.abort();
+  controller = null;
+  busy.value = false;
+}
+onBeforeRouteLeave(cancel);
+onBeforeRouteUpdate(cancel);
+onBeforeUnmount(cancel);
+watch(
+  () => route.path,
+  () => {
+    error.value = "";
+    recovery.value = false;
+    password.value = "";
+  },
+);
 async function submit() {
   if (busy.value) return;
   if (!navigator.onLine) {
@@ -41,30 +63,44 @@ async function submit() {
   }
   busy.value = true;
   error.value = "";
-  message.value = "";
+  const request = new AbortController();
+  controller = request;
+  const creating = registering.value;
+  const admin = isAdmin.value;
   try {
-    if (registering.value) {
-      await publicRequest("/auth/register", {
-        phone: phone.value,
-        password: password.value,
-        fullName: fullName.value,
-      });
-      message.value =
-        "Заявка отправлена. Диспетчер проверит ваш аккаунт. После одобрения войдите с этим номером.";
-      password.value = "";
-      return;
+    if (creating) {
+      await driverSession.register(
+        fullName.value,
+        phone.value,
+        password.value,
+        request.signal,
+      );
+    } else {
+      await (admin ? adminSession : driverSession).login(
+        phone.value,
+        password.value,
+        request.signal,
+      );
     }
-    await (isAdmin.value ? adminSession : driverSession).login(
-      phone.value,
-      password.value,
-    );
-    await router.replace(
-      isAdmin.value ? "/adminDashboard" : "/driverDashboard",
-    );
+    if (request.signal.aborted) return;
+    await router.replace(admin ? "/adminDashboard" : "/driverDashboard");
   } catch (cause) {
-    error.value = errorMessage(cause);
+    if (request.signal.aborted) return;
+    recovery.value =
+      creating &&
+      (!(cause instanceof ApiError) ||
+        cause.status >= 500 ||
+        cause.status === 409);
+    // A 409 carries the server's sign-in/dispatcher guidance for an existing phone.
+    error.value =
+      recovery.value && !(cause instanceof ApiError && cause.status === 409)
+        ? "Не удалось подтвердить создание аккаунта. Попробуйте войти с этим номером и паролем. Если вход недоступен, обратитесь к диспетчеру."
+      : errorMessage(cause);
   } finally {
-    busy.value = false;
+    if (controller === request) {
+      controller = null;
+      busy.value = false;
+    }
   }
 }
 </script>
@@ -102,12 +138,12 @@ async function submit() {
           }}
         </div>
         <h2 class="auth-heading mb-2 text-3xl font-semibold tracking-tight">
-          {{ registering ? "Стать водителем" : "С возвращением" }}
+          {{ registering ? "Создать аккаунт" : "С возвращением" }}
         </h2>
         <p class="auth-intro mb-8 text-muted-foreground">
           {{
             registering
-              ? "Создайте аккаунт и дождитесь одобрения диспетчера."
+              ? "После создания аккаунта вы сразу войдёте. Для выхода на линию пополните баланс и включите GPS."
               : "Войдите, чтобы продолжить работу."
           }}
         </p>
@@ -143,21 +179,25 @@ async function submit() {
             {{ passwordHint }}
           </p>
           <p v-if="error" role="alert" class="error-message">{{ error }}</p>
-          <p v-if="message" role="status" class="rounded-lg bg-secondary p-4">
-            {{ message }}
-          </p>
-          <Button type="submit" :disabled="busy" class="h-12 w-full"
+          <Button
+            v-if="!recovery"
+            type="submit"
+            :disabled="busy"
+            class="h-12 w-full"
             ><LoaderCircle v-if="busy" class="size-4 animate-spin" />{{
-              busy ? "Подождите…" : registering ? "Отправить заявку" : "Войти"
+              busy ? "Подождите…" : registering ? "Создать аккаунт" : "Войти"
             }}<ArrowRight v-if="!busy" class="ml-auto size-4"
           /></Button>
+          <Button v-if="recovery" as-child class="h-12 w-full">
+            <RouterLink to="/driverLogin">Перейти ко входу</RouterLink>
+          </Button>
         </form>
         <p v-if="!isAdmin" class="mt-6 text-sm text-muted-foreground">
           {{ registering ? "Уже есть аккаунт?" : "Ещё не зарегистрированы?" }}
           <RouterLink
             :to="registering ? '/driverLogin' : '/driverRegister'"
             class="font-semibold text-primary underline underline-offset-4"
-            >{{ registering ? "Войти" : "Подать заявку" }}</RouterLink
+            >{{ registering ? "Войти" : "Создать аккаунт" }}</RouterLink
           >
         </p>
       </div>
