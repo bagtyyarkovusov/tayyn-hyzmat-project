@@ -1,3 +1,4 @@
+import type { CancellationOutcome } from "@/shared/order-cancellation";
 export type Money = number | string;
 export type OrderStatus =
   "NEW" | "ACCEPTED" | "WAITING" | "STARTED" | "COMPLETED" | "CANCELLED";
@@ -38,6 +39,8 @@ export interface Order {
   completedAt?: string | null;
   cancelledAt?: string | null;
   cancelReason?: string | null;
+  cancellationOutcome?: CancellationOutcome | null;
+  cancellationRefundAmount?: number | string | null;
   privateOfferExpiresAt?: string | null;
   privateOfferRemainingMs?: number;
   districtId?: string | null;

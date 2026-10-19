@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { cancellationLabel } from "@/shared/order-cancellation";
 import { formatPhone } from "@/shared/phone";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
@@ -8,14 +9,11 @@ defineProps<{
   order: Order;
   cancellable?: boolean;
   offerable?: boolean;
-  pending?: boolean;
 }>();
 defineEmits<{
-  cancel: [Order];
+  cancel: [Order, "WITH_REFUND" | "WITHOUT_REFUND" | "BEFORE_ACCEPTANCE"];
   offer: [Order];
   resolve: [Order];
-  reoffer: [Order];
-  finalCancel: [Order];
 }>();
 const ageLabel = (seconds?: number | null) => {
   if (seconds == null) return "";
@@ -30,7 +28,11 @@ const ageLabel = (seconds?: number | null) => {
   >
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div class="flex items-center gap-2">
-        <Badge variant="secondary">{{ statusLabel(order.status) }}</Badge
+        <Badge variant="secondary">{{
+          order.status === "CANCELLED"
+            ? cancellationLabel(order.cancellationOutcome)
+            : statusLabel(order.status)
+        }}</Badge
         ><span class="text-xs text-muted-foreground"
           >#{{ order.orderNumber }}</span
         >
@@ -39,12 +41,6 @@ const ageLabel = (seconds?: number | null) => {
         money(order.priceFinal ?? order.priceEstimated)
       }}</strong>
     </div>
-    <p
-      v-if="order.cancellationReviewRequired"
-      class="mt-3 font-semibold text-destructive"
-    >
-      Отменён водителем · требуется решение
-    </p>
     <div
       class="my-4 grid grid-cols-[20px_minmax(0,1fr)] items-center gap-x-2 gap-y-1"
     >
@@ -100,25 +96,29 @@ const ageLabel = (seconds?: number | null) => {
         >Предложить водителю</Button
       >
       <Button
-        v-if="
-          cancellable && ['NEW', 'ACCEPTED', 'WAITING'].includes(order.status)
-        "
+        v-if="cancellable && order.status === 'NEW'"
         variant="outline"
         size="sm"
-        @click="$emit('cancel', order)"
+        @click="$emit('cancel', order, 'BEFORE_ACCEPTANCE')"
         >Отменить заказ</Button
       >
       <template
-        v-if="order.status === 'CANCELLED' && order.cancellationReviewRequired"
+        v-if="
+          cancellable &&
+          ['ACCEPTED', 'WAITING', 'STARTED'].includes(order.status)
+        "
       >
-        <Button :disabled="pending" @click="$emit('reoffer', order)"
-          >Предложить снова</Button
+        <Button
+          variant="outline"
+          size="sm"
+          @click="$emit('cancel', order, 'WITH_REFUND')"
+          >Отменить с возвратом</Button
         >
         <Button
           variant="outline"
-          :disabled="pending"
-          @click="$emit('finalCancel', order)"
-          >Отменить окончательно</Button
+          size="sm"
+          @click="$emit('cancel', order, 'WITHOUT_REFUND')"
+          >Отменить без возврата</Button
         >
       </template>
       <Button
