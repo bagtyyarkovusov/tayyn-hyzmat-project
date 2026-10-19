@@ -485,6 +485,22 @@ test('an inherited unpriced order can be completed without a balance charge', as
   assert.equal((await request('/driver/history', driverToken)).data.transactions.total, 0);
 });
 
+test('accepting an unpriced order emits no PAYMENT balance update', async () => {
+  const admin = await socket(adminToken);
+  const payments: string[] = [];
+  admin.on('balance:updated', event => { if (event.reason === 'PAYMENT') payments.push(event.orderId); });
+  const unpriced = await order(null);
+  assert.equal((await request('/orders/accept', driverToken, { orderId: unpriced.id })).status, 200);
+  for (const action of ['waiting', 'start', 'complete']) assert.equal((await request(`/orders/${action}`, driverToken, { orderId: unpriced.id })).status, 200);
+  // Socket.IO preserves per-connection order: the later priced PAYMENT arrives after any earlier one.
+  const priced = await order(10);
+  const pricedPayment = nextSocketEvent<any>(admin, 'balance:updated');
+  assert.equal((await request('/orders/accept', driverToken, { orderId: priced.id })).status, 200);
+  assert.equal((await pricedPayment).orderId, priced.id);
+  assert.deepEqual(payments, [priced.id]);
+  admin.disconnect();
+});
+
 test('a claimed order progresses to completion and charges the quoted TMT price once', async () => {
   const created = await order();
   const body = { orderId: created.id, etaMinutes: 5 };
@@ -3267,6 +3283,34 @@ test('dispatcher cancellation reaches every signed-in driver socket with its exa
     assert.equal(event.notificationEventId, job.notificationEventId);
     assert.equal(event.status, 'CANCELLED');
   }
+});
+
+test('driver-facing cancellation omits the dispatcher user id and customer phone', async () => {
+  const profile = (await request('/driver/profile', driverToken)).data;
+  const driver = await socket(driverToken);
+  const admin = await socket(adminToken);
+  const job = await order(40);
+  assert.equal((await request('/orders/accept', driverToken, { orderId: job.id })).status, 200);
+  const driverEvent = nextSocketEvent<any>(driver, 'order:cancelled');
+  const adminEvent = nextSocketEvent<any>(admin, 'order:cancelled');
+  const cancelled = await dispatcherCancel({ orderId: job.id });
+  assert.equal(cancelled.status, 200);
+  assert.ok(cancelled.data.cancelledBy);
+  const own = await driverEvent;
+  assert.equal(own.id, job.id);
+  assert.equal(own.status, 'CANCELLED');
+  assert.equal('cancelledBy' in own, false);
+  assert.equal('clientPhone' in own, false);
+  const dispatcherView = await adminEvent;
+  assert.equal(dispatcherView.cancelledBy, cancelled.data.cancelledBy);
+  assert.equal(dispatcherView.clientPhone, '+99360000999');
+  const historyRow = (await request('/driver/history?limit=100', driverToken)).data.orders.items.find((item: any) => item.id === job.id);
+  assert.equal(historyRow.cancellationOutcome, 'WITH_REFUND');
+  assert.equal('cancelledBy' in historyRow, false);
+  assert.equal('clientPhone' in historyRow, false);
+  const adminHistoryRow = (await request(`/admin/drivers/${profile.id}/history?limit=100`, adminToken)).data.orders.items.find((item: any) => item.id === job.id);
+  assert.equal(adminHistoryRow.cancelledBy, cancelled.data.cancelledBy);
+  driver.disconnect(); admin.disconnect();
 });
 
 test('dispatcher cancellation Activity retains actor time and order number without a reason', async () => {

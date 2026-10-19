@@ -32,7 +32,7 @@ For a new quoted order with fare 40, acceptance changes wallet 500 to 460 with o
 
 Order payloads expose `resolutionActions: []` and `cancellationReviewRequired: false`. `GET /admin/orders/cancellation-review` returns an empty paginated list. Retired `POST /admin/orders/:id/reoffer` and `/final-cancel` return 409. Old audit rows remain stored. Unrelated public/private offers, private expiry/fallback, chat and notification delivery remain intact.
 
-Cancellation emits existing `order:cancelled` payloads to admins, the order room and the assigned driver, with the same `offerAttemptId` and `notificationEventId`. A NEW cancellation also invalidates the public popup through existing `order:taken`; private cancellation retains `order:private-offer-ended`. Balance changes emit `balance:updated` with reason PAYMENT on acceptance or REFUND on actual refund only. Driver availability and region counts reconcile after commit. Current-order, history, list and profile reads restore the terminal order and freed driver after reconnect. Balance payloads retain `amount`, `held` and `available`; new assignments use no holds, and post-migration held is zero.
+Cancellation emits existing `order:cancelled` payloads to admins, the order room and the assigned driver, with the same `offerAttemptId` and `notificationEventId`. The driver's payload and driver history omit `cancelledBy` and `clientPhone`; admin payloads keep them. A NEW cancellation also invalidates the public popup through existing `order:taken`; private cancellation retains `order:private-offer-ended`. Balance changes emit `balance:updated` with reason PAYMENT on a priced acceptance or REFUND on actual refund only. Driver availability and region counts reconcile after commit. Current-order, history, list and profile reads restore the terminal order and freed driver after reconnect. Balance payloads retain `amount`, `held` and `available`; new assignments use no holds, and post-migration held is zero.
 
 ## Historical transition and exact schema
 
@@ -50,6 +50,10 @@ Schema additions are nullable `orders.cancellation_outcome` TEXT, `orders.cancel
 - `order_assignments_no_new_holds_check`, rejecting HELD so an old running server cannot silently create new legacy holds.
 
 No enum is added or changed. Historical cancellation outcomes/refund amounts remain null, and retired review flags are cleared without financial replay. Every order read, including driver and dispatcher driver history, labels a cancelled row without a recorded outcome as `UNKNOWN`. A cancelled assignment records `CANCELLED_WITH_REFUND`, `CANCELLED_WITHOUT_REFUND` or `CANCELLED_NO_DEBIT` as its end action. Pinned SHA256 values, which Prisma also records as the migration checksum: `migration.sql` `4972e792bb96f74b539441acc65886f95702afb6b7d21c844c738b38611ae674`; preflight `75e18ab1c6523594debab83b1005f47ee307bd5c52f57329a59e7620d74f904c`. The reset planner must verify these exact bytes. Catalog verification must use the exact committed migration, including pre-existing `driver_activity_audits`; pre-migration and final 1.21 catalogs are distinct stages.
+
+## Forward-only deployment
+
+This migration is forward-only. Once it has run, 1.20 API images cannot accept priced orders or start trips: the schema rejects their HELD funding, and their lifecycle no longer matches the converted assignments. Never roll back by redeploying a 1.20 image alone. Recovery is a reviewed 1.21 forward fix or a deliberate, owner-authorized database restore from the verified pre-deploy backup together with the matching 1.20 image, accepting loss of everything recorded after that backup.
 
 ## Fresh seed and reset handoff
 

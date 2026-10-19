@@ -7,7 +7,7 @@ const logger = require('../../config/logger');
 const districtsService = require('../districts/districts.service');
 const { haversineDistanceKm } = require('../../utils/geo');
 const { debitOrderQuoteOnAcceptance, cancelOrderFunding, acceptedPrice } = require('./order-charge');
-const { orderPayload, invalidation, notificationEventId } = require('./order-payload');
+const { orderPayload, driverClosedOrderPayload, invalidation, notificationEventId } = require('./order-payload');
 const { randomUUID } = require('node:crypto');
 const { lockedBalance } = require('../balance/locked-balance');
 const { assertShiftControl, lockDeviceSession } = require('../driver/shift-ownership');
@@ -346,9 +346,11 @@ async function accept(orderId, driver, etaMinutes, privateOfferExpiresAt) {
     io.to(rooms.admins()).emit('order:accepted', order.order);
     io.to(rooms.order(order.order.id)).emit('order:accepted', order.order);
     io.to(rooms.drivers()).emit('order:taken', invalidation(order.order));
-    io.to(rooms.driver(driver.id)).to(rooms.admins()).emit('balance:updated', {
-      driverId: driver.id, ...order.wallet, reason: 'PAYMENT', orderId: order.order.id
-    });
+    if (order.wallet) {
+      io.to(rooms.driver(driver.id)).to(rooms.admins()).emit('balance:updated', {
+        driverId: driver.id, ...order.wallet, reason: 'PAYMENT', orderId: order.order.id
+      });
+    }
   });
 
   await districtsService.broadcastDistrictStats();
@@ -572,7 +574,7 @@ async function adminCancel(orderId, outcome, actorId) {
     io.to(rooms.admins()).emit('order:cancelled', result.order);
     io.to(rooms.order(result.order.id)).emit('order:cancelled', result.order);
     if (order.driverId) {
-      io.to(rooms.driver(order.driverId)).emit('order:cancelled', result.order);
+      io.to(rooms.driver(order.driverId)).emit('order:cancelled', driverClosedOrderPayload(result.order));
       if (result.released?.changed) io.to(rooms.driver(order.driverId)).to(rooms.admins()).emit('balance:updated', { driverId: order.driverId, ...result.released.wallet, reason: result.released.reason, orderId });
     }
     // The order was still just broadcast to every driver in the district as

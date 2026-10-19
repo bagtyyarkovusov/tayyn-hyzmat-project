@@ -52,7 +52,8 @@ export async function debitOrderQuoteOnAcceptance(
       },
     });
   }
-  return walletSummary(tx, { ...balance, amount });
+  // An unpriced acceptance leaves the wallet unchanged: no payment to report.
+  return quote.gt(0) ? walletSummary(tx, { ...balance, amount }) : null;
 }
 
 // Refund only a proven original debit, never mutable price metadata or status.
