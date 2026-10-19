@@ -11,6 +11,8 @@ jobs:
     timeout-minutes: 45
     env:
       RELEASE: vps-${{ github.run_number }}-${{ github.sha }}
+      # Semantic version alias recorded in manifest.json when dispatched from a vX.Y.Z tag.
+      VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
       MAPS_KEY: ${{ vars.VUE_APP_YANDEX_MAPS_API_KEY }}
     steps:
       - uses: actions/checkout@v4
@@ -30,7 +32,7 @@ jobs:
           docker pull --platform linux/amd64 caddy:2.10-alpine
       - name: Export checksummed app and monitor bundles
         run: |
-          python3 scripts/production/build-offline-bundle.py --release "$RELEASE" --api "tayyn-api:$GITHUB_SHA" --web "tayyn-web:$GITHUB_SHA" --db postgres:17-bookworm --proxy caddy:2.10-alpine --deb-dir "$RUNNER_TEMP/packages" --monitor-deb-dir "$RUNNER_TEMP/packages-monitor" --output-dir "$RUNNER_TEMP/$RELEASE"
+          python3 scripts/production/build-offline-bundle.py --release "$RELEASE" --api "tayyn-api:$GITHUB_SHA" --web "tayyn-web:$GITHUB_SHA" --db postgres:17-bookworm --proxy caddy:2.10-alpine --deb-dir "$RUNNER_TEMP/packages" --monitor-deb-dir "$RUNNER_TEMP/packages-monitor" --output-dir "$RUNNER_TEMP/$RELEASE" ${VERSION:+--version "$VERSION"}
           tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/app-bundle.tar.gz" "$RELEASE"
           tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/monitor-bundle.tar.gz" "$RELEASE-monitor"
           cd "$RUNNER_TEMP"

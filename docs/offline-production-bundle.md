@@ -33,11 +33,11 @@ python3 scripts/production/build-offline-bundle.py \
   --output-dir /output/tayyn-2026-10-17-rc1
 ```
 
-The exporter rejects non-amd64 images and PostgreSQL majors other than 17. It retags local content IDs under unique release references, exports `images.tar`, and writes `manifest.json`, `release.env` and `SHA256SUMS`. The manifest records content IDs, source commit, dirty-source status, target platform and package filenames. API/web provenance must still be checked against the reviewed build because arbitrary local tags do not establish which source built them. Use a clean checkout for a final release.
+The exporter rejects non-amd64 images and PostgreSQL majors other than 17. It retags local content IDs under unique release references, exports `images.tar`, and writes `manifest.json`, `release.env` and `SHA256SUMS`. The manifest records content IDs, source commit, the optional `--version` semantic version (`vX.Y.Z`, otherwise `null`), dirty-source status, target platform and package filenames. API/web provenance must still be checked against the reviewed build because arbitrary local tags do not establish which source built them. Use a clean checkout for a final release.
 
 The exporter also writes a separate `<output-dir>-monitor` bundle containing only monitoring scripts, examples, documentation and `packages-monitor`. It has its own complete checksums and no application images or Docker packages. Transfer only this small artifact to Standard S, preserving its 10 GB disk for backups. `--monitor-output-dir` can choose another destination.
 
-Only a fixed list of deployment scripts, reviewed configuration examples and documentation is copied. Runtime `.env` files, TLS keys, Firebase credentials, backup identities and SSH keys are excluded. Never add a production secret to an image layer. Output directories cannot be overwritten. Image references are immutable within the manifest; reusing a release name for different content is forbidden.
+Only a fixed list of deployment scripts, reviewed configuration examples and documentation is copied. Runtime `.env` files, TLS keys, Firebase credentials, backup identities and SSH keys are excluded. Never add a production secret to an image layer. Output directories cannot be overwritten. Image references are immutable within the manifest; reusing a release name for different content is forbidden. The semantic version is an alias recorded in the manifest and never changes release or image names. Record each production release in [production release records](releases/production/README.md).
 
 ## Bundle signature
 

@@ -47,9 +47,12 @@ def main():
     parser.add_argument("--monitor-deb-dir", type=Path, required=True, help="Non-Docker package set for StandardS monitoring host")
     parser.add_argument("--monitor-output-dir", type=Path, help="Separate small monitor bundle; defaults to OUTPUT_DIR-monitor")
     parser.add_argument("--output-dir", type=Path, required=True, help="New directory, must not exist")
+    parser.add_argument("--version", help="Semantic version tag (vX.Y.Z) aliasing this release; release names stay unchanged")
     args = parser.parse_args()
     if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,79}", args.release):
         parser.error("Invalid release identifier")
+    if args.version is not None and not re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", args.version):
+        parser.error("Invalid version; expected vX.Y.Z")
     monitor_output = args.monitor_output_dir or args.output_dir.with_name(args.output_dir.name + "-monitor")
     if args.output_dir.exists() or monitor_output.exists() or args.output_dir.resolve() == monitor_output.resolve():
         parser.error("Output directory already exists or overlaps; releases are never overwritten")
@@ -113,7 +116,7 @@ def main():
     subprocess.run(["docker", "save", "-o", str(args.output_dir / "images.tar"), *[v["ref"] for v in images.values()]], check=True)
     (args.output_dir / "release.env").write_text("".join(f"{role.upper()}_IMAGE={value['ref']}\n" for role, value in images.items()))
     manifest = {
-        "schema": 1, "role": "app", "release": args.release, "createdAt": datetime.now(timezone.utc).isoformat(),
+        "schema": 1, "role": "app", "release": args.release, "version": args.version, "createdAt": datetime.now(timezone.utc).isoformat(),
         "target": "ubuntu24.04-amd64", "sourceCommit": run("git", "-C", str(ROOT), "rev-parse", "HEAD"),
         "sourceDirty": bool(run("git", "-C", str(ROOT), "status", "--porcelain")),
         "images": images, "packages": [p.name for p in packages], "monitorPackages": [p.name for p in monitor_packages],
