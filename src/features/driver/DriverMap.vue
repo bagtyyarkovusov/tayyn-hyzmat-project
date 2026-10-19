@@ -19,9 +19,7 @@ const container = ref<HTMLElement | null>(null);
 const error = ref("");
 const loading = ref(true);
 const tripOpen = ref(false);
-const positionFresh = computed(
-  () => state.gpsFixReady && state.clock - state.locationUpdatedAt < 60_000,
-);
+const positionFresh = computed(() => state.gpsFixReady);
 const lastPositionTime = computed(() =>
   state.locationUpdatedAt
     ? new Date(state.locationUpdatedAt).toLocaleTimeString([], {

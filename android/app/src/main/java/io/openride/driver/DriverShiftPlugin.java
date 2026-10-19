@@ -2,9 +2,11 @@ package io.openride.driver;
 
 import android.Manifest;
 import android.content.*;
+import android.content.pm.PackageManager;
 import android.location.*;
 import android.os.*;
 import android.provider.Settings;
+import androidx.activity.result.ActivityResult;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.*;
 import com.getcapacitor.annotation.*;
@@ -24,40 +26,71 @@ import java.net.URI;
           strings = {Manifest.permission.POST_NOTIFICATIONS})
     })
 public class DriverShiftPlugin extends Plugin {
-  private LocationManager manager;
-  private LocationListener oneShot;
+  private LocationAcquisition acquisition;
+  private long locationGeneration;
+  private String locationRequestKey;
   private final Handler timer = new Handler(Looper.getMainLooper());
   private PluginCall locationCall;
 
   private JSObject nativeStatus() {
     try {
       JSObject result = JSObject.fromJSONObject(ShiftService.status(getContext()));
-      result.put("locationGranted", getPermissionState("location") == PermissionState.GRANTED);
+      result.put("locationGranted", preciseGranted());
+      result.put("locationCoarseGranted", coarseGranted());
       PermissionState permission = getPermissionState("location");
-      result.put("locationPermission", permission == PermissionState.GRANTED ? "granted" :
-          permission == PermissionState.PROMPT ? "prompt" : "denied");
-      LocationManager locations = (LocationManager) getContext().getSystemService(Context.LOCATION_SERVICE);
-      result.put("locationEnabled", locations != null && locations.isProviderEnabled(LocationManager.GPS_PROVIDER));
+      result.put(
+          "locationPermission",
+          permission == PermissionState.GRANTED
+              ? "granted"
+              : permission == PermissionState.PROMPT ? "prompt" : "denied");
+      LocationManager locations =
+          (LocationManager) getContext().getSystemService(Context.LOCATION_SERVICE);
+      result.put("locationEnabled", LocationAcquisition.enabled(locations));
       return result;
     } catch (org.json.JSONException error) {
       return new JSObject();
     }
   }
 
+  private boolean preciseGranted() {
+    return ContextCompat.checkSelfPermission(getContext(), Manifest.permission.ACCESS_FINE_LOCATION)
+        == PackageManager.PERMISSION_GRANTED;
+  }
+
+  private boolean coarseGranted() {
+    return ContextCompat.checkSelfPermission(
+            getContext(), Manifest.permission.ACCESS_COARSE_LOCATION)
+        == PackageManager.PERMISSION_GRANTED;
+  }
+
   @PluginMethod
   public void permissions(PluginCall call) {
-    requestPermissionForAlias("location", call, "permissionResult");
+    // Onboarding requests permission once; only Online may open recovery settings.
+    if (call.getBoolean("enableLocation", false)
+        && getPermissionState("location") == PermissionState.DENIED) {
+      startActivityForResult(
+          call,
+          new Intent(
+              Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+              android.net.Uri.parse("package:" + getContext().getPackageName())),
+          "settingsResult");
+    } else requestPermissionForAlias("location", call, "permissionResult");
   }
 
   @PermissionCallback
   private void permissionResult(PluginCall call) {
-    JSObject result = nativeStatus();
-    result.put("locationGranted", getPermissionState("location") == PermissionState.GRANTED);
-    LocationManager locations =
-        (LocationManager) getContext().getSystemService(Context.LOCATION_SERVICE);
-    result.put("locationEnabled",
-        locations != null && locations.isProviderEnabled(LocationManager.GPS_PROVIDER));
-    call.resolve(result);
+    if (call.getBoolean("enableLocation", false)
+        && preciseGranted()
+        && !LocationAcquisition.enabled(
+            (LocationManager) getContext().getSystemService(Context.LOCATION_SERVICE))) {
+      startActivityForResult(
+          call, new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS), "settingsResult");
+    } else call.resolve(nativeStatus());
+  }
+
+  @ActivityCallback
+  private void settingsResult(PluginCall call, ActivityResult result) {
+    if (call != null) call.resolve(nativeStatus());
   }
 
   @PluginMethod
@@ -96,73 +129,67 @@ public class DriverShiftPlugin extends Plugin {
 
   @PluginMethod
   public void location(PluginCall call) {
-    if (getPermissionState("location") != PermissionState.GRANTED) {
-      call.reject("Разрешите точный GPS в настройках приложения.");
-      return;
-    }
     getActivity()
         .runOnUiThread(
             () -> {
+              if (!coarseGranted() && !preciseGranted()) {
+                call.reject("Разрешите местоположение в настройках приложения.");
+                return;
+              }
               if (locationCall != null) {
-                call.reject("Ожидаем координаты GPS.");
+                call.reject("Запрос местоположения уже выполняется.");
                 return;
               }
               locationCall = call;
-              manager = (LocationManager) getContext().getSystemService(Context.LOCATION_SERVICE);
-              if (!manager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                finishLocation(null, "Включите GPS телефона.");
-                return;
-              }
-              oneShot =
-                  new LocationListener() {
-                    @Override
-                    public void onLocationChanged(Location fix) {
-                      long age = SystemClock.elapsedRealtimeNanos() - fix.getElapsedRealtimeNanos();
-                      if (age < 0 || age > 30000000000L) return;
-                      finishLocation(fix, null);
-                    }
-
-                    @Override
-                    public void onProviderDisabled(String provider) {
-                      finishLocation(null, "Включите GPS телефона.");
-                    }
-
-                    @Override
-                    public void onProviderEnabled(String provider) {}
-
-                    @Override
-                    public void onStatusChanged(String provider, int status, Bundle extras) {}
-                  };
+              locationRequestKey = call.getString("requestKey", "");
+              long request = ++locationGeneration;
+              acquisition = new LocationAcquisition(getContext(), timer);
               try {
-                manager.requestLocationUpdates(
-                    LocationManager.GPS_PROVIDER, 0, 0, oneShot, Looper.getMainLooper());
-                timer.postDelayed(
+                acquisition.once(
+                    90000,
+                    fix -> finishLocation(request, fix, null),
                     () ->
                         finishLocation(
+                            request,
                             null,
-                            "GPS временно недоступен. Выйдите на открытое место и повторите."),
-                    20000);
+                            "Местоположение временно недоступно. Повторите выход на линию."));
               } catch (SecurityException error) {
-                finishLocation(null, "Разрешите точный GPS в настройках приложения.");
+                finishLocation(request, null, "Разрешите местоположение в настройках приложения.");
               }
             });
   }
 
-  private void finishLocation(Location fix, String error) {
+  @PluginMethod
+  public void cancelLocation(PluginCall call) {
+    getActivity()
+        .runOnUiThread(
+            () -> {
+              if (call.getString("requestKey", "").equals(locationRequestKey))
+                finishLocation(locationGeneration, null, "Запрос местоположения отменён.");
+              call.resolve();
+            });
+  }
+
+  private void finishLocation(long request, Location fix, String error) {
+    if (request != locationGeneration || locationCall == null) return;
+    ++locationGeneration;
     PluginCall call = locationCall;
     locationCall = null;
+    locationRequestKey = null;
     timer.removeCallbacksAndMessages(null);
-    if (manager != null && oneShot != null) manager.removeUpdates(oneShot);
-    oneShot = null;
-    if (call == null) return;
+    if (acquisition != null) acquisition.stop();
+    acquisition = null;
     if (error != null) call.reject(error);
-    else
+    else {
+      long age = LocationAcquisition.ageMs(fix);
       call.resolve(
           new JSObject()
               .put("lat", fix.getLatitude())
               .put("lng", fix.getLongitude())
               .put("accuracy", fix.getAccuracy())
-              .put("timestamp", fix.getTime()));
+              .put("ageMs", age)
+              .put("timestamp", System.currentTimeMillis() - age));
+    }
   }
 
   @PluginMethod
@@ -181,7 +208,7 @@ public class DriverShiftPlugin extends Plugin {
       call.reject("Для APK требуется защищённый HTTPS API.");
       return;
     }
-    if (getPermissionState("location") != PermissionState.GRANTED) {
+    if (!preciseGranted()) {
       call.reject("Разрешите GPS телефона.");
       return;
     }
@@ -217,7 +244,7 @@ public class DriverShiftPlugin extends Plugin {
 
   @Override
   protected void handleOnDestroy() {
-    finishLocation(null, "Запрос GPS отменён.");
+    finishLocation(locationGeneration, null, "Запрос GPS отменён.");
     super.handleOnDestroy();
   }
 }

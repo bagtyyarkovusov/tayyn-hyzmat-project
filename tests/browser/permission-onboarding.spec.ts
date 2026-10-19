@@ -221,9 +221,10 @@ for (const choice of ["Deny", "Dismiss"]) {
         .getByRole("button", { name: "Deny", exact: true })
         .click();
       await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-      await expect(
-        page.getByRole("button", { name: "Включить GPS", exact: true }),
-      ).toHaveAttribute("data-state", "blocked");
+      await expect(page.getByRole("status", { name: /^GPS:/ })).toHaveAttribute(
+        "data-state",
+        "blocked",
+      );
       await expect(page.getByRole("dialog")).toHaveCount(0);
       await page.getByRole("link", { name: "Профиль", exact: true }).click();
       await page.getByRole("button", { name: "Выйти", exact: true }).click();
@@ -296,12 +297,14 @@ test("notification denial does not prevent a deliberate shift with precise GPS",
       .getByRole("dialog", { name: "Android notification permission" })
       .getByRole("button", { name: "Deny", exact: true })
       .click();
-    await page
-      .getByRole("button", { name: "Включить GPS", exact: true })
-      .click();
-    await expect(
-      page.getByRole("button", { name: "Включить GPS", exact: true }),
-    ).toHaveAttribute("data-state", "ready");
+    await expect(page.getByRole("status", { name: /^GPS:/ })).toHaveAttribute(
+      "data-state",
+      "ready",
+    );
+    await expect(page.getByRole("status", { name: /^GPS:/ })).toHaveAttribute(
+      "data-state",
+      "ready",
+    );
     await page
       .getByRole("button", { name: "Выйти на линию", exact: true })
       .click();
@@ -353,7 +356,7 @@ test("admin login and failed driver login never request APK permissions", async 
   }
 });
 
-test("browser driver login keeps permission requests behind manual controls", async ({
+test("browser driver acquires local GPS automatically but never requests notifications on login", async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -368,9 +371,10 @@ test("browser driver login keeps permission requests behind manual controls", as
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/driverLogin");
   await login(page);
-  await expect(
-    page.getByRole("button", { name: "Включить GPS", exact: true }),
-  ).toHaveAttribute("data-state", "inactive");
+  await expect(page.getByRole("status", { name: /^GPS:/ })).toHaveAttribute(
+    "data-state",
+    "searching",
+  );
   expect(errors).toEqual([]);
 });
 

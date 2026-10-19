@@ -1,4 +1,4 @@
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { onMounted, onUnmounted, ref, watch } from "vue";
 import { useDocumentVisibility, useOnline } from "@vueuse/core";
 
 interface Position {
@@ -45,7 +45,6 @@ export function useLocationAddress(
   policy: AddressPolicy,
 ) {
   const address = ref("");
-  const pending = ref(false);
   const retryAt = ref(0);
   const clock = ref(Date.now());
   const visibility = useDocumentVisibility();
@@ -126,20 +125,6 @@ export function useLocationAddress(
       policy.connected()
     );
   }
-  const refreshDisabled = computed(
-    () =>
-      pending.value ||
-      !ready() ||
-      !policy.online() ||
-      retryAt.value > clock.value,
-  );
-  const refreshHint = computed(() =>
-    pending.value
-      ? "Получаем адрес…"
-      : retryAt.value > clock.value
-        ? "Обновить адрес можно раз в пять минут"
-        : "Обновить адрес",
-  );
   function schedule() {
     reconcile();
     if (inFlight || !ready() || Date.now() - lastAttemptAt < 1000) return;
@@ -155,7 +140,6 @@ export function useLocationAddress(
     if (inFlight || !ready() || !point || !id) return;
     inFlight = true;
     lastAttemptAt = Date.now();
-    pending.value = true;
     const current = generation;
     if (purpose === "off-shift") {
       // Survives reload/swipe-away, including a lost response. Do not retry
@@ -217,13 +201,8 @@ export function useLocationAddress(
       // Coordinates remain usable for auth, network, quota and provider failures.
     } finally {
       inFlight = false;
-      pending.value = false;
       schedule();
     }
-  }
-  async function refresh() {
-    reconcile();
-    if (!refreshDisabled.value) await request("refresh");
   }
   const stop = watch(
     () =>
@@ -265,5 +244,5 @@ export function useLocationAddress(
     clearInterval(timer);
     stop();
   });
-  return { address, pending, refresh, refreshDisabled, refreshHint };
+  return { address };
 }

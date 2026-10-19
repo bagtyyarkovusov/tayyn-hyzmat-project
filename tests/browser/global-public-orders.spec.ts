@@ -93,9 +93,10 @@ async function actors(browser: Browser, delayRegionalPopup = false) {
   const pages = await Promise.all(contexts.map((context) => context.newPage()));
   for (const page of pages) {
     await page.goto("/driverDashboard");
-    await page
-      .getByRole("button", { name: "Включить GPS", exact: true })
-      .click();
+    await expect(page.getByRole("status", { name: /^GPS:/ })).toHaveAttribute(
+      "data-state",
+      "ready",
+    );
     await page
       .getByRole("button", { name: "Выйти на линию", exact: true })
       .click();
@@ -500,11 +501,8 @@ test("the current-region border follows fresh local GPS off shift and never the 
       longitude: 20,
       accuracy: 10,
     });
-    const gps = viewer.getByRole("button", {
-      name: "Включить GPS",
-      exact: true,
-    });
-    await gps.click();
+    const gps = viewer.getByRole("status", { name: /^GPS:/ });
+    await expect(gps).toHaveAttribute("data-state", "ready");
     await expect(gps).toHaveAttribute("data-state", "ready");
     const current = cards.filter({ hasText: region.name });
     await expect(current).toHaveAttribute("aria-current", "location");
@@ -527,7 +525,7 @@ test("the current-region border follows fresh local GPS off shift and never the 
       longitude: 30,
       accuracy: 10,
     });
-    await gps.click();
+    await expect(gps).toHaveAttribute("data-state", "ready");
     await expect(gps).toHaveAttribute("data-state", "ready");
     await expect(cards.filter({ hasText: "Мой район" })).toHaveCount(0);
     await expect(viewer.getByLabel("Местоположение GPS")).toContainText(
@@ -538,7 +536,7 @@ test("the current-region border follows fresh local GPS off shift and never the 
       longitude: 20,
       accuracy: 10,
     });
-    await gps.click();
+    await expect(gps).toHaveAttribute("data-state", "ready");
     await expect(current).toHaveAttribute("aria-current", "location");
     // Only advance the app clock after all real geolocation samples: browser
     // geolocation timestamps come from the OS clock, which Playwright does not advance.

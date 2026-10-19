@@ -59,9 +59,10 @@ async function fixture(
     await installFixtureSession(context, "driver", driverSession, deviceId);
     const page = await context.newPage();
     await page.goto("/driverDashboard");
-    await page
-      .getByRole("button", { name: "Включить GPS", exact: true })
-      .click();
+    await expect(page.getByRole("status", { name: /^GPS:/ })).toHaveAttribute(
+      "data-state",
+      "ready",
+    );
     await page
       .getByRole("button", { name: "Выйти на линию", exact: true })
       .click();
@@ -1358,9 +1359,10 @@ test("forced offline is not overwritten by an older refresh still in flight", as
     await profile.held;
     // Losing GPS permission forces the shift offline locally.
     await context.clearPermissions();
-    await page
-      .getByRole("button", { name: "Включить GPS", exact: true })
-      .click();
+    await expect(page.getByRole("status", { name: /^GPS:/ })).toHaveAttribute(
+      "data-state",
+      "blocked",
+    );
     await status.held;
     const goOnline = page.getByRole("button", {
       name: "Выйти на линию",

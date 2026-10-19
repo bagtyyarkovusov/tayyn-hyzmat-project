@@ -308,20 +308,6 @@ async function logout() {
         <CancellationReviewBanner />
         <AdminMessageAlert />
       </div>
-      <p
-        v-if="driver && !networkOnline"
-        role="status"
-        class="border-b bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-900 dark:bg-amber-950/60 dark:text-amber-200"
-      >
-        Нет интернета. Пытаемся подключиться…
-      </p>
-      <p
-        v-else-if="driver && !session.state.connected"
-        role="status"
-        class="border-b bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-900 dark:bg-amber-950/60 dark:text-amber-200"
-      >
-        Связь с диспетчером прервана. Переподключаемся…
-      </p>
       <nav
         v-if="!driver"
         class="mobile-admin-nav"

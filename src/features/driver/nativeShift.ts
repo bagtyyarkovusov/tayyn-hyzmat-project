@@ -12,6 +12,7 @@ export interface NativeShiftStatus {
   lastReportAt: number;
   leaseRemainingMs?: number;
   lastFixAt?: number;
+  fixAgeMs?: number;
   stopSequence: number;
   lat: number;
   lng: number;
@@ -23,14 +24,18 @@ export interface NativeShiftStatus {
   locationEnabled?: boolean;
 }
 interface NativeShiftPlugin {
-  permissions(): Promise<NativeShiftStatus>;
+  permissions(options?: {
+    enableLocation: boolean;
+  }): Promise<NativeShiftStatus>;
   status(): Promise<NativeShiftStatus>;
-  location(): Promise<{
+  location(options: { requestKey: string }): Promise<{
     lat: number;
     lng: number;
     accuracy: number;
     timestamp: number;
+    ageMs?: number;
   }>;
+  cancelLocation(options: { requestKey: string }): Promise<void>;
   start(options: {
     apiBase: string;
     shiftToken: string;
@@ -62,7 +67,7 @@ let generation = 0;
 export async function startNativeShift() {
   if (!nativeAndroid) return;
   const current = ++generation;
-  const permission = await nativeShift.permissions();
+  const permission = await nativeShift.status();
   if (current !== generation) throw new Error("Смена отменена.");
   if (!permission.locationGranted || permission.locationEnabled !== true)
     throw new Error(

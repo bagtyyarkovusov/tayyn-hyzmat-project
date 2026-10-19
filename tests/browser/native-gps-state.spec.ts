@@ -67,6 +67,7 @@ test("native GPS remains local and green during server reconnect and after the s
         lastReportAt: Date.now(),
         lastFixAt: Date.now() - 10_000,
         stopSequence: 0,
+        leaseRemainingMs: 60_000,
         lat: 37.96,
         lng: 58.32,
         accuracy: 10,
@@ -134,7 +135,7 @@ test("native GPS remains local and green during server reconnect and after the s
     }, driver.userId);
     const page = await context.newPage();
     await page.goto("/driverDashboard");
-    const gps = page.getByRole("button", { name: "Включить GPS", exact: true });
+    const gps = page.getByRole("status", { name: /^GPS:/ });
     await expect(gps).toHaveAttribute("data-state", "ready");
     await page.evaluate(() => {
       Object.assign((window as any).nativeGpsState, {
@@ -151,6 +152,17 @@ test("native GPS remains local and green during server reconnect and after the s
       "37.9610, 58.3210",
     );
     await expect(gps).toHaveAttribute("data-state", "ready");
+    await expect(
+      page.getByRole("status", { name: "Связь: переподключение" }),
+    ).toBeVisible();
+    await expect(page.getByRole("group", { name: "GPS и связь" })).toHaveText(
+      "",
+    );
+    await expect(
+      page.getByText(
+        /Переподключаемся к диспетчеру|Ожидаем GPS|Последнее обновление/,
+      ),
+    ).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Уйти с линии", exact: true }),
     ).toHaveAttribute(

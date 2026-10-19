@@ -82,17 +82,19 @@ test("second device signs in immediately without ending or controlling the first
         if (new URL(request.url()).pathname.endsWith("/driver/location"))
           offShiftRequests.push(request.url());
       });
-    await owner
-      .getByRole("button", { name: "Включить GPS", exact: true })
-      .click();
+    await expect(owner.getByRole("status", { name: /^GPS:/ })).toHaveAttribute(
+      "data-state",
+      "ready",
+    );
+    await expect(owner.getByRole("status", { name: /^GPS:/ })).toHaveAttribute(
+      "data-state",
+      "ready",
+    );
     await expect(
-      owner.getByRole("button", { name: "Включить GPS", exact: true }),
+      spectator.getByRole("status", { name: /^GPS:/ }),
     ).toHaveAttribute("data-state", "ready");
-    await spectator
-      .getByRole("button", { name: "Включить GPS", exact: true })
-      .click();
     await expect(
-      spectator.getByRole("button", { name: "Включить GPS", exact: true }),
+      spectator.getByRole("status", { name: /^GPS:/ }),
     ).toHaveAttribute("data-state", "ready");
     // One address convenience request is allowed per installation. It must
     // never upload either phone’s point as dispatcher tracking.
@@ -113,11 +115,11 @@ test("second device signs in immediately without ending or controlling the first
       owner.getByRole("button", { name: "Уйти с линии", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
     await spectator.reload();
-    await spectator
-      .getByRole("button", { name: "Включить GPS", exact: true })
-      .click();
     await expect(
-      spectator.getByRole("button", { name: "Включить GPS", exact: true }),
+      spectator.getByRole("status", { name: /^GPS:/ }),
+    ).toHaveAttribute("data-state", "ready");
+    await expect(
+      spectator.getByRole("status", { name: /^GPS:/ }),
     ).toHaveAttribute("data-state", "ready");
     const conflict = await spectator.request.post(`${api}/driver/status`, {
       headers: await headers(spectator, "driver"),
@@ -143,7 +145,7 @@ test("second device signs in immediately without ending or controlling the first
       spectator.getByRole("button", { name: "Выйти на линию", exact: true }),
     ).toBeDisabled();
     await expect(
-      spectator.getByRole("button", { name: "Включить GPS", exact: true }),
+      spectator.getByRole("status", { name: /^GPS:/ }),
     ).toBeEnabled();
     // Releasing the shift unlocks the other signed-in device through live state,
     // without logging either device out or reloading the spectator.
@@ -151,7 +153,7 @@ test("second device signs in immediately without ending or controlling the first
       .getByRole("button", { name: "Уйти с линии", exact: true })
       .click();
     await expect(
-      spectator.getByRole("button", { name: "Включить GPS", exact: true }),
+      spectator.getByRole("status", { name: /^GPS:/ }),
     ).toBeEnabled();
     await expect(
       spectator.getByText(
@@ -166,7 +168,7 @@ test("second device signs in immediately without ending or controlling the first
       owner.getByRole("button", { name: "Уйти с линии", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
     await expect(
-      spectator.getByRole("button", { name: "Включить GPS", exact: true }),
+      spectator.getByRole("status", { name: /^GPS:/ }),
     ).toBeEnabled();
     await spectator.getByRole("link", { name: "Профиль", exact: true }).click();
     await expect(
@@ -246,12 +248,14 @@ test("dispatcher signs out every session without changing the assigned trip or c
     await expect(spectator).toHaveURL(/driverDashboard/);
     const ownerHeaders = await headers(owner, "driver");
     const spectatorHeaders = await headers(spectator, "driver");
-    await owner
-      .getByRole("button", { name: "Включить GPS", exact: true })
-      .click();
-    await expect(
-      owner.getByRole("button", { name: "Включить GPS", exact: true }),
-    ).toHaveAttribute("data-state", "ready");
+    await expect(owner.getByRole("status", { name: /^GPS:/ })).toHaveAttribute(
+      "data-state",
+      "ready",
+    );
+    await expect(owner.getByRole("status", { name: /^GPS:/ })).toHaveAttribute(
+      "data-state",
+      "ready",
+    );
     await owner
       .getByRole("button", { name: "Выйти на линию", exact: true })
       .click();
