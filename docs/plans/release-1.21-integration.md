@@ -10,8 +10,14 @@ The local candidate is `feat/release-121-integrated` in the T3 worktree
 - Geocoder `82e769643c57790e81e68e7792bbdda492d68b44` was merged with its
   original history in `de40087`. The only conflict was additive English and
   Russian release-note bullets. Both sets were retained.
-- Cancellation backend, cancellation UI, GPS follow-up and signup without
-  approval still need verified component commits from the parent coordinator.
+- Cancellation UI `eca38991949921187c77f8dd4304ab1928cf3d23` was merged in
+  `cb0793b`. Only release notes conflicted. GPS/geocoder notes, planned signup
+  scope and the cancellation verification gate were retained. The component's
+  uncommitted worktree edits were excluded.
+- Cancellation backend, GPS follow-up and signup without approval still need
+  verified component commits from the parent coordinator. Backend WIP
+  `5e3d118` is explicitly excluded pending tests. Independent reviews of the
+  pinned UI commit are pending.
 
 GPS review of `98a00ff` found two pending P2 issues: region-count refresh after
 GPS recovery and a red status that remains after browser permission changes
@@ -19,12 +25,14 @@ from denied to granted followed by a timeout. The GPS owner is fixing these
 and adding the account-switch standards test. This checkpoint does not mark
 GPS ready.
 
-The approved signup handoff adds immediate active self-registration with an
-initial session, immediate admin-created accounts and removal of approval
+The approved signup handoff for issue #150 adds immediate active
+self-registration with an initial session, immediate admin-created accounts
+and removal of approval
 language, queues, counters and actions across driver and dispatcher UI. New
 accounts remain offline, without a region and with zero balance. Existing
 block/unblock, credential security, GPS and shift requirements remain. The
-parent is assigning implementation separately.
+implementation owner is in T3 worktree `t3-ecce4e60` on
+`feat/driver-signup-no-approval-121`; a stable commit is pending.
 
 No component was cherry-picked. This is a preliminary local candidate, not a
 release approval. Reset tooling belongs to a separate task.
@@ -40,16 +48,18 @@ success notice was removed. No other driver behavior changed. In particular,
 `order:cancelled` refresh, cancellation-before-accept-response protection,
 notification-event-specific invalidation and GPS session guards remain intact.
 
-The UI component still calls `transition("cancel")` until its stable component
-commit removes that control. The preliminary frontend typecheck reports this
-single expected error in `ActiveTrip.vue:36`. Do not widen the transition union
-to make the intermediate tree compile.
+UI commit `eca3899` removes the `ActiveTrip.vue` cancellation control and its
+`transition("cancel")` caller. The integration-owned cleanup remains the only
+change to `useDriver.ts` after the pinned GPS commit.
 
 Dependencies were installed with the frozen lockfile and Prisma Client was
-generated locally. Backend typecheck passed. Formatting of `useDriver.ts` and
-`git diff --check` passed. Full verification is deferred until the component
-source is cohesive. Component verification reported by the parent is separate
-from verification of this merged tree.
+generated locally. Frontend typecheck passed after the UI merge. Backend
+typecheck passed before the UI merge. Formatting of
+`useDriver.ts` and `git diff --check` passed. Full verification is deferred until
+the component source is cohesive. The parent reports six real-browser UI passes;
+the 13 cancellation matrix cases await the stable backend and a run by the UI
+owner. Component verification reported by the parent is separate from
+verification of this merged tree.
 
 ## Integrated verification after component handoff
 
