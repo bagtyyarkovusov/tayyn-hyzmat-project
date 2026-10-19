@@ -13,6 +13,34 @@ globalThis.fetch = async (input, init) => {
   if (url.origin !== "https://geocode-maps.yandex.ru")
     return original(input, init);
   const point = url.searchParams.get("geocode");
+  if (point === "58.4064495,37.8968707") {
+    return Response.json({
+      response: {
+        GeoObjectCollection: {
+          featureMember: [
+            {
+              GeoObject: {
+                metaDataProperty: {
+                  GeocoderMetaData: {
+                    kind: "house",
+                    precision: "exact",
+                    Address: {
+                      Components: [
+                        { kind: "country", name: "Туркменистан" },
+                        { kind: "locality", name: "Ашхабад" },
+                        { kind: "district", name: "микрорайон Парахат 7/3" },
+                        { kind: "house", name: "14" },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    });
+  }
   if (point === "58.321234,37.961234") {
     await new Promise((resolve) => setTimeout(resolve, 1500));
     return Response.json({
