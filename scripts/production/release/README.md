@@ -27,6 +27,8 @@ Every remote action is a named step ([`remote_step.py`](remote_step.py)). The ho
 - **Same command again:** a step that succeeded with identical code returns its saved result without running. This is how you resume a multi-step helper such as `capture.py`.
 - **Failed or interrupted step:** it is refused until you inspect `stderr_tail` and the host files. `--allow-rerun` archives that attempt as `*.attempt-<time>` and runs again. Use it only when the step is safe to repeat.
 - Read-only steps (`premaintenance`, `restore-backup-timer`) always run again.
+- **Concurrency:** a step holds `<step>.lock` while it runs. A second `run`, even with `--allow-rerun`, is refused while it is held. `stage`, `capture` and release-script steps also hold `/run/lock/tayyn-deploy.lock`, so they cannot overlap `apply-release.py` or `prune-releases.py`. The `apply` step leaves that lock to `apply-release.py`.
+- **Local timeout:** `stage.py apply` waits up to `--timeout` seconds (default 7200). The host step has no timeout and keeps running after the Mac stops waiting; continue with `wait`.
 
 ## 1. Normal server update
 
@@ -48,7 +50,7 @@ The release-specific logic lives in a per-release script, such as `scripts/produ
 
 | #   | Command                                                                                                              | Downtime   | Stop if                                                         |
 | --- | -------------------------------------------------------------------------------------------------------------------- | ---------- | --------------------------------------------------------------- |
-| R1  | `capture.py --label L capture --stage installed-pre-migration --stop-writers`                                        | **Starts** | Writers not quiesced, backup or any copy checksum mismatch      |
+| R1  | `capture.py --label L capture --stage installed-pre-migration --stop-writers --expect-current vps-M-...`             | **Starts** | Writers not quiesced, backup or any copy checksum mismatch      |
 | R2  | Release script: take the preservation snapshot while writers stay stopped, then copy it with `remote_step.copy_from` | Yes        | Snapshot guard fails                                            |
 | R3  | Owner-local rehearsal of R1's archive in a disposable PostgreSQL (manual, per release; see lessons on tmpfs)         | Yes        | Rehearsal or forced rollback fails                              |
 | R4  | Release script: migration-only step bound to the R3 result                                                           | Yes        | Non-zero: keep writers stopped. Never start the old image alone |
@@ -56,6 +58,8 @@ The release-specific logic lives in a per-release script, such as `scripts/produ
 | R6  | Release script: guarded reset/data step bound to the R5 copies and rehearsal                                         | Yes        | Non-zero: never retry automatically                             |
 | R7  | `stage.py ... apply --release vps-N-SHA`, then `capture.py ... restore-timer`                                        | Ends       | As step 5                                                       |
 | R8  | Step 6 acceptance plus the release script's read-only verification                                                   | No         | Any mismatch                                                    |
+
+**On any abort after R1** (a failed or refused step, or a decision to stop): first recover the services per [Recover a failed update](../../../docs/offline-production-bundle.md#recover-a-failed-update). Use the current release before migrations, or a reviewed forward fix after them. Then run `capture.py --label L restore-timer`. If R1 itself fails while waiting for a running backup, it restarts the backup timer (if it was enabled) and leaves the writers running.
 
 The downtime lasts from R1 to R7. Plan the owner rehearsals inside it. A dropped session resumes at the first step that has no saved success. Re-running `capture.py` with the same stage reuses each finished part.
 
@@ -66,6 +70,7 @@ import sys; sys.path.insert(0, "scripts/production/release")
 import remote_step
 context = remote_step.Context("1.22", Path(os.environ["TAYYN_SSH_CONFIG"]), Path(".local/release-1.22/logs"))
 code = f"RELEASE = {release!r}\nPROOF = {proof!r}\n" + """
+hold_deploy_lock()                                                 # every state-changing step except apply
 rel = Path("/opt/tayyn/releases") / RELEASE
 source = rel / "scripts/production/reset-release-1.22.py"
 reset = {"__name__": "reset"}
@@ -83,6 +88,7 @@ Rules:
 - Bind each step to the earlier evidence it depends on, such as a capture hash or a rehearsal result.
 - Write host-side logs to `PRIVATE_DIR`.
 - Never mark an irreversible step idempotent.
+- Call `hold_deploy_lock()` first in every step that changes production state, except the `apply` step.
 
 ## 3. Android-only APK release
 

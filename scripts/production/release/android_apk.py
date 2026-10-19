@@ -33,6 +33,7 @@ GRADLE = "android/app/build.gradle"
 GENERATED = "android/capacitor.settings.gradle"
 BUILT_APK = "android/app/build/outputs/apk/release/TayynHyzmat-release.apk"
 # Public fingerprint of the production signing certificate (docs/android.md); not a secret.
+PRODUCTION_PACKAGE = "tayyn.hyzmat.production"
 PRODUCTION_CERT_SHA256 = "a675842c5d0c2bfb62b08c02aff99687b66c8580180591a4ebf8169716d240b6"
 LINKED = ("android/app/src/release/google-services.json",)
 COPIED = ("android/app/src/debug/google-services.json",)
@@ -126,6 +127,21 @@ def stale_assets(web, dist):
     return problems
 
 
+def check_identity(parsed, *, package, version_name, version_code):
+    """Fail unless build.gradle's (applicationId, versionName, versionCode) equals the approved values."""
+    expected = (package, version_name, int(version_code))
+    if tuple(parsed) != expected:
+        raise ValueError(f"build.gradle declares {parsed}, expected {expected}")
+
+
+def signing_passwords(properties):
+    """Return the store and key passwords; both must be present so the APK can be scanned for them."""
+    missing = [key for key in ("storePassword", "keyPassword") if not properties.get(key)]
+    if missing:
+        raise ValueError("keystore.properties lacks " + ", ".join(missing) + "; cannot scan the APK for them")
+    return [properties["storePassword"], properties["keyPassword"]]
+
+
 def read_properties(path):
     values = {}
     for line in Path(path).read_text().splitlines():
@@ -154,12 +170,11 @@ def build(arguments):
     if command(["git", "status", "--porcelain"]).strip():
         raise ValueError("Source must be clean before the build")
     package, version_name, version_code = parse_gradle_version((ROOT / GRADLE).read_text())
-    for flag, actual in (("expect_version_name", version_name), ("expect_version_code", version_code)):
-        wanted = getattr(arguments, flag)
-        if wanted is not None and str(wanted) != str(actual):
-            raise ValueError(f"build.gradle {flag[7:]} is {actual}, expected {wanted}")
+    check_identity((package, version_name, version_code), package=arguments.package,
+                   version_name=arguments.expect_version_name, version_code=arguments.expect_version_code)
     if not (ROOT / "android/keystore/keystore.properties").exists():
         raise ValueError("Signing inputs missing; run stage-signing-inputs first")
+    passwords = signing_passwords(read_properties(ROOT / "android/keystore/keystore.properties"))
     output = arguments.output_dir or ROOT / f".local/release-{version_name}/artifacts-{arguments.approved_sha}"
     output.mkdir(mode=0o700, parents=True)
     api_url, socket_url = arguments.origin.rstrip("/") + "/api", arguments.origin.rstrip("/")
@@ -212,9 +227,7 @@ def build(arguments):
         problems += scan_web_assets(web, api_url=api_url, socket_url=socket_url, maps_key=maps_key)
         problems += scan_names(names)
         problems += stale_assets(web, ROOT / "dist-driver")
-        secrets = [v for k, v in read_properties(ROOT / "android/keystore/keystore.properties").items()
-                   if k in ("storePassword", "keyPassword") and v]
-        if any(secret.encode() in archive.read(n) for n in names for secret in secrets):
+        if any(secret.encode() in archive.read(n) for n in names for secret in passwords):
             problems.append("Signing credential in APK")
     if problems:
         raise ValueError("APK verification failed: " + "; ".join(problems))
@@ -246,8 +259,10 @@ def main():
     make.add_argument("--output-dir", type=Path, help="New directory (default .local/release-<version>/artifacts-<sha>)")
     make.add_argument("--origin", default="https://taxi.tayynhyzmat.com")
     make.add_argument("--cert-sha256", default=PRODUCTION_CERT_SHA256)
-    make.add_argument("--expect-version-name")
-    make.add_argument("--expect-version-code", type=int)
+    make.add_argument("--expect-version-name", required=True, help="Approved versionName, e.g. 1.21.1")
+    make.add_argument("--expect-version-code", type=int, required=True, help="Approved versionCode, e.g. 23")
+    make.add_argument("--package", default=PRODUCTION_PACKAGE,
+                      help="Approved applicationId; override only for a deliberate new package identity")
     make.add_argument("--build-tools", default="35.0.0")
     make.add_argument("--java-home", default=os.environ.get("JAVA_HOME", "/opt/homebrew/opt/openjdk@17"))
     make.add_argument("--android-home", default=os.environ.get("ANDROID_HOME",

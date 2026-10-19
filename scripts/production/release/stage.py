@@ -12,7 +12,8 @@ stage  NO DOWNTIME. Requires verified-artifact.json from `artifact.py verify`. S
      checks pinned files inside the API image, then re-runs verify_bundle.
      The services keep running throughout. Re-running reuses the durable result.
 apply  CAUSES DOWNTIME. Remote step `apply-<release>` runs the bundle's own apply-release.py
-       (`python3 -B`, output kept in the host step dir). It stops writers, takes the encrypted
+       (`python3 -B`, no timeout, output kept in the host step dir). It does not take the deploy
+       lock itself; apply-release.py does. It stops writers, takes the encrypted
        backup, migrates, starts and health-checks the release, then switches /opt/tayyn/current.
        Never retried automatically: after a failure follow docs/offline-production-bundle.md
        "Recover a failed update".
@@ -33,6 +34,7 @@ INCOMING = "/opt/tayyn/incoming"
 STAGE_CODE = '''
 import hashlib, json, shutil, subprocess, tarfile, zipfile
 from pathlib import Path, PurePosixPath
+hold_deploy_lock()  # no apply or prune may run while images load
 releases = Path("/opt/tayyn/releases")
 rel = releases / RELEASE
 incoming = Path(INCOMING)
@@ -85,6 +87,8 @@ for role, image in manifest["images"].items():
     if data["Id"] != image["id"]:
         # containerd exposes manifest IDs; compare exact config bytes as apply-release.py does.
         expected = apply["image_config_digest"](rel / "images.tar", image["ref"])
+        if "sha256:" + expected != image["id"]:
+            raise SystemExit("Archive config digest differs from the manifest image id for " + role)
         saved = PRIVATE_DIR / (role + "-loaded-check.tar")
         run(["docker", "image", "save", "-o", str(saved), image["ref"]], timeout=1800)
         try:
@@ -141,7 +145,7 @@ if current.resolve() == rel:
 before = current.resolve().name
 result = subprocess.run(["python3", "-B", str(rel / "scripts/production/apply-release.py"), "--bundle", str(rel),
                          "--env-file", "/etc/tayyn/app.env", "--operations-config", "/etc/tayyn/operations.json"],
-                        capture_output=True, text=True, timeout=3000)
+                        capture_output=True, text=True)  # no timeout: killing it mid-backup/migrate is worse
 (PRIVATE_DIR / ("apply-release-" + RELEASE + ".stdout")).write_text(result.stdout)
 (PRIVATE_DIR / ("apply-release-" + RELEASE + ".stderr")).write_text(result.stderr)
 if result.returncode:
@@ -171,11 +175,17 @@ def main():
                          help="/path/in/api/image=<sha256>, e.g. a reviewed migration.sql; repeatable")
     applying = commands.add_parser("apply", help="Run apply-release.py for a staged release (downtime)")
     applying.add_argument("--release", required=True)
+    for sub in (staging, applying):
+        sub.add_argument("--allow-rerun", action="store_true",
+                         help="Archive an inspected failed/interrupted attempt and run the step again")
+        sub.add_argument("--timeout", type=int, default=7200,
+                         help="Local wait in seconds; the host step keeps running after it (then use remote_step.py wait)")
     arguments = parser.parse_args()
     context = remote_step.context_from(arguments)
     if arguments.command == "apply":
         result = remote_step.run_step(context, arguments.host, f"apply-{arguments.release}",
-                                      apply_code(arguments.release), timeout=3600)
+                                      apply_code(arguments.release), allow_rerun=arguments.allow_rerun,
+                                      timeout=arguments.timeout)
         print(json.dumps(result, indent=2))
         return
     verified = json.loads((arguments.artifact_dir / "verified-artifact.json").read_text())
@@ -196,7 +206,8 @@ def main():
     code = stage_code(release=release, app_sha256=app_sha256, source_commit=verified["source_commit"],
                       version=verified.get("version"), pins=parse_pins(arguments.pin_image_file),
                       remote_zip=arguments.remote_artifact_zip)
-    result = remote_step.run_step(context, arguments.host, f"stage-{release}", code, timeout=3600)
+    result = remote_step.run_step(context, arguments.host, f"stage-{release}", code, allow_rerun=arguments.allow_rerun,
+                                  timeout=arguments.timeout)
     print(json.dumps(result, indent=2))
 
 

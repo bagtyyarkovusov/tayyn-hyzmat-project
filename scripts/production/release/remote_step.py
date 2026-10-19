@@ -8,6 +8,12 @@ own session with files (not the SSH pipe) as stdio, so a dropped SSH session doe
 stop it or lose its result. Python never writes bytecode (-B, -I), the umask is 077,
 and nothing is imported from a release directory.
 
+The bootstrap takes flock(<step>.lock) before checking state and passes it to the detached
+step, which holds it until it exits. A step is reported `running` exactly while that lock
+is held, so concurrent runs or --allow-rerun can never start a live step twice. Steps that
+change production state call hold_deploy_lock() to share /run/lock/tayyn-deploy.lock with
+apply-release.py and prune-releases.py (the apply step leaves that to apply-release.py).
+
 A step that was started is never re-run automatically. Running the same step code again
 returns the earlier success without executing it. `status` and `wait` only read the
 durable files. Retrying a failed or interrupted step (or a succeeded step whose code
@@ -34,18 +40,18 @@ from pathlib import Path
 NAME = re.compile(r"[0-9A-Za-z][0-9A-Za-z._-]{0,127}")
 SSH_FAILED = 255
 
-# Shared by the remote step prelude and local callers, so both use one atomic writer.
-HELPERS = '''
-def write_json_atomic(path, value):
-    """Write JSON with mode 0600 via fsync + rename, so readers never see a partial file."""
-    import json as _json, os as _os, tempfile as _tempfile
+# Shared by the remote prelude, the bootstrap and local callers, so all use one atomic writer.
+HELPERS = """
+def write_bytes_atomic(path, data):
+    \"\"\"Write bytes with mode 0600 via fsync + rename, so readers never see a partial file.\"\"\"
+    import os as _os, tempfile as _tempfile
     path = _os.fspath(path)
     directory = _os.path.dirname(path) or "."
     descriptor, temporary = _tempfile.mkstemp(prefix="." + _os.path.basename(path) + ".", dir=directory)
     try:
-        with _os.fdopen(descriptor, "w") as stream:
+        with _os.fdopen(descriptor, "wb") as stream:
             _os.fchmod(stream.fileno(), 0o600)
-            stream.write(_json.dumps(value, indent=2, sort_keys=True) + "\\n")
+            stream.write(data)
             stream.flush()
             _os.fsync(stream.fileno())
         _os.replace(temporary, path)
@@ -58,27 +64,45 @@ def write_json_atomic(path, value):
         _os.fsync(directory_descriptor)
     finally:
         _os.close(directory_descriptor)
-'''
+def write_json_atomic(path, value):
+    import json as _json
+    write_bytes_atomic(path, (_json.dumps(value, indent=2, sort_keys=True) + "\\n").encode())
+"""
 _namespace = {}
 exec(HELPERS, _namespace)  # noqa: S102 - trusted constant defined above
+write_bytes_atomic = _namespace["write_bytes_atomic"]
 write_json_atomic = _namespace["write_json_atomic"]
 
+DEPLOY_LOCK = "/run/lock/tayyn-deploy.lock"
+
 # Prepended to every step. Steps report by calling write_result(dict) exactly once.
-PRELUDE = '''import os, sys
+PRELUDE = """import os, sys
 sys.dont_write_bytecode = True
 os.umask(0o077)
 from pathlib import Path
 STEP_RESULT = Path(os.environ["TAYYN_STEP_RESULT"])
 PRIVATE_DIR = STEP_RESULT.parent
-''' + HELPERS + '''
+""" + HELPERS + """
 def write_result(value):
     write_json_atomic(STEP_RESULT, value)
+_DEPLOY_LOCK = None
+def hold_deploy_lock(path=%r):
+    \"\"\"Hold the updater's lock for this step's lifetime; fail at once if a deploy, prune or capture runs.\"\"\"
+    global _DEPLOY_LOCK
+    import fcntl
+    _DEPLOY_LOCK = open(path, "a")
+    try:
+        fcntl.flock(_DEPLOY_LOCK, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise SystemExit("Another deploy, prune or capture holds " + path)
 # ---- step code ----
-'''
+""" % DEPLOY_LOCK
 
-# Runs as root on the host: python3 -B -c BOOTSTRAP <private-dir> <step> <mode> <flags> [timeout]
-BOOTSTRAP = r'''
-import hashlib, json, os, signal, subprocess, sys, time
+# Runs as root on the host: python3 -B -I -c BOOTSTRAP <private-dir> <step> <mode> <flags> [timeout].
+# <step>.lock is held (flock) from the state check until the detached step exits: a step is
+# "running" exactly when that lock is held, so a concurrent run or --allow-rerun cannot start it twice.
+BOOTSTRAP = HELPERS + r"""
+import fcntl, hashlib, json, os, signal, subprocess, sys, time
 from pathlib import Path
 os.umask(0o077)
 sys.dont_write_bytecode = True
@@ -89,31 +113,37 @@ info = private.lstat()
 if private.is_symlink() or info.st_uid != os.geteuid() or info.st_mode & 0o077:
     sys.exit("Private step directory must be an owner-only directory, not a symlink")
 files = {k: private / (step + suffix) for k, suffix in (("code", ".py"), ("started", ".started.json"),
-         ("pid", ".pid"), ("stdout", ".stdout"), ("stderr", ".stderr"), ("exit", ".exit"), ("result", ".json"))}
+         ("stdout", ".stdout"), ("stderr", ".stderr"), ("exit", ".exit"), ("result", ".json"))}
+lock_path = private / (step + ".lock")
+def try_lock():
+    handle = open(lock_path, "a")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return handle
+    except BlockingIOError:
+        handle.close()
+        return None
+def lock_busy():
+    handle = try_lock()
+    if handle is None:
+        return True
+    handle.close()
+    return False
 def tail(path):
     try:
         return path.read_text(errors="replace")[-2000:]
     except FileNotFoundError:
         return ""
-def state():
+def state(busy):
     out = {"step": step, "private_dir": str(private)}
     if files["exit"].exists():
         code = int(files["exit"].read_text().strip())
         result = json.loads(files["result"].read_text()) if files["result"].exists() else None
         out.update(state="succeeded" if code == 0 and result is not None else "failed", exit=code, result=result)
+    elif busy:
+        out.update(state="running")
     elif files["started"].exists():
-        alive = False
-        try:
-            os.kill(int(files["pid"].read_text().strip()), 0)
-            alive = True
-        except FileNotFoundError:
-            # The pid file follows the start record within milliseconds.
-            alive = time.time() - files["started"].stat().st_mtime < 60
-        except (ValueError, ProcessLookupError):
-            pass
-        except PermissionError:
-            alive = True
-        out.update(state="running" if alive else "interrupted")
+        out.update(state="interrupted")
     else:
         out.update(state="not-started")
     if files["started"].exists():
@@ -125,18 +155,19 @@ def finish(value, code=0):
     print(json.dumps(value))
     sys.exit(code)
 if mode == "status":
-    finish(state())
+    finish(state(lock_busy()))
 if mode == "wait":
     deadline = time.monotonic() + float(sys.argv[5])
-    while state()["state"] == "running" and time.monotonic() < deadline:
+    while state(lock_busy())["state"] == "running" and time.monotonic() < deadline:
         time.sleep(5)
-    finish(state())
+    finish(state(lock_busy()))
 if mode != "run":
     sys.exit("Unknown mode")
 code = sys.stdin.read()
-current = state()
-if current["state"] == "running":
-    finish(dict(current, refused="Step is still running; use wait"), 3)
+lock = try_lock()
+if lock is None:
+    finish(dict(state(True), refused="Step is running (its lock is held); use wait"), 3)
+current = state(False)
 same_code = current.get("started", {}).get("code_sha256") == hashlib.sha256(code.encode()).hexdigest()
 if current["state"] == "succeeded" and "repeat" not in flags:
     if same_code:
@@ -150,19 +181,21 @@ if current["state"] != "not-started":
     for path in files.values():
         if path.exists():
             path.rename(path.with_name(path.name + ".attempt-" + stamp))
-files["code"].write_text(code)
-files["started"].write_text(json.dumps({"started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                                        "code_sha256": hashlib.sha256(code.encode()).hexdigest(), "flags": flags}))
+write_bytes_atomic(files["code"], code.encode())
+write_json_atomic(files["started"], {"started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                     "code_sha256": hashlib.sha256(code.encode()).hexdigest(), "flags": flags})
 environment = dict(os.environ, TAYYN_STEP_RESULT=str(files["result"]), PYTHONDONTWRITEBYTECODE="1")
+# The wrapper and the step inherit the locked descriptor, so the lock lives exactly as long as they do.
 script = 'trap "" HUP; "$0" -B -I "$1" >"$2" 2>"$3"; status=$?; printf "%s\n" "$status" >"$4.tmp" && mv "$4.tmp" "$4"'
 child = subprocess.Popen(["/bin/sh", "-c", script, sys.executable, str(files["code"]), str(files["stdout"]),
                           str(files["stderr"]), str(files["exit"])], stdin=subprocess.DEVNULL,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True, env=environment)
-files["pid"].write_text(str(child.pid) + "\n")
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True, env=environment,
+                         pass_fds=(lock.fileno(),))
+lock.close()
 child.wait()
-final = state()
+final = state(lock_busy())
 finish(final, 0 if final["state"] == "succeeded" else 1)
-'''
+"""
 
 # Writes stdin to <dest> only if its SHA-256 matches; an identical existing file is accepted.
 UPLOAD = r'''

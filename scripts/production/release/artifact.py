@@ -70,6 +70,7 @@ def download_ranged(url, output, size, *, sha256=None, chunk=CHUNK, retries=5, w
     A range is accepted only when its Content-Range header and length match. The assembled file must
     match `size` and, when given, `sha256`; otherwise nothing is written at `output`.
     """
+    sha256 = normalise_sha256(sha256)
     output = Path(output)
     if output.exists():
         raise FileExistsError(f"Refusing existing {output}")
@@ -125,6 +126,16 @@ def download_ranged(url, output, size, *, sha256=None, chunk=CHUNK, retries=5, w
     partial.rename(output)
     shutil.rmtree(parts)
     return output
+
+
+def normalise_sha256(value):
+    """Accept a bare or GitHub-style `sha256:` digest; return 64 lowercase hex characters."""
+    if value is None:
+        return None
+    digest = value.strip().lower().removeprefix("sha256:")
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("--sha256 must be 64 hex characters, optionally prefixed with sha256:")
+    return digest
 
 
 def read_private_text(path):
@@ -256,7 +267,7 @@ def main():
     download.add_argument("--url-file", type=Path, required=True, help="Owner-only file holding the signed URL")
     download.add_argument("--output", type=Path, required=True, help="New zip path, e.g. .local/releases/RUN/artifact.zip")
     download.add_argument("--size", type=int, help="Expected bytes (GitHub artifact size_in_bytes); probed if omitted")
-    download.add_argument("--sha256", help="Expected zip SHA-256 (GitHub artifact digest) when known")
+    download.add_argument("--sha256", help="Expected zip SHA-256, bare or `sha256:` (GitHub artifact digest)")
     download.add_argument("--workers", type=int, default=4)
     check = commands.add_parser("verify", help="Verify signature, archives and manifest")
     check.add_argument("--zip", type=Path, required=True)
@@ -277,9 +288,10 @@ def main():
     vps.add_argument("--config-out", type=Path, required=True, help="New owner-only curl config file to write")
     arguments = parser.parse_args()
     if arguments.command == "download":
+        expected = normalise_sha256(arguments.sha256)  # validated before any download
         url = read_private_text(arguments.url_file)
         size = arguments.size or probe_size(url)
-        download_ranged(url, arguments.output, size, sha256=arguments.sha256, workers=arguments.workers,
+        download_ranged(url, arguments.output, size, sha256=expected, workers=arguments.workers,
                         progress=lambda message: print(message, flush=True))
         print(json.dumps({"artifact": str(arguments.output), "size": size, "sha256": sha256_file(arguments.output)}))
     elif arguments.command == "verify":
