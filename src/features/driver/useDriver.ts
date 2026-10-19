@@ -160,17 +160,20 @@ export function connectionRecovering() {
     : locationSyncFailureAt > 0 &&
         state.clock < locationSyncFailureAt + LOCATION_SYNC_FAILURE_GRACE_MS;
 }
-/** Whether the driver is connected to the dispatcher, for presentation.
- * A native shift is carried by the Android service. Until that service first
- * reports its own connection, within one lease, the WebView socket that the
- * server just acknowledged the shift on still shows the link. Order actions and
- * GPS upload keep their own stricter checks. */
-export function dispatcherConnected() {
+/** Whether the driver is connected to the dispatcher. A native shift is
+ * carried by the Android service, so readiness waits for that service.
+ * `shiftStart` is for the status indicator and address lookup only: until the
+ * service first reports, within one lease, they keep showing the WebView socket
+ * the server just acknowledged the shift on. Readiness for regions, orders and
+ * the shift button never uses it. */
+export function dispatcherConnected(shiftStart = false) {
   if (!nativeAndroid || !state.profile?.isOnline || !canControlShift())
     return driverSession.state.connected;
   return (
     state.nativeConnected ||
-    (state.clock < state.nativeHandoffUntil && driverSession.state.connected)
+    (shiftStart &&
+      state.clock < state.nativeHandoffUntil &&
+      driverSession.state.connected)
   );
 }
 const otherDeviceMessage =
@@ -757,13 +760,19 @@ async function setOnline() {
       // The server can announce the shift over the socket before this response.
       if (nativeAndroid)
         state.nativeHandoffUntil = Date.now() + NATIVE_SHIFT_LEASE_MS;
-      const { data } = await (nativeAndroid ? account : driverApi).post<{
-        districtId: string | null;
-      }>("/driver/status", {
-        isOnline: true,
-        isAvailable: true,
-        position: { ...state.position, capturedAt: state.locationUpdatedAt },
-      });
+      const { data } = await (nativeAndroid ? account : driverApi)
+        .post<{
+          districtId: string | null;
+        }>("/driver/status", {
+          isOnline: true,
+          isAvailable: true,
+          position: { ...state.position, capturedAt: state.locationUpdatedAt },
+        })
+        .catch((error: unknown) => {
+          // No service will start, even if the server committed the shift.
+          state.nativeHandoffUntil = 0;
+          throw error;
+        });
       if (!account.current()) return;
       lastLocationSent = Date.now();
       locationSyncFailureAt = 0;

@@ -53,6 +53,17 @@ async function nativeDriver(context: BrowserContext, phone: string) {
       return { ...result, ...host.nativeReport };
     };
   });
+  return { Authorization: `Bearer ${session.accessToken}` };
+}
+/** Closing the browser does not end the shift. Later specs share the API. */
+async function endShift(
+  context: BrowserContext,
+  headers?: Record<string, string>,
+) {
+  if (!headers) return;
+  await context.request
+    .post(`${api}/driver/status`, { headers, data: { isOnline: false } })
+    .catch(() => {});
 }
 
 async function screenshotHeader(page: Page, name: string) {
@@ -93,8 +104,9 @@ test("starting a native shift keeps the connection indicator green until the ser
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 },
   });
+  let headers: Record<string, string> | undefined;
   try {
-    await nativeDriver(context, "+99360000781");
+    headers = await nativeDriver(context, "+99360000781");
     const page = await context.newPage();
     await page.goto("/driverDashboard");
     const connection = await recordConnection(page);
@@ -106,6 +118,13 @@ test("starting a native shift keeps the connection indicator green until the ser
       page.getByRole("button", { name: "Уйти с линии", exact: true }),
     ).toBeVisible();
     await expect(connection).toHaveAttribute("data-state", "ready");
+    // Only the indicator bridges the start. Regions, orders and the shift
+    // button wait until the service itself reports to the server.
+    const region = page
+      .getByRole("group", { name: "Регионы" })
+      .getByRole("button")
+      .first();
+    await expect(region).toBeDisabled();
     await page.evaluate(() => (window as any).releaseStart());
     // The service runs but is still connecting through two status reads.
     const reads = await nativeStatusReads(page);
@@ -118,6 +137,7 @@ test("starting a native shift keeps the connection indicator green until the ser
     });
     await expect.poll(() => nativeStatusReads(page)).toBeGreaterThan(reads + 2);
     await expect(connection).toHaveAttribute("data-state", "ready");
+    await expect(region).toBeEnabled();
     expect(await page.evaluate(() => (window as any).connectionStates)).toEqual(
       ["ready"],
     );
@@ -148,6 +168,7 @@ test("starting a native shift keeps the connection indicator green until the ser
     });
     await expect(connection).toHaveAttribute("data-state", "disconnected");
   } finally {
+    await endShift(context, headers);
     await context.close();
   }
 });
@@ -158,8 +179,9 @@ test("going offline while a native shift starts shows no connection", async ({
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 },
   });
+  let headers: Record<string, string> | undefined;
   try {
-    await nativeDriver(context, "+99360000782");
+    headers = await nativeDriver(context, "+99360000782");
     const page = await context.newPage();
     await page.goto("/driverDashboard");
     const connection = await recordConnection(page);
@@ -173,6 +195,7 @@ test("going offline while a native shift starts shows no connection", async ({
     await expect(connection).toHaveAttribute("data-state", "disconnected");
     await screenshotHeader(page, "offline");
   } finally {
+    await endShift(context, headers);
     await context.close();
   }
 });

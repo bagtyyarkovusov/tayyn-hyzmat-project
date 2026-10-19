@@ -45,7 +45,7 @@ const { address } = useDriverAddress(
     capturedAt: () => state.locationUpdatedAt,
     onlineRequest: () => state.addressLookupRequest,
     transitionPending: () => state.busy,
-    connected: dispatcherConnected,
+    connected: () => dispatcherConnected(true),
   },
 );
 const selected = ref<string | null>(null);
@@ -54,8 +54,10 @@ const networkOnline = useOnline();
 const connectionReady = computed(
   () => networkOnline.value && dispatcherConnected(),
 );
+// The indicator alone bridges a native shift start: it keeps showing the
+// acknowledged WebView socket until the Android service first connects.
 const connectionState = computed(() =>
-  connectionReady.value
+  networkOnline.value && dispatcherConnected(true)
     ? "ready"
     : connectionRecovering()
       ? "reconnecting"
