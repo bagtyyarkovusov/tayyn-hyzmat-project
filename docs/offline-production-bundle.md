@@ -39,7 +39,17 @@ The exporter also writes a separate `<output-dir>-monitor` bundle containing onl
 
 Only a fixed list of deployment scripts, reviewed configuration examples and documentation is copied. Runtime `.env` files, TLS keys, Firebase credentials, backup identities and SSH keys are excluded. Never add a production secret to an image layer. Output directories cannot be overwritten. Image references are immutable within the manifest; reusing a release name for different content is forbidden.
 
-Checksums detect corruption, not an attacker who replaces both data and checksums. Transfer through verified SSH and compare the SHA256SUMS file hash through a trusted channel. Keep that hash with the release evidence.
+## Bundle signature
+
+Checksums alone detect corruption, not an attacker who replaces both data and checksums. CI therefore signs `bundle-archives.sha256` with keyless Sigstore (cosign, GitHub OIDC identity of `offline-production-bundle.yml`) and publishes `bundle-archives.sha256.sigstore.json` in the same artifact. The bundle contains the signing certificate, signature and transparency-log inclusion proof, so verification needs no Rekor lookup and no network on the VPS. CI also confirms that a modified checksum file is rejected. Published API/web images in GHCR are cosign-signed by digest and carry a build-provenance attestation.
+
+Before uploading anything, run this single check on the operator Mac (install cosign once, for example `brew install cosign`; cosign caches the Sigstore trust root, so run it once online after installation):
+
+```sh
+bash scripts/production/verify-release-signature.sh .local/releases/RUN_ID
+```
+
+It fails closed if the signature bundle is missing, the signer is not this repository's bundle workflow, the checksum file was altered, it lists unexpected archives, or an archive does not match. Do not apply a release that fails this check. Then transfer through verified SSH; the inner `SHA256SUMS` is covered by the signed archive hash. Keep the signature bundle with the release evidence.
 
 ## Install on the main VPS
 

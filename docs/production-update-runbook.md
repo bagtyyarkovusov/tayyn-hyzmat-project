@@ -72,11 +72,12 @@ gh run download RUN_ID \
   --repo bagtyyarkovusov/tayyn-hyzmat-project \
   --name offline-production-COMMIT_SHA \
   --dir .local/releases/RUN_ID
-cd .local/releases/RUN_ID
-shasum -a 256 -c bundle-archives.sha256
+bash scripts/production/verify-release-signature.sh .local/releases/RUN_ID
 ```
 
-The output contains `app-bundle.tar.gz`, `monitor-bundle.tar.gz` and their checksums. The app archive contains images and packages; the monitor archive omits Docker and application images. Store the verified artifacts and commit/run evidence securely beyond GitHub's seven-day retention if they are needed for recovery.
+This offline check verifies the Sigstore signature over `bundle-archives.sha256` and then the archive checksums. See [the offline guide](offline-production-bundle.md#bundle-signature). Stop if it fails.
+
+The output contains `app-bundle.tar.gz`, `monitor-bundle.tar.gz`, their checksums and `bundle-archives.sha256.sigstore.json`. The app archive contains images and packages; the monitor archive omits Docker and application images. Store the verified artifacts and commit/run evidence securely beyond GitHub's seven-day retention if they are needed for recovery.
 
 ## Install or update
 

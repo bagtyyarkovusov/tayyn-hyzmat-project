@@ -15,6 +15,11 @@ jobs:
   publish:
     if: ${{ !inputs.offline_bundle }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # keyless cosign signatures and provenance for pushed images
+      attestations: write
     strategy:
       matrix:
         include:
@@ -40,7 +45,9 @@ jobs:
           tags: |
             type=sha,format=long,prefix=sha-
             type=ref,event=tag
+      - uses: sigstore/cosign-installer@v3
       - uses: docker/build-push-action@v6
+        id: build
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
@@ -53,6 +60,16 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+      - name: Sign image by digest
+        run: cosign sign --yes "ghcr.io/${GITHUB_REPOSITORY}-${{ matrix.name }}@${{ steps.build.outputs.digest }}"
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}-${{ matrix.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
   offline-bundle:
     if: ${{ inputs.offline_bundle }}
+    permissions:
+      contents: read
+      id-token: write
     uses: ./.github/workflows/offline-production-bundle.yml

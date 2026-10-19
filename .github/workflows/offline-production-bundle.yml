@@ -4,6 +4,7 @@ on:
   workflow_call:
 permissions:
   contents: read
+  id-token: write # keyless Sigstore signature over bundle-archives.sha256
 jobs:
   bundle:
     runs-on: ubuntu-24.04
@@ -34,6 +35,17 @@ jobs:
           tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/monitor-bundle.tar.gz" "$RELEASE-monitor"
           cd "$RUNNER_TEMP"
           sha256sum app-bundle.tar.gz monitor-bundle.tar.gz > bundle-archives.sha256
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign archive checksums and prove tampering is rejected
+        run: |
+          cd "$RUNNER_TEMP"
+          cosign sign-blob --yes --bundle bundle-archives.sha256.sigstore.json bundle-archives.sha256
+          bash "$GITHUB_WORKSPACE/scripts/production/verify-release-signature.sh" "$RUNNER_TEMP"
+          mkdir tampered
+          ln app-bundle.tar.gz monitor-bundle.tar.gz bundle-archives.sha256.sigstore.json tampered/
+          { cat bundle-archives.sha256; echo; } > tampered/bundle-archives.sha256
+          if bash "$GITHUB_WORKSPACE/scripts/production/verify-release-signature.sh" "$RUNNER_TEMP/tampered"; then echo "Tampered checksums verified" >&2; exit 1; fi
+          rm -r tampered
       - uses: actions/upload-artifact@v4
         with:
           name: offline-production-${{ github.sha }}
@@ -41,5 +53,6 @@ jobs:
             ${{ runner.temp }}/app-bundle.tar.gz
             ${{ runner.temp }}/monitor-bundle.tar.gz
             ${{ runner.temp }}/bundle-archives.sha256
+            ${{ runner.temp }}/bundle-archives.sha256.sigstore.json
           compression-level: 0
           retention-days: 7
