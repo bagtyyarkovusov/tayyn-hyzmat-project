@@ -2540,6 +2540,20 @@ async function createAddressDriver(page: Page, phone: string) {
   await login(page, "driver", phone);
   return driver;
 }
+test("driver location displays a microdistrict house label without a street", async ({
+  page,
+}) => {
+  await createAddressDriver(page, "+99360000944");
+  await startGps(page, {
+    latitude: 37.8968707,
+    longitude: 58.4064495,
+    accuracy: 10,
+  });
+  await expect(page.getByLabel("Местоположение GPS")).toContainText(
+    "микрорайон Парахат 7/3, 14",
+  );
+});
+
 test("a delayed address cannot replace a newer GPS position outside the saved region", async ({
   page,
 }) => {

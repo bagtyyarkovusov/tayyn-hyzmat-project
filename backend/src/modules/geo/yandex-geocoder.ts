@@ -80,7 +80,12 @@ export async function reverseAddress(
       ?.metaDataProperty?.GeocoderMetaData?.Address?.Components || [];
   const street = components.find((part) => part.kind === 'street')?.name;
   const house = components.find((part) => part.kind === 'house')?.name;
-  return street ? (house ? `${street}, ${house}` : street) : null;
+  // Components run from broadest to most specific, including nested districts.
+  const district = [...components]
+    .reverse()
+    .find((part) => part.kind === 'district')?.name;
+  const label = street || district;
+  return label ? (house ? `${label}, ${house}` : label) : null;
 }
 
 export function quotaPeriod(
