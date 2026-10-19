@@ -6,6 +6,10 @@ import subprocess
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
+# The one-time reset policy approves these historical catalogs only. Later
+# application migrations must not silently broaden the destructive rehearsal.
+BEFORE_RESET_MIGRATION = '20261017140000_archabil_region_spelling'
+ROLLOUT_RESET_MIGRATION = '20261018190100_legacy_private_attempt_kind'
 PRISMA_TABLE = '''CREATE TABLE public._prisma_migrations (
  id varchar(36) NOT NULL PRIMARY KEY, checksum varchar(64) NOT NULL,
  finished_at timestamptz, migration_name varchar(255) NOT NULL, logs text,
@@ -58,8 +62,9 @@ class Cluster:
     def database(self, name, *, rollout=True):
         self.sql('CREATE DATABASE ' + name)
         self.sql(PRISMA_TABLE, name)
+        last_migration = ROLLOUT_RESET_MIGRATION if rollout else BEFORE_RESET_MIGRATION
         for index, path in enumerate(sorted((ROOT / 'backend/prisma/migrations').glob('*/migration.sql'))):
-            if not rollout and path.parent.name.startswith('2026101819'):
+            if path.parent.name > last_migration:
                 continue
             sql = path.read_text()
             self.sql(sql + "\nINSERT INTO _prisma_migrations(id,checksum,migration_name,finished_at,applied_steps_count) VALUES ('" + str(index) + "','" + hashlib.sha256(sql.encode()).hexdigest() + "','" + path.parent.name + "',now(),1);", name)

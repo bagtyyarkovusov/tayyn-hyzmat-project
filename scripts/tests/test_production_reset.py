@@ -295,6 +295,20 @@ class ResetDrillTests(unittest.TestCase):
                 self.assertIn(message, cli(*self.args(database)).stderr)
                 self.assertEqual(self.full_state(database), before)
 
+    def test_later_driver_activity_schema_is_refused_without_changes(self):
+        database = self.fresh()
+        path, digest, _ = self.snapshot(database)
+        migration = SCRIPT.parents[2] / 'backend/prisma/migrations/20261018200000_driver_activity_audits/migration.sql'
+        self.cluster.sql(migration.read_text(), database)
+        self.cluster.sql("INSERT INTO driver_activity_audits(id,driver_id,actor_id,actor_name,driver_name,action) VALUES ('new-audit','driver-a','admin-one','Dispatcher one','Synthetic driver','APPROVED')", database)
+        before = self.full_state(database)
+        audit_before = self.rows(database, 'SELECT to_jsonb(t)::text FROM driver_activity_audits t')
+        for result in (cli(*self.args(database)), self.execute(database, path, digest)):
+            self.assertEqual(result.returncode, 2)
+            self.assertIn('unknown=driver_activity_audits', result.stderr)
+        self.assertEqual(self.full_state(database), before)
+        self.assertEqual(self.rows(database, 'SELECT to_jsonb(t)::text FROM driver_activity_audits t'), audit_before)
+
     def test_unpaired_admin_identity_refuses_inside_transaction(self):
         database = self.fresh()
         self.cluster.sql("INSERT INTO users(id,role,phone,password_hash,full_name,updated_at) VALUES ('orphan','ADMIN','+99360000199','x','Orphan','2026-10-01')", database)
