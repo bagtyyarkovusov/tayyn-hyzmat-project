@@ -1309,6 +1309,7 @@ test("delayed old reoffer cannot silence the new cancellation attempt", async ({
       .toBe(1);
     await f.adminPost(`/admin/orders/${order.id}/reoffer`);
     await expect.poll(() => Boolean(releaseReoffer)).toBe(true);
+    await f.adminPage.clock.fastForward(3100);
     await f.recancelOrder(order.id);
     await expect(banner).toContainText(`Заказ #${order.orderNumber}`);
     const recovered = f.adminPage.waitForResponse(
