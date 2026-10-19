@@ -259,6 +259,7 @@ public class DriverShiftPlugin extends Plugin {
 
   @Override
   protected void handleOnDestroy() {
+    startRetry.removeCallbacksAndMessages(null);
     finishLocation(locationGeneration, null, "Запрос GPS отменён.");
     super.handleOnDestroy();
   }

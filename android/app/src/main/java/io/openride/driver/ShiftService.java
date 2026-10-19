@@ -298,6 +298,8 @@ public final class ShiftService extends Service {
     } catch (RejectedShift error) {
       finishShift("Смена завершена сервером. Войдите или включите линию снова.");
     } catch (Exception error) {
+      // A closing instance's late failure must not overwrite a newer shift's state.
+      if (closing) return;
       phase = "reconnecting";
       detail = "Нет связи с диспетчером";
     }
