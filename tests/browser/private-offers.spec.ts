@@ -139,12 +139,12 @@ test("dispatcher creates a private offer and driver explicitly accepts into the 
     await expect(
       trip.getByText("Прибытие: 5 мин", { exact: true }),
     ).toBeVisible();
-    await expect(driver.getByLabel("Баланс")).toHaveText("500 TMT");
+    await expect(driver.getByLabel("Баланс")).toHaveText("490 TMT");
     await driver.screenshot({
       path: test.info().outputPath("private-offer-accepted-mobile.png"),
     });
     await trip.getByRole("button", { name: "Я на месте", exact: true }).click();
-    await expect(driver.getByLabel("Баланс")).toHaveText("500 TMT");
+    await expect(driver.getByLabel("Баланс")).toHaveText("490 TMT");
     await trip
       .getByRole("button", { name: "Начать поездку", exact: true })
       .click();

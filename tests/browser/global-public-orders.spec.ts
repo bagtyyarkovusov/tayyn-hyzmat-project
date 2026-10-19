@@ -134,12 +134,18 @@ async function actors(browser: Browser, delayRegionalPopup = false) {
     orders.push(order.id);
     return order;
   }
-  async function cancel(orderId: string) {
+  async function cancel(
+    orderId: string,
+    outcome?: "WITH_REFUND" | "WITHOUT_REFUND",
+  ) {
     const response = await contexts[0]!.request.post(
       `${process.env.TEST_API_URL}/admin/orders/${orderId}/cancel`,
       {
         headers,
-        data: { reason: "Disposable browser cleanup" },
+        data: {
+          reason: "Disposable browser cleanup",
+          ...(outcome ? { outcome } : {}),
+        },
       },
     );
     expect(response.ok()).toBe(true);
@@ -228,7 +234,7 @@ test("a new public order is immediately claimable from another region and closes
       "0:1",
     );
     await expect(card).not.toHaveClass(/bg-emerald-100/);
-    await cancel(order.id);
+    await cancel(order.id, "WITHOUT_REFUND");
     await expect(card.getByLabel("Заказов: 0. Машин на линии: 1")).toHaveText(
       "0:1",
     );

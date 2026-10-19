@@ -335,8 +335,8 @@ test("dispatcher signs out every session without changing the assigned trip or c
       headers: adminHeaders,
     });
     const funding = (await balance.json()).user.balance;
-    expect(Number(funding.amount)).toBe(100);
-    expect(Number(funding.held)).toBe(30);
+    expect(Number(funding.amount)).toBe(70);
+    expect(Number(funding.held)).toBe(0);
     expect(Number(funding.available)).toBe(70);
     const history = await admin.request.get(
       `${api}/admin/drivers/${id}/history`,
