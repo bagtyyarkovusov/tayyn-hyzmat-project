@@ -216,6 +216,8 @@ The release flow is:
 7. Start the new image, check HTTPS, `/health`, Socket.IO, database access and the real APK configuration.
 8. Record the deployment result and verify the monitor returns to healthy. The current monitor sends initialization, daily, incident and recovery emails; a separate email for every new release is not yet implemented.
 
+The [release operator runbook](../scripts/production/release/README.md) gives the ordered commands for steps 4 to 8 with resumable helpers, and [release lessons](release-lessons.md) records past incidents and their fixes. Add a lessons entry after every release.
+
 Rollback means switching API/web images back to the last known-good release and verifying health. Never automatically restore an older database or reverse a migration: that could discard orders, balances, messages or trip history. A migration rollback needs a separately reviewed forward migration and a tested backup restore in a disposable database.
 
 ## Backups and restore
@@ -297,6 +299,7 @@ Before changing production-related files:
 - Update this guide and `docs/deployment-readiness.md` when commands, ports, credentials, retention or release gates change.
 - Record release tag, image digests, migration status, backup/restore evidence, alert test and known limitations.
 - Do not claim “production ready” while any gate above remains unverified.
+- Read [release lessons](release-lessons.md) before a release and add any new incident afterwards.
 
 ### Rollout 1.20 reset preparation and monitor recovery, 2026-10-18
 
@@ -305,3 +308,7 @@ The scoped [one-time reset runbook](production-reset-1.20.md), explicit catalog 
 The existing monitor service account could not read root-owned 0600 artifacts left by earlier maintenance. The previous recovery hash-verified and corrected ownership of precisely two ciphertext archives and the relay/monitor state files. A further read-only check identified the monitor's `operations.json` as root-owned 0600 and unreadable by `tayyn-monitor`. Its ownership alone was restored to the established `tayyn-monitor` user/group; the content digest and 0600 mode stayed unchanged. No application configuration or credentials changed.
 
 Both existing relay and monitor units subsequently completed with `Result=success` and `ExecMainStatus=0` under `tayyn-monitor`; both timers remained active/enabled. Relay inventory verification found all 11 available ciphertext copies matched application size/SHA-256, including the missing hourly archives. The monitor's bounded check reported `healthy: true`, no failures/warnings and no email needed. This repairs the freshness blocker, but a NEW quiesced, protected PRE-RESET backup, independent relay/hash and successful owner-local disposable restore remain mandatory before deletion. Private commands, hashes and storage recovery pointers remain in the ignored operator checkout.
+
+### Release operator helpers, 2026-10-19
+
+The ad-hoc 1.21 transport, download, staging, pre-maintenance and capture scripts, and the 1.21.1 APK build script, are now reusable helpers in `scripts/production/release/` with a [runbook](../scripts/production/release/README.md). Remote steps keep durable results under `/root/tayyn-<label>-private/` on each host, so a dropped SSH session resumes without repeating irreversible work. Protected stage backups go to `/var/lib/tayyn/protected-<label>/` instead of the per-release `pre-reset-<version>` directory. The deployment files, the updater and the bundle contents are unchanged. The helpers have unit tests with local fakes only and have not yet run against either VPS. Supervise the first production use. Incidents and their fixes are in [release lessons](release-lessons.md).

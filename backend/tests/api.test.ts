@@ -115,7 +115,7 @@ before(async () => {
   regionId = region.id;
   otherRegionId = otherRegion.id;
   for (const [phone, districtId] of [['+99360000101', regionId], ['+99360000102', otherRegionId]]) {
-    await prisma.user.create({ data: { phone, fullName: 'Synthetic driver', role: 'DRIVER', passwordHash, driver: { create: { status: 'APPROVED', districtId } }, balance: { create: { amount: 500, currency: 'TMT' } } } });
+    await prisma.user.create({ data: { phone, fullName: 'Synthetic driver', role: 'DRIVER', passwordHash, driver: { create: { status: 'APPROVED', approvedAt: new Date(), districtId } }, balance: { create: { amount: 500, currency: 'TMT' } } } });
   }
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -706,13 +706,15 @@ for (const price of [null, 0, -10]) {
   });
 }
 
-test('dispatcher creates an active driver with a zero TMT balance and no leaked password', async () => {
+test('dispatcher creates an approved driver with a zero TMT balance and no leaked password', async () => {
   const body = { phone: '+99361123456', fullName: 'Added synthetic driver', password };
   assert.equal((await request('/admin/drivers', driverToken, body)).status, 403);
   assert.equal((await request('/admin/drivers', '', body)).status, 401);
   const created = await request('/admin/drivers', adminToken, body);
   assert.equal(created.status, 201);
   assert.equal(created.data.status, 'APPROVED');
+  assert.ok(!Number.isNaN(Date.parse(created.data.approvedAt)));
+  assert.equal(typeof created.data.approvedBy, 'string');
   assert.equal(created.data.districtId, null);
   assert.equal(created.data.isOnline, false);
   assert.equal(created.data.user.phone, body.phone);
@@ -726,60 +728,106 @@ test('dispatcher creates an active driver with a zero TMT balance and no leaked 
   assert.equal(loggedIn.data.user.role, 'DRIVER');
 });
 
-test('self-signup creates a usable device session offline with zero TMT and no region', async () => {
+test('a newly registered driver can log in only after dispatcher approval', async () => {
   const phone = '+99360000103';
-  const registered = await request('/auth/register', '', { phone, password, fullName: 'New synthetic driver', deviceId: 'signup-device', deviceLabel: 'Synthetic browser' });
+  const registered = await request('/auth/register', '', { phone, password, fullName: 'Pending synthetic driver' });
   assert.equal(registered.status, 201);
-  assert.equal(typeof registered.data.accessToken, 'string');
-  assert.equal(typeof registered.data.refreshToken, 'string');
-  assert.equal(registered.data.user.driver.status, 'APPROVED');
+  assert.equal(registered.data.message, 'Регистрация прошла успешно. Ваш аккаунт ожидает подтверждения администратора.');
+  assert.equal(registered.data.user.driver.status, 'PENDING');
+  assert.equal('accessToken' in registered.data, false);
+  assert.equal('refreshToken' in registered.data, false);
   assert.equal('passwordHash' in registered.data.user, false);
-  const token = registered.data.accessToken;
+  const refused = await request('/auth/login', '', { phone, password, deviceId: 'synthetic-approved-browser' });
+  assert.equal(refused.status, 403);
+  assert.equal(refused.data.message, 'Ваш аккаунт ожидает подтверждения');
+  const pending = await request('/admin/drivers?status=PENDING&limit=100', adminToken);
+  assert.ok(pending.data.items.some((driver: any) => driver.user.phone === phone));
+  const approved = await request(`/admin/drivers/${registered.data.user.driver.id}/approve`, adminToken, {});
+  assert.equal(approved.status, 200);
+  assert.equal(approved.data.status, 'APPROVED');
+  assert.ok(!Number.isNaN(Date.parse(approved.data.approvedAt)));
+  const token = await login(phone);
   const profile = await request('/driver/profile', token);
-  assert.equal(profile.status, 200);
+  assert.equal(profile.data.status, 'APPROVED');
   assert.equal(profile.data.isOnline, false);
   assert.equal(profile.data.districtId, null);
-  assert.equal('shiftDeviceId' in profile.data, false);
   assert.equal((await request('/driver/balance', token)).data.amount, '0');
-  assert.equal((await request('/orders/current', token)).data, null);
-  const online = await request('/driver/status', token, { isOnline: true });
-  assert.equal(online.status, 403);
-  assert.equal(online.data.details.code, 'GPS_REQUIRED');
-  assert.equal((await request('/driver/profile', token)).data.isOnline, false);
-  const client = await socket(token);
-  client.disconnect();
-  const restored = await request('/auth/refresh', '', { refreshToken: registered.data.refreshToken });
-  assert.equal(restored.status, 200);
-  assert.equal((await request('/driver/profile', restored.data.accessToken)).status, 200);
-  assert.equal((await request('/auth/login', '', { phone, password, deviceId: 'ordinary-login-device' })).status, 200);
-  assert.equal((await request('/auth/register', '', { phone, password: 'Changed123', fullName: 'Duplicate', deviceId: 'duplicate-device' })).status, 409);
-  assert.equal((await request(`/admin/drivers/${profile.data.id}/block`, adminToken, { reason: 'Duplicate signup safety check' })).status, 200);
-  assert.equal((await request('/auth/register', '', { phone, password: 'Changed123', fullName: 'Blocked duplicate', deviceId: 'blocked-device' })).status, 409);
-  assert.equal((await request('/auth/login', '', { phone, password, deviceId: 'blocked-device' })).status, 403);
-  assert.equal((await request('/auth/login', '', { phone, password: 'Changed123', deviceId: 'blocked-device' })).status, 401);
+  const activity = (await request('/admin/activity?limit=100', adminToken)).data.items.filter((event: any) => event.driverId === registered.data.user.driver.id);
+  assert.deepEqual(activity.map((event: any) => [event.type, event.summary]), [['driver_approved', 'Одобрен водитель Pending synthetic driver']]);
 });
 
-test('signup rolls back identity and device when session persistence fails', async () => {
-  await prisma.$executeRawUnsafe(`CREATE FUNCTION reject_signup_session() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-    IF EXISTS (SELECT 1 FROM users WHERE id = NEW.user_id AND phone = '+99361999071') THEN
-      RAISE EXCEPTION 'synthetic session storage failure';
-    END IF;
-    RETURN NEW;
-  END $$`);
-  await prisma.$executeRawUnsafe('CREATE TRIGGER reject_signup_session BEFORE INSERT ON refresh_tokens FOR EACH ROW EXECUTE FUNCTION reject_signup_session()');
-  const body = { phone: '+99361999071', password, fullName: 'Atomic signup', deviceId: 'atomic-signup-device' };
+test('registration accepts an ignored 1.21 device identity without creating a session', async () => {
+  const phone = '+99361999071';
+  const registered = await request('/auth/register', '', { phone, password, fullName: 'Older APK applicant', deviceId: 'older-apk-device', deviceLabel: 'Synthetic APK' });
+  assert.equal(registered.status, 201);
+  assert.equal(registered.data.user.driver.status, 'PENDING');
+  assert.equal('accessToken' in registered.data, false);
+  assert.equal((await request('/auth/login', '', { phone, password, deviceId: 'older-apk-device' })).status, 403);
+});
+
+test('duplicate registration keeps the existing account and password', async () => {
+  const phone = '+99361999072';
+  assert.equal((await request('/auth/register', '', { phone, password, fullName: 'Original applicant' })).status, 201);
+  const duplicate = await request('/auth/register', '', { phone, password: 'Changed123', fullName: 'Duplicate' });
+  assert.equal(duplicate.status, 409);
+  assert.equal(duplicate.data.message, 'Этот номер уже зарегистрирован. Войдите или обратитесь к диспетчеру.');
+  const driverId = (await request('/admin/drivers?status=PENDING&limit=100', adminToken)).data.items.find((driver: any) => driver.user.phone === phone).id;
+  assert.equal((await request(`/admin/drivers/${driverId}/approve`, adminToken, {})).status, 200);
+  assert.equal((await request('/auth/login', '', { phone, password: 'Changed123', deviceId: 'duplicate-device' })).status, 401);
+  assert.equal((await request('/auth/login', '', { phone, password, deviceId: 'duplicate-device' })).status, 200);
+});
+
+test('approval does not lift a dispatcher block and is idempotent for approved drivers', async () => {
+  const created = await request('/admin/drivers', adminToken, { phone: '+99361999073', fullName: 'Approve guard driver', password });
+  const driverId = created.data.id;
+  const again = await request(`/admin/drivers/${driverId}/approve`, adminToken, {});
+  assert.equal(again.status, 200);
+  assert.equal(again.data.status, 'APPROVED');
+  assert.equal((await request(`/admin/drivers/${driverId}/block`, adminToken, { reason: 'Approve guard pause' })).status, 200);
+  const blocked = await request(`/admin/drivers/${driverId}/approve`, adminToken, {});
+  assert.equal(blocked.status, 409);
+  assert.equal(blocked.data.details.code, 'DRIVER_BLOCKED');
+  assert.equal((await request(`/admin/drivers/${driverId}`, adminToken)).data.status, 'BLOCKED');
+  const history = (await request('/admin/activity?limit=100', adminToken)).data.items.filter((event: any) => event.driverId === driverId);
+  assert.equal(history.filter((event: any) => event.type === 'driver_approved').length, 0);
+});
+
+test('re-approving an approved driver emits no approval or district events', async () => {
+  const phone = '+99361999074';
+  assert.equal((await request('/admin/drivers', adminToken, { phone, fullName: 'Quiet approve driver', password })).status, 201);
+  const driverId = (await request('/admin/drivers?status=APPROVED&limit=100', adminToken)).data.items.find((driver: any) => driver.user.phone === phone).id;
+  const driver = await socket(await login(phone));
+  const admin = await socket(adminToken);
+  const seen: string[] = [];
+  driver.on('driver:approved', () => seen.push('driver:approved'));
+  admin.on('districts:stats', () => seen.push('districts:stats'));
   try {
-    assert.equal((await request('/auth/register', '', body)).status, 500);
-    assert.equal((await request('/auth/login', '', body)).status, 401);
-    const drivers = await request('/admin/drivers?limit=100', adminToken);
-    assert.ok(!drivers.data.items.some((driver: any) => driver.user.phone === body.phone));
+    assert.equal((await request(`/admin/drivers/${driverId}/approve`, adminToken, {})).status, 200);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.deepEqual(seen, []);
   } finally {
-    await prisma.$executeRawUnsafe('DROP TRIGGER reject_signup_session ON refresh_tokens');
-    await prisma.$executeRawUnsafe('DROP FUNCTION reject_signup_session()');
+    driver.disconnect();
+    admin.disconnect();
   }
-  const retry = await request('/auth/register', '', body);
-  assert.equal(retry.status, 201);
-  assert.equal((await request('/driver/profile', retry.data.accessToken)).status, 200);
+});
+
+test('unblock refuses a pending applicant and returns a blocked applicant to the approval queue', async () => {
+  const phone = '+99361999075';
+  const registered = await request('/auth/register', '', { phone, password, fullName: 'Blocked applicant' });
+  const driverId = registered.data.user.driver.id;
+  const pending = await request(`/admin/drivers/${driverId}/unblock`, adminToken, {});
+  assert.equal(pending.status, 409);
+  assert.equal(pending.data.details.code, 'DRIVER_PENDING');
+  assert.equal((await request(`/admin/drivers/${driverId}`, adminToken)).data.status, 'PENDING');
+  assert.equal((await request(`/admin/drivers/${driverId}/block`, adminToken, { reason: 'Applicant check' })).status, 200);
+  const unblocked = await request(`/admin/drivers/${driverId}/unblock`, adminToken, {});
+  assert.equal(unblocked.status, 200);
+  assert.equal(unblocked.data.status, 'PENDING');
+  const refused = await request('/auth/login', '', { phone, password, deviceId: 'blocked-applicant-device' });
+  assert.equal(refused.status, 403);
+  assert.equal(refused.data.message, 'Ваш аккаунт ожидает подтверждения');
+  assert.equal((await request(`/admin/drivers/${driverId}/approve`, adminToken, {})).status, 200);
+  assert.equal((await request('/auth/login', '', { phone, password, deviceId: 'blocked-applicant-device' })).status, 200);
 });
 
 test('canonical region bootstrap persists all finalized polygons and preserves later edits', async () => {
@@ -1795,7 +1843,7 @@ test('new driver passwords reject short values and bcrypt-truncated UTF-8 values
   assert.equal(fixture.status, 201);
   for (const invalid of ['12345', 'a'.repeat(73), 'é'.repeat(37)]) {
     for (const path of ['/auth/register', '/admin/drivers']) {
-      const result = await request(path, path.startsWith('/admin') ? adminToken : '', { fullName: 'Invalid password fixture', phone: '+99361001093', password: invalid, deviceId: 'password-policy-fixture' });
+      const result = await request(path, path.startsWith('/admin') ? adminToken : '', { fullName: 'Invalid password fixture', phone: '+99361001093', password: invalid });
       assert.equal(result.status, 400, `${path} rejects invalid new password`);
     }
     const reset = await request(`/admin/drivers/${fixture.data.id}/password`, adminToken, { password: invalid, passwordConfirmation: invalid });
@@ -1805,7 +1853,7 @@ test('new driver passwords reject short values and bcrypt-truncated UTF-8 values
 });
 
 test('driver registration rejects a UTF-8 password beyond bcrypt 72-byte capacity even when character length is short', async () => {
-  const result = await request('/auth/register', '', { fullName: 'UTF-8 limit fixture', phone: '+99361001094', password: 'é'.repeat(37), deviceId: 'password-policy-fixture' });
+  const result = await request('/auth/register', '', { fullName: 'UTF-8 limit fixture', phone: '+99361001094', password: 'é'.repeat(37) });
   assert.equal(result.status, 400);
 });
 
@@ -1818,8 +1866,8 @@ test('Turkmen phone inputs normalize formatting and reject other countries or in
   assert.equal((await request('/auth/login', '', { phone: formatted, password: '123456', deviceId: 'synthetic-approved-browser' })).status, 200);
   const invalidPhones = ['+10000000999', '+9936100109', '+993610010950', '61001095', '+99361x01095', '+993+61001095'];
   for (const phone of invalidPhones) {
-    assert.equal((await request('/auth/register', '', { fullName: 'Invalid phone', phone, password: '123456', deviceId: 'phone-policy-fixture' })).status, 400);
-    assert.equal((await request('/admin/drivers', adminToken, { fullName: 'Invalid phone', phone, password: '123456', deviceId: 'phone-policy-fixture' })).status, 400);
+    assert.equal((await request('/auth/register', '', { fullName: 'Invalid phone', phone, password: '123456' })).status, 400);
+    assert.equal((await request('/admin/drivers', adminToken, { fullName: 'Invalid phone', phone, password: '123456' })).status, 400);
     assert.equal((await request(`/admin/drivers/${created.data.id}/profile`, adminToken, { fullName: 'Invalid phone', phone })).status, 400);
     assert.equal((await request('/admin/orders', adminToken, { districtId: regionId, priceEstimated: 10, clientPhone: phone })).status, 400);
     assert.equal((await request('/auth/login', '', { phone, password: '123456' })).status, 400);
@@ -1863,7 +1911,7 @@ test('dispatcher overview counts the full fleet and decimal completed trip value
     const result = await request('/admin/overview', adminToken);
     assert.equal(result.status, 200);
     assert.deepEqual(result.data, {
-      totalDrivers: 109, onlineDrivers: 103, activeOrders: 1,
+      totalDrivers: 109, onlineDrivers: 103, pendingDrivers: 1, activeOrders: 1,
       completedTrips: 102, pricedCompletedTrips: 101, completedTripValue: '10.21', averageCompletedTripValue: '0.10'
     });
     const districts = await request('/districts', adminToken);
@@ -1904,10 +1952,15 @@ test('dispatcher overview protects roles and distinguishes empty, unknown and ze
   assert.equal(district.freeDrivers, 0);
 });
 
-test('dispatcher overview invalidates live counts after block, unblock and account deletion', async () => {
-  const user = await prisma.user.create({ data: { role: 'DRIVER', phone: '+99361999990', fullName: 'Analytics active driver', passwordHash: 'fixture-only', driver: { create: { status: 'APPROVED' } } }, include: { driver: true } });
+test('dispatcher overview invalidates live counts after approval, unblock and account deletion', async () => {
+  const user = await prisma.user.create({ data: { role: 'DRIVER', phone: '+99361999990', fullName: 'Analytics pending driver', passwordHash: 'fixture-only', driver: { create: { status: 'PENDING' } } }, include: { driver: true } });
   const client = await socket(adminToken);
   try {
+    assert.equal((await request('/admin/overview', adminToken)).data.pendingDrivers, 1);
+    const approved = nextSocketEvent(client, 'districts:stats', 500);
+    assert.equal((await request(`/admin/drivers/${user.driver!.id}/approve`, adminToken, {})).status, 200);
+    await approved;
+    assert.equal((await request('/admin/overview', adminToken)).data.pendingDrivers, 0);
     assert.equal((await request(`/admin/drivers/${user.driver!.id}/block`, adminToken, { reason: 'Synthetic account safety block' })).status, 200);
     const unblocked = nextSocketEvent(client, 'districts:stats', 500);
     assert.equal((await request(`/admin/drivers/${user.driver!.id}/unblock`, adminToken, {})).status, 200);
@@ -1923,7 +1976,7 @@ test('dispatcher overview invalidates live counts after block, unblock and accou
   }
 });
 
-test('self-registration refreshes admin overview counts without exposing the account to other drivers', async () => {
+test('self-registration refreshes admin overview counts without exposing the application to drivers', async () => {
   const admin = await socket(adminToken);
   const driver = await socket(driverToken);
   const leaked: unknown[] = [];
@@ -1934,7 +1987,7 @@ test('self-registration refreshes admin overview counts without exposing the acc
     // Attach rejection handling immediately while the HTTP request is in flight.
     const notification = registered.then(value => ({ value }), error => ({ error }));
     const response = await request('/auth/register', '', {
-      phone: '+99361999888', fullName: 'New overview driver', password: '123456', deviceId: 'overview-signup'
+      phone: '+99361999888', fullName: 'Pending overview applicant', password: '123456'
     });
     assert.equal(response.status, 201);
     const result = await notification;
@@ -1942,9 +1995,9 @@ test('self-registration refreshes admin overview counts without exposing the acc
     assert.deepEqual(result.value, { driverId: response.data.user.driver.id });
     const overview = await request('/admin/overview', adminToken);
     assert.equal(overview.data.totalDrivers, before.data.totalDrivers + 1);
-    assert.equal('pendingDrivers' in overview.data, false);
+    assert.equal(overview.data.pendingDrivers, before.data.pendingDrivers + 1);
     await new Promise(resolve => setTimeout(resolve, 100));
-    assert.deepEqual(leaked, [], 'driver sockets must not receive account registration events');
+    assert.deepEqual(leaked, [], 'driver sockets must not receive applicant registration events');
   } finally {
     admin.disconnect();
     driver.disconnect();
@@ -2510,7 +2563,9 @@ test('deactivating a driver preserves ledger and completed attribution while rev
   const deletedProfile = await request(`/admin/drivers/${id}`, adminToken);
   assert.equal(deletedProfile.data.accountDeleted, true);
   assert.equal((await request(`/admin/drivers/${id}/unblock`, adminToken, {})).status, 409);
-  assert.equal((await request(`/admin/drivers/${id}/approve`, adminToken, {})).status, 404);
+  const approveDeleted = await request(`/admin/drivers/${id}/approve`, adminToken, {});
+  assert.equal(approveDeleted.status, 409);
+  assert.equal(approveDeleted.data.details.code, 'ACCOUNT_DELETED');
   assert.equal((await request('/auth/login', '', { phone: '+99361999981', password, deviceId: 'synthetic-approved-browser' })).status, 401);
 });
 
@@ -2887,7 +2942,7 @@ test('blocking requires a reason and revokes access without cancelling or refund
   assert.equal((await request('/orders/current', fresh.data.accessToken)).data.id, job.id);
 });
 
-test('a permanently deleted phone can register again without recovering the old balance or history', async () => {
+test('a permanently deleted phone can apply again without recovering the old balance or history', async () => {
   const phone = '+99361999133';
   const created = await request('/admin/drivers', adminToken, { phone, fullName: 'Old deleted identity', password });
   const oldId = created.data.id;
@@ -2910,13 +2965,15 @@ test('a permanently deleted phone can register again without recovering the old 
   const deletion = await fetch(`${base}/admin/drivers/${oldId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${adminToken}` } });
   assert.equal(deletion.status, 204);
   assert.equal((await request('/driver/profile', oldLogin.data.accessToken)).status, 401);
-  assert.equal((await request(`/admin/drivers/${oldId}/approve`, adminToken, {})).status, 404);
+  assert.equal((await request(`/admin/drivers/${oldId}/approve`, adminToken, {})).status, 409);
   assert.equal((await request(`/admin/drivers/${oldId}/unblock`, adminToken, {})).status, 409);
-  const registered = await request('/auth/register', '', { phone, fullName: 'New account identity', password: '654321', deviceId: 'fresh-identity-device' });
+  const registered = await request('/auth/register', '', { phone, fullName: 'New applicant identity', password: '654321' });
   assert.equal(registered.status, 201);
   const newId = registered.data.user.driver.id;
   assert.notEqual(newId, oldId);
-  assert.equal(registered.data.user.driver.status, 'APPROVED');
+  assert.equal(registered.data.user.driver.status, 'PENDING');
+  assert.equal((await request('/auth/login', '', { phone, password: '654321', deviceId: 'new-reapply-installation' })).status, 403);
+  assert.equal((await request(`/admin/drivers/${newId}/approve`, adminToken, {})).status, 200);
   const fresh = await request('/auth/login', '', { phone, password: '654321', deviceId: 'new-reapply-installation' });
   assert.equal(fresh.status, 200);
   assert.equal((await request('/driver/balance', fresh.data.accessToken)).data.amount, '0');
@@ -3378,7 +3435,7 @@ test('dispatcher Activity preserves account creation, unblock and block events a
   assert.equal((await request(`/admin/drivers/${driverId}/unblock`, adminToken, {})).status, 200);
   assert.equal((await request(`/admin/drivers/${driverId}/block`, adminToken, { reason: 'Second pause' })).status, 200);
   assert.equal((await request(`/admin/drivers/${driverId}/unblock`, adminToken, {})).status, 200);
-  assert.equal((await request(`/admin/drivers/${driverId}/approve`, adminToken, {})).status, 404);
+  assert.equal((await request(`/admin/drivers/${driverId}/approve`, adminToken, {})).status, 200);
   const history = (await request('/admin/activity?limit=100', adminToken)).data.items.filter((event: any) => event.driverId === driverId);
   assert.equal(history.filter((event: any) => event.type === 'driver_created').length, 1);
   assert.equal(history.filter((event: any) => event.type === 'driver_unblocked').length, 2);
@@ -3390,9 +3447,6 @@ test('dispatcher Activity preserves account creation, unblock and block events a
   assert.ok(history.some((event: any) => event.summary === 'Создан водитель Activity repeat driver'));
   assert.ok(history.some((event: any) => event.summary === 'Разблокирован водитель Activity repeat driver'));
   assert.ok(history.every((event: any) => !/Одобрен/.test(event.summary)));
-  await prisma.driverActivityAudit.create({ data: { driverId, actorName: 'Test dispatcher', driverName: 'Activity repeat driver', action: 'APPROVED' } });
-  const legacy = (await request('/admin/activity?limit=100', adminToken)).data.items.filter((event: any) => event.driverId === driverId && event.type === 'driver_activated');
-  assert.deepEqual(legacy.map((event: any) => event.summary), ['Активирован водитель Activity repeat driver']);
   const operationId = randomUUID();
   for (let retry = 0; retry < 2; retry++) assert.equal((await request(`/admin/drivers/${driverId}/balance`, adminToken, { amount: 50, type: 'TOPUP', operationId })).status, 200);
   const withBalance = (await request('/admin/activity?limit=100', adminToken)).data.items.filter((event: any) => event.type === 'balance_adjusted' && event.summary.includes('Activity repeat driver'));

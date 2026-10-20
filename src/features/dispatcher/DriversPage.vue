@@ -21,11 +21,7 @@ import PageState from "./components/PageState.vue";
 const router = useRouter(),
   create = ref(false);
 const route = useRoute(),
-  filter = ref(
-    ["APPROVED", "BLOCKED"].includes(String(route.query.status))
-      ? String(route.query.status)
-      : "",
-  ),
+  filter = ref(String(route.query.status || "")),
   search = ref(""),
   page = ref(1);
 const { data, loading, error, load } = useResource(
@@ -85,7 +81,8 @@ const visible = computed(() =>
         class="native-select"
       >
         <option value="">Все статусы</option>
-        <option value="APPROVED">Активны</option>
+        <option value="PENDING">На проверке</option>
+        <option value="APPROVED">Одобрены</option>
         <option value="BLOCKED">Заблокированы</option>
       </select>
     </div>

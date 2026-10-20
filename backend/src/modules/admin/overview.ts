@@ -11,9 +11,10 @@ interface CompletedTripValues {
 
 // Operational snapshot, not a shift report or payment/earnings ledger.
 export async function getOverview() {
-  const [totalDrivers, onlineDrivers, activeOrders, completed] = await prisma.$transaction([
+  const [totalDrivers, onlineDrivers, pendingDrivers, activeOrders, completed] = await prisma.$transaction([
     prisma.driver.count(),
     prisma.driver.count({ where: onlineDriverWhere() }),
+    prisma.driver.count({ where: { status: 'PENDING' } }),
     prisma.order.count({ where: { status: { in: ['NEW', 'ACCEPTED', 'WAITING', 'STARTED'] } } }),
     prisma.$queryRaw<CompletedTripValues[]>`
       SELECT COUNT(*)::int AS "completedTrips",
@@ -23,5 +24,5 @@ export async function getOverview() {
       FROM orders WHERE status = 'COMPLETED'
     `
   ], { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
-  return { totalDrivers, onlineDrivers, activeOrders, ...completed[0] };
+  return { totalDrivers, onlineDrivers, pendingDrivers, activeOrders, ...completed[0] };
 }

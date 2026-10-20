@@ -22,7 +22,7 @@ async function fixture(browser: Browser, name = "Водитель оповеще
       role: "DRIVER",
       passwordHash: admin.passwordHash,
       balance: { create: { amount: 500 } },
-      driver: { create: { status: "APPROVED" } },
+      driver: { create: { status: "APPROVED", approvedAt: new Date() } },
     },
     include: { driver: true },
   });
@@ -1206,7 +1206,7 @@ test("four cancelled orders and conversations stay bounded without covering the 
   }
 });
 
-test("Activity refreshes unblocks and blocks from another dispatcher screen", async ({
+test("Activity refreshes approvals, blocks and unblocks from another dispatcher screen", async ({
   browser,
 }) => {
   const f = await fixture(browser);
@@ -1230,6 +1230,25 @@ test("Activity refreshes unblocks and blocks from another dispatcher screen", as
         .locator("main")
         .getByRole("listitem")
         .filter({ hasText: "Разблокирован водитель Водитель оповещений" }),
+    ).toHaveCount(1);
+    const application = await f.adminPage.request.post(
+      `${process.env.TEST_API_URL}/auth/register`,
+      {
+        data: {
+          fullName: "Заявка активности",
+          phone: `+993${String(Date.now() + 1).slice(-8)}`,
+          password: "123456",
+        },
+      },
+    );
+    expect(application.status()).toBe(201);
+    const { user } = await application.json();
+    await f.adminPost(`/admin/drivers/${user.driver.id}/approve`);
+    await expect(
+      f.adminPage
+        .locator("main")
+        .getByRole("listitem")
+        .filter({ hasText: "Одобрен водитель Заявка активности" }),
     ).toHaveCount(1);
   } finally {
     await f.close();

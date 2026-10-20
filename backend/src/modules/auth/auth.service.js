@@ -21,35 +21,47 @@ function sanitizeUser(user) {
   return { ...rest, ...(rest.driver ? { driver: require('../driver/public-profile').publicDriverProfile(rest.driver) } : {}) };
 }
 
-// Account, installation and initial session commit together. No shift is started.
-async function registerDriver({ phone, fullName, password, deviceId, deviceLabel }) {
+// Registers a new DRIVER account. Client/admin creation are intentionally
+// not exposed on this public endpoint - admins are provisioned via seed/an
+// internal process, and there is no client-facing flow yet. The driver
+// starts in Driver.status = PENDING and cannot log in until an admin
+// approves them. No session or device row is created here;
+// deviceId/deviceLabel are accepted for older clients but ignored.
+async function registerDriver({ phone, fullName, password }) {
   const existing = await prisma.user.findUnique({ where: { phone } });
   if (existing) {
     throw ApiError.conflict('Этот номер уже зарегистрирован. Войдите или обратитесь к диспетчеру.');
   }
+
   const passwordHash = await hashPassword(password);
-  const result = await prisma.$transaction(async (tx) => {
-    const user = await tx.user.create({
+
+  const user = await prisma.$transaction(async (tx) => {
+    const created = await tx.user.create({
       data: {
-        role: 'DRIVER', phone, fullName, passwordHash, lastLoginAt: new Date(),
-        driver: { create: { status: 'APPROVED' } },
+        role: 'DRIVER',
+        phone,
+        fullName,
+        passwordHash,
+        driver: { create: { status: 'PENDING' } },
         balance: { create: { amount: 0, currency: 'TMT' } }
       },
       include: { driver: true, balance: true }
     });
-    const installation = await tx.driverDevice.create({
-      data: { driverId: user.driver.id, deviceId, label: deviceLabel || null, lastLoginAt: new Date() }
-    });
-    const pair = await issueTokenPair(user, tx, installation.deviceId, installation.sessionVersion);
-    return { ...pair, user: sanitizeUser(user) };
+    return created;
   });
-  // Delivery failure cannot turn a committed account into a retryable failure.
+
+  // Registration is already committed. Delivery failure must not turn it into
+  // a retryable HTTP failure, and only admins need this invalidation signal.
   try {
-    getIO().to(rooms.admins()).emit('driver:registered', { driverId: result.user.driver.id });
+    getIO().to(rooms.admins()).emit('driver:registered', { driverId: user.driver.id });
   } catch (err) {
     logger.warn({ err }, 'Failed to broadcast driver registration');
   }
-  return result;
+
+  return {
+    user: sanitizeUser(user),
+    message: 'Регистрация прошла успешно. Ваш аккаунт ожидает подтверждения администратора.'
+  };
 }
 
 async function issueTokenPair(user, db = prisma, deviceId, deviceVersion) {
@@ -134,7 +146,7 @@ async function login({ phone, password, deviceId, deviceLabel }) {
     if (user.role === 'DRIVER') {
       if (!user.driver) throw ApiError.notFound('Профиль водителя не найден');
       if (user.driver.status !== 'APPROVED') throw ApiError.forbidden(
-        'Доступ к аккаунту ограничен. Обратитесь к диспетчеру.',
+        user.driver.status === 'PENDING' ? 'Ваш аккаунт ожидает подтверждения' : 'Ваш аккаунт заблокирован',
         { status: user.driver.status }
       );
       if (!deviceId) throw ApiError.badRequest('Для входа водителя требуется идентификатор устройства');

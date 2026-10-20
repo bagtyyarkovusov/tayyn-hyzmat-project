@@ -103,11 +103,8 @@ function createSession(role: Role) {
   });
   const client = role === "admin" ? adminApi : driverApi;
   let authAttempt = 0;
-  async function authenticate(
-    path: string,
-    credentials: { phone: string; password: string; fullName?: string },
-    signal?: AbortSignal,
-  ) {
+  // A late login response cannot replace a newer login or a logout.
+  async function login(phone: string, password: string, signal?: AbortSignal) {
     const attempt = ++authAttempt;
     const generation = tokens.generation(role);
     let deviceId = localStorage.getItem("openride.driver.deviceId");
@@ -116,9 +113,10 @@ function createSession(role: Role) {
       localStorage.setItem("openride.driver.deviceId", deviceId);
     }
     const payload = await publicRequest<SessionPayload>(
-      path,
+      "/auth/login",
       {
-        ...credentials,
+        phone,
+        password,
         ...(role === "driver"
           ? { deviceId, deviceLabel: navigator.userAgent.slice(0, 200) }
           : {}),
@@ -146,23 +144,6 @@ function createSession(role: Role) {
     state.message = "";
     state.verificationError = "";
     connect();
-  }
-  function login(phone: string, password: string, signal?: AbortSignal) {
-    return authenticate("/auth/login", { phone, password }, signal);
-  }
-  function register(
-    fullName: string,
-    phone: string,
-    password: string,
-    signal?: AbortSignal,
-  ) {
-    if (role !== "driver")
-      throw new Error("Регистрация доступна только водителям.");
-    return authenticate(
-      "/auth/register",
-      { fullName, phone, password },
-      signal,
-    );
   }
   async function logout() {
     authAttempt++;
@@ -223,7 +204,6 @@ function createSession(role: Role) {
   return {
     state,
     login,
-    register,
     logout,
     restore,
     on(event: string, listener: (...args: any[]) => void) {

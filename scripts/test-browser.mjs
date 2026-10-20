@@ -197,7 +197,13 @@ try {
           fullName: name,
           role: "DRIVER",
           passwordHash,
-          driver: { create: { status: "APPROVED", districtId: region.id } },
+          driver: {
+            create: {
+              status: "APPROVED",
+              approvedAt: new Date(),
+              districtId: region.id,
+            },
+          },
           balance: { create: { amount: 500, currency: "TMT" } },
         },
       });

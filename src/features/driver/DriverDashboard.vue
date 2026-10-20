@@ -22,10 +22,10 @@ import {
   useDriver,
   canControlShift,
   connectionRecovering,
+  dispatcherConnected,
   OFFER_BACK_GUARD_MS,
 } from "./useDriver";
 import { useDriverAddress } from "./useDriverAddress";
-import { nativeAndroid } from "./nativeShift";
 import { money } from "./model";
 import { localRegionAt } from "./local-region";
 import IncomingOrder from "./components/IncomingOrder.vue";
@@ -33,7 +33,7 @@ import DriverFeedback from "./components/DriverFeedback.vue";
 import ActiveTripFeed from "./components/ActiveTripFeed.vue";
 import ActiveTrip from "./components/ActiveTrip.vue";
 import AvailableOrders from "./components/AvailableOrders.vue";
-const { state, setOnline, session, closeIncoming } = useDriver({
+const { state, setOnline, closeIncoming } = useDriver({
   localGps: true,
 });
 const { address } = useDriverAddress(
@@ -45,24 +45,19 @@ const { address } = useDriverAddress(
     capturedAt: () => state.locationUpdatedAt,
     onlineRequest: () => state.addressLookupRequest,
     transitionPending: () => state.busy,
-    connected: () =>
-      nativeAndroid && state.profile?.isOnline && canControlShift()
-        ? state.nativeConnected
-        : session.state.connected,
+    connected: () => dispatcherConnected(true),
   },
 );
 const selected = ref<string | null>(null);
 const visibility = useDocumentVisibility();
 const networkOnline = useOnline();
 const connectionReady = computed(
-  () =>
-    networkOnline.value &&
-    (nativeAndroid && state.profile?.isOnline && canControlShift()
-      ? state.nativeConnected
-      : session.state.connected),
+  () => networkOnline.value && dispatcherConnected(),
 );
+// The indicator alone bridges a native shift start: it keeps showing the
+// acknowledged WebView socket until the Android service first connects.
 const connectionState = computed(() =>
-  connectionReady.value
+  networkOnline.value && dispatcherConnected(true)
     ? "ready"
     : connectionRecovering()
       ? "reconnecting"
@@ -179,55 +174,55 @@ watch(
     <div class="driver-controls flex shrink-0 flex-col gap-2">
       <header class="flex min-h-14 shrink-0 items-center gap-3">
         <span
-          class="mr-auto text-sm font-semibold tabular-nums"
+          class="mr-auto whitespace-nowrap text-xl font-bold tabular-nums text-foreground"
           aria-label="Баланс"
           >{{ state.balance ? money(state.balance.amount) : "…" }}</span
         >
-        <div class="flex shrink-0 items-center gap-3">
+        <div class="flex shrink-0 items-center gap-5">
           <div
             role="group"
             aria-label="GPS и связь"
-            class="flex items-center rounded-full bg-secondary/60 px-1"
+            class="flex items-center gap-3"
           >
             <span
               role="status"
-              class="flex size-9 items-center justify-center rounded-full"
+              class="flex size-6 items-center justify-center"
               :class="
                 locationState === 'ready'
-                  ? 'bg-success/10 text-success'
+                  ? 'text-success'
                   : locationState === 'blocked'
-                    ? 'bg-destructive/10 text-destructive'
-                    : 'bg-amber-100/60 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                    ? 'text-destructive'
+                    : 'text-amber-700 dark:text-amber-300'
               "
               :data-state="locationState"
               :aria-label="gpsLabel"
             >
               <MapPinOff
                 v-if="locationState === 'blocked'"
-                class="size-5"
+                class="size-6"
                 aria-hidden="true"
               />
-              <LocateFixed v-else class="size-5" aria-hidden="true" />
+              <LocateFixed v-else class="size-6" aria-hidden="true" />
             </span>
             <span
               role="status"
-              class="flex size-9 items-center justify-center rounded-full"
+              class="flex size-6 items-center justify-center"
               :class="
                 connectionState === 'ready'
-                  ? 'bg-success/10 text-success'
+                  ? 'text-success'
                   : connectionState === 'reconnecting'
-                    ? 'bg-amber-100/60 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
-                    : 'bg-destructive/10 text-destructive'
+                    ? 'text-amber-700 dark:text-amber-300'
+                    : 'text-destructive'
               "
               :data-state="connectionState"
               :aria-label="connectionLabel"
             >
               <Wifi
                 v-if="connectionState !== 'disconnected'"
-                class="size-5"
+                class="size-6"
                 aria-hidden="true"
               />
-              <WifiOff v-else class="size-5" aria-hidden="true" />
+              <WifiOff v-else class="size-6" aria-hidden="true" />
             </span>
           </div>
           <Button
