@@ -64,11 +64,13 @@ async function createDriver({ phone, fullName, password }, actorId) {
     const user = await tx.user.create({
       data: {
         role: 'DRIVER', phone, fullName, passwordHash,
-        driver: { create: { status: 'APPROVED' } },
+        driver: { create: { status: 'APPROVED', approvedAt: new Date(), approvedBy: actorId } },
         balance: { create: { amount: 0, currency: 'TMT' } }
       },
       select: { driver: { select: { id: true } } }
     });
+    // Dispatcher-created accounts are approved on creation; the audit keeps
+    // CREATED so Activity distinguishes them from approved applications.
     await recordDriverActivity(tx, user.driver.id, actorId, 'CREATED');
     return user;
   });
@@ -207,6 +209,34 @@ async function recordDriverActivity(tx, driverId, actorId, action, reason = null
     tx.user.findUniqueOrThrow({ where: { id: actorId }, select: { fullName: true } })
   ]);
   await tx.driverActivityAudit.create({ data: { driverId, actorId, actorName: actor.fullName, driverName: driver.user.fullName, action, reason } });
+}
+
+// Approves a self-registered (PENDING) application. Blocked drivers are
+// restored through unblockDriver so Activity records UNBLOCKED, not APPROVED.
+async function approveDriver(driverId, actorId) {
+  const driver = await findDriverOrThrow(driverId);
+  const updated = await prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM users WHERE id = ${driver.userId} FOR UPDATE`;
+    const previous = await tx.driver.findUniqueOrThrow({ where: { id: driverId } });
+    const user = await tx.user.findUniqueOrThrow({ where: { id: driver.userId } });
+    if (user.status === 'BLOCKED') throw ApiError.conflict('Аккаунт удалён. Восстановление недоступно', { code: 'ACCOUNT_DELETED' });
+    if (previous.status === 'BLOCKED') throw ApiError.conflict('Водитель заблокирован. Используйте разблокировку', { code: 'DRIVER_BLOCKED' });
+    if (previous.status === 'APPROVED') return previous;
+    const result = await tx.driver.update({
+      where: { id: driverId },
+      data: { status: 'APPROVED', approvedAt: new Date(), approvedBy: actorId, blockedAt: null, blockReason: null }
+    });
+    await recordDriverActivity(tx, driverId, actorId, 'APPROVED');
+    return result;
+  });
+
+  safeEmit((io) => {
+    io.to(rooms.driver(driverId)).emit('driver:approved', { driverId });
+  });
+
+  await districtsService.broadcastDistrictStats();
+  logger.info({ driverId, actorId }, 'Driver approved');
+  return updated;
 }
 
 async function blockDriver(driverId, actorId, reason) {
@@ -595,12 +625,12 @@ async function getActivity({ limit = 50 } = {}) {
     FINAL_CANCEL: ['order_final_cancelled', 'Окончательно отменён заказ'],
     FORCE_COMPLETED: ['order_force_completed', 'Завершён диспетчером заказ']
   };
-  // APPROVED rows predate self-service accounts and covered both creation and unblocking.
+  // APPROVED records an approved self-registration application.
   const driverActions = {
     CREATED: ['driver_created', 'Создан'],
+    APPROVED: ['driver_approved', 'Одобрен'],
     UNBLOCKED: ['driver_unblocked', 'Разблокирован'],
-    BLOCKED: ['driver_blocked', 'Заблокирован'],
-    APPROVED: ['driver_activated', 'Активирован']
+    BLOCKED: ['driver_blocked', 'Заблокирован']
   };
   const events = [
     ...driverEvents.map(event => {
@@ -674,6 +704,7 @@ module.exports = {
   createDriver,
   listDrivers,
   getDriver,
+  approveDriver,
   blockDriver,
   unblockDriver,
   signOutEverywhere,

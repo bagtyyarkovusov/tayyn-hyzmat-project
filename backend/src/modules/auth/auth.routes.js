@@ -7,7 +7,7 @@ const controller = require('./auth.controller');
 const router = Router();
 
 // POST /auth/register - driver self-registration (phone, fullName, password).
-// Creates an active account and device-bound session without starting a shift.
+// Account is created with status = PENDING; cannot log in until approved.
 router.post('/register', authLimiter, validate({ body: registerDriverSchema }), controller.register);
 
 // POST /auth/login - shared login for all roles (driver/admin/client).

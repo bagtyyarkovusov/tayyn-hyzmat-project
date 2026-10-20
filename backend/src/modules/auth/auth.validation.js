@@ -7,7 +7,9 @@ const registerDriverSchema = z.object({
   phone: phoneSchema,
   fullName: z.string().trim().min(2, 'Укажите имя').max(120),
   password: newPasswordSchema,
-  deviceId: z.string().trim().min(4).max(200),
+  // Accepted so 1.21 APKs (which send an installation id at signup) are not
+  // rejected; registration creates no session or device row and ignores them.
+  deviceId: z.string().trim().min(4).max(200).optional(),
   deviceLabel: z.string().trim().max(200).optional()
 });
 
