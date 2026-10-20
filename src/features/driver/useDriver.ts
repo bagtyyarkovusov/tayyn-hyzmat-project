@@ -4,6 +4,7 @@ import { driverSession } from "@/features/auth/session";
 import { closeOrderAlerts, notifyOrder, reconcileOrderAlerts } from "./alerts";
 import type { Balance, District, DriverProfile, Order } from "./model";
 import {
+  NATIVE_SHIFT_LEASE_MS,
   nativeAndroid,
   nativeShift,
   startNativeShift,
@@ -33,6 +34,7 @@ const state = reactive({
   nativeRunning: false,
   nativeConnected: false,
   nativeLeaseExpiresAt: 0,
+  nativeHandoffUntil: 0,
   offerSeconds: 0,
   position: null as { lat: number; lng: number; accuracy: number } | null,
   locationUpdatedAt: 0,
@@ -158,6 +160,22 @@ export function connectionRecovering() {
     : locationSyncFailureAt > 0 &&
         state.clock < locationSyncFailureAt + LOCATION_SYNC_FAILURE_GRACE_MS;
 }
+/** Whether the driver is connected to the dispatcher. A native shift is
+ * carried by the Android service, so readiness waits for that service.
+ * `shiftStart` is for the status indicator and address lookup only: until the
+ * service first reports, within one lease, they keep showing the WebView socket
+ * the server just acknowledged the shift on. Readiness for regions, orders and
+ * the shift button never uses it. */
+export function dispatcherConnected(shiftStart = false) {
+  if (!nativeAndroid || !state.profile?.isOnline || !canControlShift())
+    return driverSession.state.connected;
+  return (
+    state.nativeConnected ||
+    (shiftStart &&
+      state.clock < state.nativeHandoffUntil &&
+      driverSession.state.connected)
+  );
+}
 const otherDeviceMessage =
   "Смена активна на другом устройстве. Завершите её там, чтобы выйти на линию здесь.";
 function requireShiftControl() {
@@ -215,6 +233,7 @@ async function forceOffline(message: string, preserveLocalGps = false) {
   }
   state.gpsError = message;
   state.locationSyncError = "";
+  state.nativeHandoffUntil = 0;
   locationSyncFailureAt = 0;
   lastLocationSent = 0;
   hideAvailableOrders();
@@ -490,6 +509,7 @@ watch(
     state.nativeRunning = false;
     state.nativeConnected = false;
     state.nativeLeaseExpiresAt = 0;
+    state.nativeHandoffUntil = 0;
     handledNativeStop = -1;
     lastFixAt = 0;
     state.gpsBlocked = false;
@@ -737,13 +757,22 @@ async function setOnline() {
       }
       const account = nativeAccountRequest();
       if (!account.current()) return;
-      const { data } = await (nativeAndroid ? account : driverApi).post<{
-        districtId: string | null;
-      }>("/driver/status", {
-        isOnline: true,
-        isAvailable: true,
-        position: { ...state.position, capturedAt: state.locationUpdatedAt },
-      });
+      // The server can announce the shift over the socket before this response.
+      if (nativeAndroid)
+        state.nativeHandoffUntil = Date.now() + NATIVE_SHIFT_LEASE_MS;
+      const { data } = await (nativeAndroid ? account : driverApi)
+        .post<{
+          districtId: string | null;
+        }>("/driver/status", {
+          isOnline: true,
+          isAvailable: true,
+          position: { ...state.position, capturedAt: state.locationUpdatedAt },
+        })
+        .catch((error: unknown) => {
+          // No service will start, even if the server committed the shift.
+          state.nativeHandoffUntil = 0;
+          throw error;
+        });
       if (!account.current()) return;
       lastLocationSent = Date.now();
       locationSyncFailureAt = 0;
@@ -758,6 +787,7 @@ async function setOnline() {
         try {
           await startNativeShift();
         } catch (error) {
+          state.nativeHandoffUntil = 0;
           if (!account.current()) return;
           await account
             .post("/driver/status", { isOnline: false })
@@ -781,6 +811,7 @@ async function setOnline() {
   const account = nativeAccountRequest();
   gpsSuppressed = true;
   stopGpsTracking();
+  state.nativeHandoffUntil = 0;
   await act(async () => {
     await stopNativeShift();
     gpsEpoch++;
@@ -861,6 +892,7 @@ async function synchronizeNative() {
     native.running &&
     native.phase === "online" &&
     now - native.lastReportAt < 30000;
+  if (state.nativeConnected) state.nativeHandoffUntil = 0;
   state.gpsReady =
     native.running &&
     native.phase === "online" &&

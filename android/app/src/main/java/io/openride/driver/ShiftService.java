@@ -39,6 +39,7 @@ public final class ShiftService extends Service {
   private LocationAcquisition acquisition;
   private static volatile long lastFixElapsedNanos;
   private volatile Location latest;
+  private volatile FirstReportPolicy firstReport = new FirstReportPolicy();
 
   private void acceptLocation(Location fix) {
     if (closing || !LocationAcquisition.usable(fix)) return;
@@ -48,6 +49,8 @@ public final class ShiftService extends Service {
     latitude = fix.getLatitude();
     longitude = fix.getLongitude();
     accuracy = fix.getAccuracy();
+    // The single worker serialises this with scheduled reports.
+    firstReport.fix(worker, this::tick);
   }
 
   public static void createChannels(Context context) {
@@ -151,6 +154,12 @@ public final class ShiftService extends Service {
         && SystemClock.elapsedRealtime() < service.leaseDeadline;
   }
 
+  /** A shift is shutting down; this instance is about to be destroyed. */
+  static boolean stopping() {
+    ShiftService service = instance;
+    return service != null && service.closing;
+  }
+
   public static void end(Context context) {
     end(context, null);
   }
@@ -172,7 +181,8 @@ public final class ShiftService extends Service {
 
   @Override
   public int onStartCommand(Intent intent, int flags, int startId) {
-    if (intent == null || intent.getStringExtra("token") == null || token != null) {
+    if (!ShiftStartGate.adopts(
+        intent != null && intent.getStringExtra("token") != null, token != null, closing)) {
       if (token == null) stopSelf();
       return START_NOT_STICKY;
     }
@@ -180,6 +190,7 @@ public final class ShiftService extends Service {
     token = intent.getStringExtra("token");
     userId = intent.getStringExtra("userId");
     latest = null;
+    firstReport = new FirstReportPolicy();
     lastFixAt = 0;
     lastFixElapsedNanos = 0;
     lastReportAt = 0;
@@ -210,8 +221,7 @@ public final class ShiftService extends Service {
       if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
           != PackageManager.PERMISSION_GRANTED) throw new SecurityException("location");
       acquisition = new LocationAcquisition(this, main);
-      acquisition.start(this::acceptLocation);
-      worker.scheduleWithFixedDelay(this::tick, 0, 10, TimeUnit.SECONDS);
+      FirstReportPolicy.start(worker, this::tick, () -> acquisition.start(this::acceptLocation));
     } catch (RuntimeException error) {
       finishShift("Разрешите точный GPS в настройках приложения.");
     }
@@ -250,6 +260,7 @@ public final class ShiftService extends Service {
               + NotificationDelivery.expiryFromServerTime(
                   parseIso(response.getString("leaseExpiresAt")), serverTime, 0L, requestElapsed);
       lastReportAt = System.currentTimeMillis();
+      firstReport.reported();
       latitude = fix.getLatitude();
       longitude = fix.getLongitude();
       accuracy = fix.getAccuracy();
@@ -287,6 +298,8 @@ public final class ShiftService extends Service {
     } catch (RejectedShift error) {
       finishShift("Смена завершена сервером. Войдите или включите линию снова.");
     } catch (Exception error) {
+      // A closing instance's late failure must not overwrite a newer shift's state.
+      if (closing) return;
       phase = "reconnecting";
       detail = "Нет связи с диспетчером";
     }
