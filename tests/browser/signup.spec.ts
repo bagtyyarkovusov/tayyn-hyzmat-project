@@ -8,190 +8,174 @@ import {
 if (process.env.DISPOSABLE_BROWSER_TEST !== "true")
   throw new Error("Use disposable browser runner");
 
-async function signupForm(page: Page, phone: string) {
+async function applicationForm(page: Page, phone: string, name: string) {
   await isolateBrowserClient(page.context());
   await page.goto("/driverRegister");
-  await page.getByLabel("Имя и фамилия").fill("Новый водитель");
+  await page.getByLabel("Имя и фамилия").fill(name);
   await page.getByLabel("Номер телефона").fill(phone);
   await page.getByLabel("Пароль", { exact: true }).fill("123456");
 }
-async function login(page: Page, phone: string, password: string) {
+async function submitLogin(page: Page, phone: string, password: string) {
   await page.getByLabel("Номер телефона").fill(phone);
   await page.getByLabel("Пароль", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Войти", exact: true }).click();
-  await expect(page).toHaveURL(/driverDashboard/);
+}
+async function apply(page: Page, phone: string, fullName: string) {
+  const response = await page.request.post(
+    `${process.env.TEST_API_URL}/auth/register`,
+    { data: { fullName, phone, password: "123456" } },
+  );
+  expect(response.status()).toBe(201);
+  return (await response.json()) as { user: { driver: { id: string } } };
 }
 
-for (const logout of [false, true]) {
-  test(`late registration cannot replace a session after navigation${logout ? " and logout" : ""}`, async ({
-    page,
-  }) => {
-    await signupForm(page, logout ? "61999062" : "61999061");
-    let release!: () => void;
-    let reached!: () => void;
-    const gate = new Promise<void>((resolve) => (release = resolve));
-    const seen = new Promise<void>((resolve) => (reached = resolve));
-    await page.route("**/api/auth/register", async (route) => {
-      const response = await route.fetch();
-      expect(response.status()).toBe(201);
-      reached();
-      await gate;
-      await route.fulfill({ response }).catch(() => {});
-    });
-    await page
-      .getByRole("button", { name: "Создать аккаунт", exact: true })
-      .click();
-    await seen;
-    await page.getByRole("link", { name: "Войти", exact: true }).click();
-    await login(page, "60000101", process.env.TEST_ACCOUNT_PASSWORD!);
-    const before = await page.evaluate(() =>
-      localStorage.getItem("openride.driver.accessToken"),
-    );
-    if (logout) {
-      await page.getByRole("link", { name: "Профиль", exact: true }).click();
-      await page.getByRole("button", { name: "Выйти", exact: true }).click();
-      await expect(page).toHaveURL(/driverLogin/);
-    }
-    release();
-    await page.unrouteAll({ behavior: "wait" });
-    expect(
-      await page.evaluate(() =>
-        localStorage.getItem("openride.driver.accessToken"),
-      ),
-    ).toBe(logout ? null : before);
-    await expect(page).toHaveURL(logout ? /driverLogin/ : /driverDashboard/);
-    if (!logout)
-      expect(
-        JSON.parse(
-          (await page.evaluate(() =>
-            localStorage.getItem("tayyn.driver.user"),
-          ))!,
-        ).phone,
-      ).toBe("+99360000101");
-  });
-}
-
-test("a lost signup response recovers through ordinary login without another signup", async ({
+test("an application waits for dispatcher approval before the driver can sign in", async ({
   page,
 }) => {
-  await signupForm(page, "61999063");
-  let registrations = 0;
-  await page.route("**/api/auth/register", async (route) => {
-    registrations++;
-    const response = await route.fetch();
-    expect(response.status()).toBe(201);
-    await route.abort("failed");
-  });
-  await page
-    .getByRole("button", { name: "Создать аккаунт", exact: true })
-    .click();
-  await expect(page.getByRole("alert")).toContainText(
-    "Попробуйте войти с этим номером и паролем",
-  );
+  await applicationForm(page, "61999061", "Ожидающий водитель");
   await expect(
-    page.getByRole("button", { name: "Создать аккаунт", exact: true }),
-  ).toHaveCount(0);
+    page.getByRole("heading", { name: "Стать водителем", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Создайте аккаунт и дождитесь одобрения диспетчера."),
+  ).toBeVisible();
+  const registration = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/auth/register") &&
+      response.request().method() === "POST",
+  );
   await page
-    .getByRole("link", { name: "Перейти ко входу", exact: true })
+    .getByRole("button", { name: "Отправить заявку", exact: true })
     .click();
-  await login(page, "61999063", "123456");
-  expect(registrations).toBe(1);
-  await page.reload();
+  expect((await registration).status()).toBe(201);
+  await expect(page.getByRole("status")).toHaveText(
+    "Заявка отправлена. Диспетчер проверит ваш аккаунт. После одобрения войдите с этим номером.",
+  );
+  await expect(page.getByLabel("Пароль", { exact: true })).toHaveValue("");
+  await expect(page).toHaveURL(/driverRegister/);
+  expect(
+    await page.evaluate(() =>
+      localStorage.getItem("openride.driver.accessToken"),
+    ),
+  ).toBeNull();
+
+  await page.getByRole("link", { name: "Войти", exact: true }).click();
+  await submitLogin(page, "61999061", "123456");
+  await expect(page.getByRole("alert")).toHaveText(
+    "Ваш аккаунт ожидает подтверждения",
+  );
+  await expect(page).toHaveURL(/driverLogin/);
+
+  const admin = await loginFixture(page.request, "+99360000000");
+  const drivers = await page.request.get(
+    `${process.env.TEST_API_URL}/admin/drivers?status=PENDING&limit=100`,
+    { headers: { Authorization: `Bearer ${admin.accessToken}` } },
+  );
+  const pending = (await drivers.json()).items.find(
+    (driver: { user: { phone: string } }) =>
+      driver.user.phone === "+99361999061",
+  );
+  const approved = await page.request.post(
+    `${process.env.TEST_API_URL}/admin/drivers/${pending.id}/approve`,
+    { headers: { Authorization: `Bearer ${admin.accessToken}` }, data: {} },
+  );
+  expect(approved.status()).toBe(200);
+
+  await submitLogin(page, "61999061", "123456");
+  await expect(page).toHaveURL(/driverDashboard/);
   await expect(
     page.getByRole("navigation", { name: "Разделы водителя" }),
   ).toBeVisible();
 });
 
-test("signup with an existing phone points to sign-in without changing the account", async ({
+test("an application with an existing phone shows sign-in guidance without changing the account", async ({
   page,
 }) => {
   await isolateBrowserClient(page.context());
-  const existing = await page.request.post(
-    `${process.env.TEST_API_URL}/auth/register`,
-    {
-      data: {
-        fullName: "Существующий аккаунт",
-        phone: "+99361999065",
-        password: "123456",
-        deviceId: "existing-signup-fixture",
-      },
-    },
-  );
-  expect(existing.status()).toBe(201);
-  await signupForm(page, "61999065");
-  await page.getByLabel("Пароль", { exact: true }).fill("654321");
+  await apply(page, "+99361999065", "Существующая заявка");
+  await applicationForm(page, "61999065", "Повторная заявка");
   await page
-    .getByRole("button", { name: "Создать аккаунт", exact: true })
+    .getByRole("button", { name: "Отправить заявку", exact: true })
     .click();
-  await expect(page.getByRole("alert")).toContainText(
+  await expect(page.getByRole("alert")).toHaveText(
     "Этот номер уже зарегистрирован. Войдите или обратитесь к диспетчеру.",
   );
-  await page
-    .getByRole("link", { name: "Перейти ко входу", exact: true })
-    .click();
-  await login(page, "61999065", "123456");
-  expect(
-    JSON.parse(
-      (await page.evaluate(() => localStorage.getItem("tayyn.driver.user")))!,
-    ).fullName,
-  ).toBe("Существующий аккаунт");
+  await expect(page.getByRole("status")).toHaveCount(0);
 });
 
-test("mobile dispatcher overview, driver list and detail have active accounts without approval controls", async ({
+test("a late application response after leaving the form shows no stale notice", async ({
+  page,
+}) => {
+  await applicationForm(page, "61999062", "Поздняя заявка");
+  let release!: () => void;
+  let reached!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const seen = new Promise<void>((resolve) => (reached = resolve));
+  await page.route("**/api/auth/register", async (route) => {
+    const response = await route.fetch();
+    expect(response.status()).toBe(201);
+    reached();
+    await gate;
+    await route.fulfill({ response }).catch(() => {});
+  });
+  await page
+    .getByRole("button", { name: "Отправить заявку", exact: true })
+    .click();
+  await seen;
+  await page.getByRole("link", { name: "Войти", exact: true }).click();
+  await expect(page).toHaveURL(/driverLogin/);
+  release();
+  await page.unrouteAll({ behavior: "wait" });
+  await expect(page.getByRole("status")).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Войти", exact: true }),
+  ).toBeEnabled();
+});
+
+test("mobile dispatcher sees a new application live and approves it from the driver card", async ({
   page,
 }) => {
   await isolateBrowserClient(page.context());
   await page.setViewportSize({ width: 390, height: 844 });
   const admin = await loginFixture(page.request, "+99360000000");
   await installFixtureSession(page.context(), "admin", admin);
-  const created = await page.request.post(
-    `${process.env.TEST_API_URL}/auth/register`,
-    {
-      data: {
-        fullName: "Мобильный аккаунт",
-        phone: "+99361999064",
-        password: "123456",
-        deviceId: "mobile-signup-fixture",
-      },
-    },
-  );
-  expect(created.status()).toBe(201);
-  const { user } = await created.json();
   await page.goto("/adminDashboard");
-  await expect(
-    page.getByRole("link", { name: /Активные заказы/ }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: /Водители на линии/ }),
-  ).toBeVisible();
-  await expect(
-    page.getByText(/Ожидают проверки|Одобрить|На проверке/),
-  ).toHaveCount(0);
+  const tile = page.getByRole("link", { name: /Ожидают проверки/ });
+  await expect(tile).toBeVisible();
+  const count = async () =>
+    Number((await tile.locator("p").first().textContent())?.trim());
+  const before = await count();
+  const { user } = await apply(page, "+99361999064", "Мобильная заявка");
+  await expect.poll(count).toBe(before + 1);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
-  await page.goto("/adminDrivers?status=PENDING");
+
+  await tile.click();
+  await expect(page).toHaveURL(/adminDrivers\?status=PENDING/);
   const filter = page.getByLabel("Статус водителя");
-  await expect(filter).toHaveValue("");
+  await expect(filter).toHaveValue("PENDING");
   expect(await filter.locator("option").allTextContents()).toEqual([
     "Все статусы",
-    "Активны",
+    "На проверке",
+    "Одобрены",
     "Заблокированы",
   ]);
+  await page.getByRole("link", { name: /Мобильная заявка/ }).click();
+  await expect(page).toHaveURL(new RegExp(`/adminDrivers/${user.driver.id}`));
   await expect(
-    page.getByRole("link", { name: /Мобильный аккаунт/ }),
+    page.getByRole("heading", { name: "Мобильная заявка", exact: true }),
   ).toBeVisible();
-  await page.goto(`/adminDrivers/${user.driver.id}`);
-  await expect(
-    page.getByRole("heading", { name: "Мобильный аккаунт", exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText("Активен", { exact: true })).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Заблокировать", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText("На проверке", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Одобрить", exact: true }).click();
+  await expect(page.getByText("Одобрен", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Одобрить", exact: true }),
   ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Заблокировать", exact: true }),
+  ).toBeVisible();
 });

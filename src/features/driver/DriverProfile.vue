@@ -87,11 +87,11 @@ onMounted(() => void load());
         >
           {{
             state.profile?.status === "APPROVED"
-              ? "Активен"
+              ? "Допущен"
               : state.profile?.status === "BLOCKED"
                 ? "Заблокирован"
                 : state.profile?.status === "PENDING"
-                  ? "Доступ ограничен"
+                  ? "На проверке"
                   : "Загружаем…"
           }}
         </Badge>

@@ -180,7 +180,7 @@ test("driver registration validates a complete local phone and accepts a six-dig
   await expect(phone).toHaveValue("61 99 98 87");
   await page.getByLabel("Пароль", { exact: true }).fill("ж".repeat(37));
   await page
-    .getByRole("button", { name: "Создать аккаунт", exact: true })
+    .getByRole("button", { name: "Отправить заявку", exact: true })
     .click();
   await expect(page.getByRole("alert")).toContainText("максимум 72 байта");
   await page.getByLabel("Пароль", { exact: true }).fill("123456");
@@ -190,35 +190,10 @@ test("driver registration validates a complete local phone and accepts a six-dig
       response.request().method() === "POST",
   );
   await page
-    .getByRole("button", { name: "Создать аккаунт", exact: true })
+    .getByRole("button", { name: "Отправить заявку", exact: true })
     .click();
   expect((await registration).status()).toBe(201);
-  await expect(page).toHaveURL(/driverDashboard/);
-  const navigation = page.getByRole("navigation", { name: "Разделы водителя" });
-  await expect(navigation).toBeVisible();
-  const token = await page.evaluate(() =>
-    localStorage.getItem("openride.driver.accessToken"),
-  );
-  expect(token).toBeTruthy();
-  const headers = { Authorization: `Bearer ${token}` };
-  const profile = await page.request.get(
-    `${process.env.TEST_API_URL}/driver/profile`,
-    { headers },
-  );
-  expect(profile.status()).toBe(200);
-  expect(await profile.json()).toMatchObject({
-    status: "APPROVED",
-    isOnline: false,
-    districtId: null,
-  });
-  const balance = await page.request.get(
-    `${process.env.TEST_API_URL}/driver/balance`,
-    { headers },
-  );
-  expect(await balance.json()).toMatchObject({ amount: "0", currency: "TMT" });
-  await page.reload();
-  await expect(navigation).toBeVisible();
-  await expect(page).toHaveURL(/driverDashboard/);
+  await expect(page.getByRole("status")).toContainText("Заявка отправлена");
 });
 test("protected deep links require login and a failed login gives a recoverable error", async ({
   page,
@@ -1256,7 +1231,7 @@ test("dispatcher enters region, phone and price and the region modal closes afte
   }
 });
 
-test("dispatcher adds an active driver and opens their zero TMT balance", async ({
+test("dispatcher adds an approved driver and opens their zero TMT balance", async ({
   page,
 }) => {
   await login(page, "admin");
