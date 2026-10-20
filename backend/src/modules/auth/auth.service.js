@@ -23,9 +23,9 @@ function sanitizeUser(user) {
 
 // Registers a new DRIVER account. Client/admin creation are intentionally
 // not exposed on this public endpoint - admins are provisioned via seed/an
-// internal process, and there is no client-facing flow yet (see migration
-// plan). The driver starts in Driver.status = PENDING and cannot log in
-// until an admin approves them. No session or device row is created here;
+// internal process, and there is no client-facing flow yet. The driver
+// starts in Driver.status = PENDING and cannot log in until an admin
+// approves them. No session or device row is created here;
 // deviceId/deviceLabel are accepted for older clients but ignored.
 async function registerDriver({ phone, fullName, password }) {
   const existing = await prisma.user.findUnique({ where: { phone } });

@@ -115,7 +115,7 @@ before(async () => {
   regionId = region.id;
   otherRegionId = otherRegion.id;
   for (const [phone, districtId] of [['+99360000101', regionId], ['+99360000102', otherRegionId]]) {
-    await prisma.user.create({ data: { phone, fullName: 'Synthetic driver', role: 'DRIVER', passwordHash, driver: { create: { status: 'APPROVED', districtId } }, balance: { create: { amount: 500, currency: 'TMT' } } } });
+    await prisma.user.create({ data: { phone, fullName: 'Synthetic driver', role: 'DRIVER', passwordHash, driver: { create: { status: 'APPROVED', approvedAt: new Date(), districtId } }, balance: { create: { amount: 500, currency: 'TMT' } } } });
   }
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -790,6 +790,44 @@ test('approval does not lift a dispatcher block and is idempotent for approved d
   assert.equal((await request(`/admin/drivers/${driverId}`, adminToken)).data.status, 'BLOCKED');
   const history = (await request('/admin/activity?limit=100', adminToken)).data.items.filter((event: any) => event.driverId === driverId);
   assert.equal(history.filter((event: any) => event.type === 'driver_approved').length, 0);
+});
+
+test('re-approving an approved driver emits no approval or district events', async () => {
+  const phone = '+99361999074';
+  assert.equal((await request('/admin/drivers', adminToken, { phone, fullName: 'Quiet approve driver', password })).status, 201);
+  const driverId = (await request('/admin/drivers?status=APPROVED&limit=100', adminToken)).data.items.find((driver: any) => driver.user.phone === phone).id;
+  const driver = await socket(await login(phone));
+  const admin = await socket(adminToken);
+  const seen: string[] = [];
+  driver.on('driver:approved', () => seen.push('driver:approved'));
+  admin.on('districts:stats', () => seen.push('districts:stats'));
+  try {
+    assert.equal((await request(`/admin/drivers/${driverId}/approve`, adminToken, {})).status, 200);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.deepEqual(seen, []);
+  } finally {
+    driver.disconnect();
+    admin.disconnect();
+  }
+});
+
+test('unblock refuses a pending applicant and returns a blocked applicant to the approval queue', async () => {
+  const phone = '+99361999075';
+  const registered = await request('/auth/register', '', { phone, password, fullName: 'Blocked applicant' });
+  const driverId = registered.data.user.driver.id;
+  const pending = await request(`/admin/drivers/${driverId}/unblock`, adminToken, {});
+  assert.equal(pending.status, 409);
+  assert.equal(pending.data.details.code, 'DRIVER_PENDING');
+  assert.equal((await request(`/admin/drivers/${driverId}`, adminToken)).data.status, 'PENDING');
+  assert.equal((await request(`/admin/drivers/${driverId}/block`, adminToken, { reason: 'Applicant check' })).status, 200);
+  const unblocked = await request(`/admin/drivers/${driverId}/unblock`, adminToken, {});
+  assert.equal(unblocked.status, 200);
+  assert.equal(unblocked.data.status, 'PENDING');
+  const refused = await request('/auth/login', '', { phone, password, deviceId: 'blocked-applicant-device' });
+  assert.equal(refused.status, 403);
+  assert.equal(refused.data.message, 'Ваш аккаунт ожидает подтверждения');
+  assert.equal((await request(`/admin/drivers/${driverId}/approve`, adminToken, {})).status, 200);
+  assert.equal((await request('/auth/login', '', { phone, password, deviceId: 'blocked-applicant-device' })).status, 200);
 });
 
 test('canonical region bootstrap persists all finalized polygons and preserves later edits', async () => {

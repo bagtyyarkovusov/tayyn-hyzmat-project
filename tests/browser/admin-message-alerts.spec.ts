@@ -22,7 +22,7 @@ async function fixture(browser: Browser, name = "Водитель оповеще
       role: "DRIVER",
       passwordHash: admin.passwordHash,
       balance: { create: { amount: 500 } },
-      driver: { create: { status: "APPROVED" } },
+      driver: { create: { status: "APPROVED", approvedAt: new Date() } },
     },
     include: { driver: true },
   });

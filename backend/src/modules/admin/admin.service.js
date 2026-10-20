@@ -215,20 +215,22 @@ async function recordDriverActivity(tx, driverId, actorId, action, reason = null
 // restored through unblockDriver so Activity records UNBLOCKED, not APPROVED.
 async function approveDriver(driverId, actorId) {
   const driver = await findDriverOrThrow(driverId);
-  const updated = await prisma.$transaction(async tx => {
+  const { updated, changed } = await prisma.$transaction(async tx => {
     await tx.$queryRaw`SELECT id FROM users WHERE id = ${driver.userId} FOR UPDATE`;
     const previous = await tx.driver.findUniqueOrThrow({ where: { id: driverId } });
     const user = await tx.user.findUniqueOrThrow({ where: { id: driver.userId } });
     if (user.status === 'BLOCKED') throw ApiError.conflict('Аккаунт удалён. Восстановление недоступно', { code: 'ACCOUNT_DELETED' });
     if (previous.status === 'BLOCKED') throw ApiError.conflict('Водитель заблокирован. Используйте разблокировку', { code: 'DRIVER_BLOCKED' });
-    if (previous.status === 'APPROVED') return previous;
+    if (previous.status === 'APPROVED') return { updated: previous, changed: false };
     const result = await tx.driver.update({
       where: { id: driverId },
       data: { status: 'APPROVED', approvedAt: new Date(), approvedBy: actorId, blockedAt: null, blockReason: null }
     });
     await recordDriverActivity(tx, driverId, actorId, 'APPROVED');
-    return result;
+    return { updated: result, changed: true };
   });
+  // Re-approving an approved driver is a no-op: no events, stats or log.
+  if (!changed) return updated;
 
   safeEmit((io) => {
     io.to(rooms.driver(driverId)).emit('driver:approved', { driverId });
@@ -281,15 +283,18 @@ async function unblockDriver(driverId, actorId) {
     const previous = await tx.driver.findUniqueOrThrow({ where: { id: driverId } });
     const user = await tx.user.findUniqueOrThrow({ where: { id: driver.userId } });
     if (user.status === 'BLOCKED') throw ApiError.conflict('Аккаунт удалён. Восстановление недоступно', { code: 'ACCOUNT_DELETED' });
+    if (previous.status === 'PENDING') throw ApiError.conflict('Водитель ожидает одобрения. Используйте одобрение', { code: 'DRIVER_PENDING' });
+    // A blocked applicant that was never approved returns to the approval queue.
+    const status = previous.status === 'BLOCKED' && !previous.approvedAt ? 'PENDING' : 'APPROVED';
     const result = await tx.driver.update({
       where: { id: driverId },
-      data: { status: 'APPROVED', blockedAt: null, blockReason: null, blockedBy: null }
+      data: { status, blockedAt: null, blockReason: null, blockedBy: null }
     });
     if (previous.status !== 'APPROVED') await recordDriverActivity(tx, driverId, actorId, 'UNBLOCKED');
     return result;
   });
 
-  safeEmit((io) => {
+  if (updated.status === 'APPROVED') safeEmit((io) => {
     io.to(rooms.driver(driverId)).emit('driver:unblocked', { driverId });
   });
   await districtsService.broadcastDistrictStats();
